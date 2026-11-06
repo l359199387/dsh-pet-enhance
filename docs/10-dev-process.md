@@ -67,13 +67,15 @@ packages/dsh-glance/
 │   ├── index.js          # 入口：export name / inject / apply（只装配）
 │   ├── trust.js          # /api/glance/* 的信任栅栏（前缀路由不经内核准入）
 │   ├── log.js            # 写 ~/.dsh/glance-error.log（带 64KB 轮转）
-│   ├── define.js         # 取宿主的 defineTool（import dsh-tools + DSH_TOOLS_PATH 兜底）
-│   ├── capture.js        # 起 powershell 跑 capture.ps1，拿回 PNG Buffer
+│   ├── sidecar.js        # Python 进程 + JSON Lines + 握手/重建/退避
+│   ├── capture.js        # sidecar 优先；PowerShell 整屏降级
 │   ├── tool-spec.js      # glance 的参数/输出/说明（模型看到的就是这里）
 │   └── tool-glance.js    # 抓一帧 → 存附件 → 交图
 ├── sidecar/
+│   ├── glance.py         # A2：hello/capture/windows/thumb/quit（C1 起加 input）
+│   ├── test_protocol.py  # 协议单测（不许动鼠标）
 │   └── capture.ps1       # A1 的降级抓屏（DPI aware + 整屏 + 缩放）
-├── test/                 # node --test：trust / apply / capture / tool-glance
+├── test/                 # node --test：trust / apply / capture / tool-glance / sidecar
 └── client.js             # B1 起加：悬浮宠物页面
 ```
 
@@ -82,8 +84,8 @@ packages/dsh-glance/
 - `index.js` 只做装配：建目录、注册路由、把服务接起来。业务逻辑一律放 `src/` 的其他文件。
 - `trust.js` 是所有自定义前缀路由的**入口闸门**。不写它，任何本机进程都能改你的记忆和确认状态（见 07 §13）。
 - `log.js` 只负责「失败留痕」，**不吞异常**：写完日志照样返回失败。
-- `define.js` 是唯一碰 `@deepseek-ai/dsh-tools` 的地方；拿不到就抛，由 `index.js` 记日志、不挂工具——插件本体照常可用。
-- `capture.js` 只认「给我一张整屏 PNG」；坐标、DPI、窗口、输入都是 A2 sidecar 的事，别往里塞。
+- `sidecar.js` 管进程与协议；像素与坐标换算在 Python 侧，Host 不自己算 DPI。
+- `capture.js` 统一「给我一张 PNG」：有 sidecar 走它，整屏可退 PowerShell；窗口/区域没有退路。
 - `tool-spec.js` 是模型看到的全部文案；`tool-glance.js` 是流程（抓 → 存 → 交）；两者分开，改文案不用碰逻辑。
 
 `tools/dev-check.mjs` 是 §2 第③步的执行者：文件齐全 → JSON 可解析 → 全部 `node --check` → Python 编译 → 扫 `console.log` → 清单一致性。一条命令，退出码即结论。

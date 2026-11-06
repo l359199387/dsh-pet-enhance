@@ -1,13 +1,7 @@
 /**
- * A1 的抓屏通道：每次调用起一个 `powershell.exe` 跑 `sidecar/capture.ps1`。
+ * 抓屏通道：优先走常驻 Python sidecar；不可用时退回每次 spawn 一次 PowerShell。
  *
- * 为什么是「每次 spawn」而不是常驻进程：A1 只要一张整屏图，先证明
- * 「图能从宿主的工具结果里出来」这条链路。常驻 sidecar（握手、退避重建、
- * 窗口抓取、输入注入）是 A2 的事，到那时抓屏和输入必须同进程共享 DPI，
- * 这里这种一次性调用的坐标系就不再被使用。
- *
- * 纪律：子进程由本次调用拥有，超时或 `exec.signal` 一 abort 立刻杀掉，
- * 不留在后台；因此它不是硬约束 4 说的那种「裸 spawn 常驻服务」。
+ * A1 的 PowerShell 路径保留作降级；窗口 / region / DPI 同进程坐标是 A2 sidecar 的事。
  *
  * @module src/capture.js
  */
@@ -99,12 +93,125 @@ function parseResult(stdout) {
 }
 
 /**
- * 抓一张整屏图。
+ * 解析 `region`：`"x,y,w,h"` 或 `{x,y,w,h}`。非法则抛 BAD_REQUEST。
+ */
+export function parseRegion(value) {
+  if (value == null || value === '') return null
+  if (typeof value === 'object') {
+    const x = Number(value.x)
+    const y = Number(value.y)
+    const w = Number(value.w)
+    const h = Number(value.h)
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) {
+      throw Object.assign(new Error('region 需要正数 x,y,w,h'), { code: 'BAD_REQUEST' })
+    }
+    return { x, y, w, h }
+  }
+  const parts = String(value).trim().split(/[,\s]+/).filter(Boolean)
+  if (parts.length !== 4) {
+    throw Object.assign(new Error('region 必须是 "x,y,w,h"'), { code: 'BAD_REQUEST' })
+  }
+  const [x, y, w, h] = parts.map(Number)
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) {
+    throw Object.assign(new Error('region 需要正数 x,y,w,h'), { code: 'BAD_REQUEST' })
+  }
+  return { x, y, w, h }
+}
+
+function withAbort(promise, signal) {
+  if (!signal) return promise
+  if (signal.aborted) {
+    return Promise.reject(Object.assign(new Error('抓屏被取消'), { code: 'ABORTED' }))
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(Object.assign(new Error('抓屏被取消'), { code: 'ABORTED' }))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (v) => { signal.removeEventListener('abort', onAbort); resolve(v) },
+      (e) => { signal.removeEventListener('abort', onAbort); reject(e) },
+    )
+  })
+}
+
+/**
+ * 经 sidecar 抓一帧。
+ *
+ * @param {{
+ *   sidecar: { call: Function, isAlive?: Function },
+ *   quality?: string,
+ *   window?: string,
+ *   region?: string | object,
+ *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ * }} options
+ */
+export async function captureViaSidecar({
+  sidecar,
+  quality,
+  window,
+  region,
+  signal,
+  timeoutMs = 30_000,
+} = {}) {
+  if (!sidecar || typeof sidecar.call !== 'function') {
+    throw Object.assign(new Error('sidecar 不可用'), { code: 'SIDECAR_DOWN' })
+  }
+
+  const level = normalizeQuality(quality)
+  const parsedRegion = parseRegion(region)
+  const match = String(window ?? '').trim()
+
+  /** @type {object} */
+  let source
+  if (match) {
+    source = { kind: 'window', match }
+  } else if (parsedRegion) {
+    source = { kind: 'screen', region: parsedRegion }
+  } else {
+    source = { kind: 'screen' }
+  }
+
+  const resp = await withAbort(
+    sidecar.call('capture', { source, max_width: canvasWidth(level) }, timeoutMs),
+    signal,
+  )
+
+  if (!resp?.ok) {
+    const err = resp?.error ?? {}
+    throw Object.assign(new Error(err.message || '抓屏失败'), {
+      code: err.code || 'CAPTURE_FAILED',
+      candidates: err.candidates,
+    })
+  }
+
+  const png = Buffer.from(String(resp.png || ''), 'base64')
+  if (png.byteLength < 8 || png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+    throw Object.assign(new Error('sidecar 回的不是 PNG'), { code: 'CAPTURE_FAILED' })
+  }
+
+  const helloScreen = sidecar.getHello?.()?.screen
+  return {
+    png,
+    width: Number(resp.w) || 0,
+    height: Number(resp.h) || 0,
+    screen: helloScreen ?? resp.active?.rect ?? {},
+    monitors: [],
+    quality: level,
+    ms: Number(resp.ms) || 0,
+    engine: 'sidecar',
+    window: resp.window ?? null,
+    active: resp.active ?? null,
+    cursor: resp.cursor ?? null,
+    candidates: undefined,
+  }
+}
+
+/**
+ * PowerShell 整屏降级路径（A1）。不支持 window。
  *
  * @param {{ quality?: string, home: string, signal?: AbortSignal, timeoutMs?: number }} options
- * @returns {Promise<{png: Buffer, width: number, height: number, screen: object, monitors: object[], quality: string, ms: number}>}
  */
-export async function captureScreen({ quality, home, signal, timeoutMs = 20_000 } = {}) {
+export async function captureScreenPowerShell({ quality, home, signal, timeoutMs = 20_000 } = {}) {
   const level = normalizeQuality(quality)
   const outDir = join(home, 'cache')
   await mkdir(outDir, { recursive: true })
@@ -130,7 +237,6 @@ export async function captureScreen({ quality, home, signal, timeoutMs = 20_000 
   try {
     png = await readFile(result.path)
   } finally {
-    // 图已经进内存，临时文件不留：一次一张，攒着只会让 cache 目录失控。
     await unlink(result.path).catch(() => {})
   }
 
@@ -142,5 +248,54 @@ export async function captureScreen({ quality, home, signal, timeoutMs = 20_000 
     monitors: Array.isArray(result.monitors) ? result.monitors : [],
     quality: level,
     ms: Number(result.ms) || 0,
+    engine: 'powershell',
+    window: null,
+    active: null,
+    cursor: null,
   }
+}
+
+/**
+ * 统一入口：有 sidecar 且活着 → 走 sidecar；否则整屏可退 PowerShell，窗口则直接失败。
+ */
+export async function captureFrame({
+  sidecar,
+  quality,
+  window,
+  region,
+  home,
+  signal,
+  timeoutMs,
+} = {}) {
+  const match = String(window ?? '').trim()
+  const wantsWindow = Boolean(match)
+  const wantsRegion = region != null && region !== ''
+
+  if (sidecar) {
+    try {
+      return await captureViaSidecar({ sidecar, quality, window, region, signal, timeoutMs })
+    } catch (error) {
+      // 窗口/区域失败不能静默改抓整屏——那会让模型以为看到了目标窗口。
+      if (wantsWindow || wantsRegion) throw error
+      if (error?.code === 'WINDOW_NOT_FOUND' || error?.code === 'WINDOW_AMBIGUOUS') throw error
+      // sidecar 挂了才退 PowerShell。
+      if (!['SIDECAR_DOWN', 'SIDECAR_EXIT', 'NO_PYTHON', 'NO_SCRIPT', 'NO_PIL', 'HANDSHAKE_FAILED', 'TIMEOUT'].includes(error?.code)) {
+        throw error
+      }
+    }
+  }
+
+  if (wantsWindow) {
+    throw Object.assign(new Error('单窗口抓取需要 Python sidecar，当前不可用'), { code: 'SIDECAR_DOWN' })
+  }
+  if (wantsRegion) {
+    throw Object.assign(new Error('区域抓取需要 Python sidecar，当前不可用'), { code: 'SIDECAR_DOWN' })
+  }
+
+  return captureScreenPowerShell({ quality, home, signal, timeoutMs })
+}
+
+/** @deprecated 用 captureFrame；保留别名以免旧测试立刻挂。 */
+export async function captureScreen(options) {
+  return captureFrame(options)
 }

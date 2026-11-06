@@ -21,10 +21,12 @@ let registered
 before(() => {
   home = mkdtempSync(join(tmpdir(), 'glance-test-'))
   process.env.DSH_GLANCE_HOME = home
+  process.env.DSH_GLANCE_NO_SIDECAR = '1'
 })
 
 after(() => {
   delete process.env.DSH_GLANCE_HOME
+  delete process.env.DSH_GLANCE_NO_SIDECAR
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -105,9 +107,10 @@ test('apply 注册路由与 glance 工具，status 能看到它们', async () =>
   assert.equal(res.status, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.ok, true)
-  assert.equal(body.stage, 'A1')
+  assert.equal(body.stage, 'A2')
   assert.equal(body.home, home)
   assert.deepEqual(body.tools, ['glance'])
+  assert.equal(body.sidecar?.alive, false)
 
   dispose()
   // 路由与工具的清理由宿主销毁 scoped fiber 时触发（`scoped.effect` 的语义），

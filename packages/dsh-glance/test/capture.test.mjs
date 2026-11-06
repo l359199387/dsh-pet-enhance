@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { captureScreen, canvasWidth, normalizeQuality } from '../src/capture.js'
+import { captureScreen, canvasWidth, normalizeQuality, parseRegion } from '../src/capture.js'
 
 const isWindows = process.platform === 'win32'
 
@@ -21,6 +21,12 @@ test('档位只认三档，其它一律回 low', () => {
   assert.equal(normalizeQuality(undefined), 'low')
   assert.equal(canvasWidth('high'), 1260)
   assert.equal(canvasWidth('nope'), 798)
+})
+
+test('parseRegion 认 "x,y,w,h"', () => {
+  assert.deepEqual(parseRegion('10,20,300,200'), { x: 10, y: 20, w: 300, h: 200 })
+  assert.equal(parseRegion(''), null)
+  assert.throws(() => parseRegion('1,2,3'), (e) => e.code === 'BAD_REQUEST')
 })
 
 test('抓一帧整屏，拿到可读 PNG', { skip: !isWindows, timeout: 60_000 }, async () => {

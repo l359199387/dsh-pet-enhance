@@ -2,6 +2,17 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
+## 0.0.2 · 未发布
+
+### 单窗口与常驻 sidecar（A2）
+
+- `glance` 支持 `window`（按标题匹配单窗口）与 `region:"x,y,w,h"`（物理像素区域）；找不到窗口时返回最接近的三个标题候选。
+- 新增常驻 Python sidecar（`sidecar/glance.py`）：`hello` / `capture` / `windows` / `thumb` / `quit` / `stats`；JSON Lines + UTF-8；抓屏与后续输入共享同一 DPI 进程。
+- Host 侧 `src/sidecar.js`：握手 5s、退出后指数退避重建（1→30s）、连续 5 次失败停手；卸载时 `quit` + 硬杀，不留孤儿进程。
+- 整屏在 sidecar 不可用时仍退回 PowerShell（A1 路径）；单窗口 / 区域没有这条退路，会明确报 sidecar 不可用。
+- `/api/glance/status` 的 `stage` 改为 `A2`，并带上 `sidecar.alive/pid/hello`。
+- `input` 在 A2 直接 `INPUT_BLOCKED`（动手是 C1）。
+
 ## 0.0.1 · 未发布
 
 ### 能看到屏幕（A1）

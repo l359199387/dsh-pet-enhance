@@ -1,8 +1,8 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * A1 装配两件事：`GET /api/glance/status`（证明起来了）+ `glance` 工具（证明图能交给模型）。
- * 抓屏本身在 `capture.js`，工具契约在 `tool-spec.js`，这里只负责「挂上去 / 拔干净」。
+ * A2 装配：`GET /api/glance/status` + `glance` 工具 + Python sidecar 生命周期。
+ * 抓屏在 `capture.js`，协议在 `sidecar.js` / `sidecar/glance.py`，这里只负责挂上去 / 拔干净。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -16,6 +16,7 @@ import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
 import { createGlanceTool } from './tool-glance.js'
 import { TOOL_NAME } from './tool-spec.js'
+import { createSidecarManager } from './sidecar.js'
 
 export const name = 'dsh-glance'
 
@@ -23,7 +24,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.1'
+export const VERSION = '0.0.2'
 
 const startedAt = Date.now()
 
@@ -52,7 +53,6 @@ function readConnection(scoped) {
 }
 
 async function handle(req, res, connection, log, state) {
-  // 前缀路由不经内核准入，第一件事永远是过自己的闸门。
   const rejection = rejectionFor(req, connection)
   if (rejection !== undefined) {
     log(`拒绝一个不受信任的请求：${rejection}`)
@@ -76,14 +76,20 @@ async function handle(req, res, connection, log, state) {
       send(res, 405, { ok: false, rejected: ['只支持 GET'] })
       return
     }
+    const sidecar = state.sidecar
     send(res, 200, {
       ok: true,
       name,
       version: VERSION,
-      stage: 'A1',
+      stage: 'A2',
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
       tools: state.tools.slice(),
+      sidecar: {
+        alive: Boolean(sidecar?.isAlive?.()),
+        pid: sidecar?.getPid?.() ?? null,
+        hello: sidecar?.getHello?.() ?? null,
+      },
     })
     return
   }
@@ -92,7 +98,6 @@ async function handle(req, res, connection, log, state) {
 }
 
 function installRoutes(ctx, log, state) {
-  // `webServer` 刻意不写进 `inject`：它是可选能力，写进去会让没有它的部署连插件都起不来。
   if (typeof ctx?.inject !== 'function') {
     log('宿主没有 ctx.inject，跳过 HTTP 接口')
     return
@@ -109,7 +114,6 @@ function installRoutes(ctx, log, state) {
       )
     })
   } catch (e) {
-    // 面板/状态接口是附加能力，挂不上最多少一条路由，不该影响插件本体。
     log(`HTTP 接口没挂上：${e?.message ?? e}`)
   }
 }
@@ -124,7 +128,6 @@ function installTools(ctx, log, state) {
       let dispose
       let disposed = false
 
-      // 工具注册也归 effect 拥有（硬约束 4）：卸插件时把工具摘掉。
       scoped.effect(() => () => {
         disposed = true
         state.tools = state.tools.filter((n) => n !== TOOL_NAME)
@@ -137,6 +140,7 @@ function installTools(ctx, log, state) {
           home: glanceHome(),
           attachments: scoped.attachments,
           log,
+          sidecar: state.sidecar,
         }))
         state.tools.push(TOOL_NAME)
         log(`工具已注册：${TOOL_NAME}`)
@@ -151,15 +155,45 @@ function installTools(ctx, log, state) {
   }
 }
 
+function installSidecar(ctx, log, state, disposers) {
+  const manager = createSidecarManager({ log })
+  state.sidecar = manager
+
+  // 单测 / 无 Python 环境：设了就不拉进程，工具仍可挂上并退 PowerShell。
+  if (process.env.DSH_GLANCE_NO_SIDECAR === '1') {
+    log('DSH_GLANCE_NO_SIDECAR=1，跳过 sidecar')
+    return
+  }
+
+  const startSafe = () => {
+    manager.start().catch((e) => {
+      // sidecar 起不来不致命：整屏还能走 PowerShell。
+      log(`sidecar 未能启动：${e?.message ?? e}`)
+    })
+  }
+
+  if (typeof ctx?.effect === 'function') {
+    ctx.effect(() => {
+      startSafe()
+      return () => { void manager.stop() }
+    }, 'dsh-glance: sidecar')
+    return
+  }
+
+  startSafe()
+  disposers.push(() => { void manager.stop() })
+}
+
 export async function apply(ctx) {
   const log = (m) => { try { ctx?.logger?.info?.(`[dsh-glance] ${m}`) } catch { /* 日志不该影响加载 */ } }
   const disposers = []
-  const state = { tools: [] }
+  const state = { tools: [], sidecar: null }
 
   try {
     const home = glanceHome()
     mkdirSync(join(home, 'episodes'), { recursive: true })
     log(`home: ${home}`)
+    installSidecar(ctx, log, state, disposers)
     installRoutes(ctx, log, state)
     installTools(ctx, log, state)
   } catch (e) {

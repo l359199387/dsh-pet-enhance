@@ -13,10 +13,12 @@ test('parameters 是标准 JSON Schema（宿主原样信任，不再有 DSL 化�
   const { parameters } = glanceToolSpec()
   assert.equal(parameters.type, 'object')
   assert.equal(parameters.additionalProperties, false)
-  assert.deepEqual(Object.keys(parameters.properties).sort(), ['action', 'quality'])
+  assert.deepEqual(Object.keys(parameters.properties).sort(), ['action', 'quality', 'region', 'window'])
   assert.equal(parameters.properties.action.type, 'string')
   assert.deepEqual(parameters.properties.quality.enum, ['low', 'standard', 'high'])
-  // A1 两个参数都可省：不写 required 比写空数组更稳（宿主对空数组的宽容度没保证）。
+  assert.equal(parameters.properties.window.type, 'string')
+  assert.equal(parameters.properties.region.type, 'string')
+  // 参数都可省：不写 required 比写空数组更稳（宿主对空数组的宽容度没保证）。
   assert.equal(parameters.required, undefined)
 })
 
@@ -40,5 +42,27 @@ test('未实现的 action 直接说清楚，不假装看过屏幕', async () => 
   const result = await tool.execute({ action: 'watch' }, {})
   assert.equal(result.meta.unsupported, true)
   assert.deepEqual(result.images, [])
-  assert.match(result.text, /A1/)
+  assert.match(result.text, /see/)
+})
+
+test('窗口找不到时把候选写进人话，不交图', async () => {
+  const sidecar = {
+    async call() {
+      return {
+        ok: false,
+        error: {
+          code: 'WINDOW_NOT_FOUND',
+          message: '没有标题匹配',
+          candidates: ['Alpha', 'Beta', 'Gamma'],
+        },
+      }
+    },
+    isAlive: () => true,
+  }
+  const tool = createGlanceTool({ home: 'C:\\nope', attachments: {}, sidecar })
+  const result = await tool.execute({ window: 'Nope' }, {})
+  assert.equal(result.meta.ok, false)
+  assert.deepEqual(result.images, [])
+  assert.match(result.text, /Alpha/)
+  assert.deepEqual(result.meta.error.candidates, ['Alpha', 'Beta', 'Gamma'])
 })

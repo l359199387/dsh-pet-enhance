@@ -1,0 +1,628 @@
+#!/usr/bin/env python3
+"""dsh-glance sidecar：抓屏 +（C1 起）输入。A2 只做 hello/capture/windows/thumb/quit/stats。
+
+协议：stdin/stdout 各一行一个 JSON，UTF-8，请求带 id，响应回同一个 id。
+Host 负责判断；本进程只执行「抓这一块」。
+"""
+
+from __future__ import annotations
+
+import base64
+import io
+import json
+import sys
+import time
+import traceback
+from difflib import SequenceMatcher
+
+VERSION = "0.2.0"
+PW_RENDERFULLCONTENT = 2
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+BLACK_RANGE_MAX = 8
+BLACK_MEAN_MAX = 12
+
+_stats = {
+    "started_at": time.time(),
+    "requests": 0,
+    "captures": 0,
+    "errors": 0,
+}
+
+
+def _reconfigure_stdio() -> None:
+    # 中文窗口标题必须走 UTF-8；默认控制台编码会把标题弄成乱码。
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
+
+def _set_dpi_aware() -> bool:
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.SetProcessDPIAware())
+    except Exception:
+        return False
+
+
+def _emit(obj: dict) -> None:
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _err(code: str, message: str, **extra) -> dict:
+    _stats["errors"] += 1
+    body = {"code": code, "message": message}
+    body.update(extra)
+    return {"ok": False, "error": body}
+
+
+def _png_b64(image) -> str:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _jpeg_b64(image, quality: int = 80) -> str:
+    buf = io.BytesIO()
+    rgb = image.convert("RGB")
+    rgb.save(buf, format="JPEG", quality=quality, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _resize_max_width(image, max_width: int | None):
+    if not max_width or max_width <= 0 or image.width <= max_width:
+        return image
+    scale = max_width / float(image.width)
+    h = max(1, int(round(image.height * scale)))
+    w = max(1, int(round(image.width * scale)))
+    return image.resize((w, h), resample=_pil_resample())
+
+
+def _pil_resample():
+    from PIL import Image
+    return getattr(Image, "Resampling", Image).LANCZOS
+
+
+def _is_near_black(image) -> bool:
+    # 硬件加速窗口 PrintWindow 常返回全黑；灰度极差 < 8 且均值近黑 → 判抓不到。
+    gray = image.convert("L")
+    # 缩到很小再统计，避免对大图扫像素。
+    sample = gray.resize((64, max(1, int(64 * gray.height / max(1, gray.width)))), resample=_pil_resample())
+    extrema = sample.getextrema()
+    if not extrema:
+        return True
+    lo, hi = extrema
+    if (hi - lo) >= BLACK_RANGE_MAX:
+        return False
+    # getextrema 已经很暗时，再看均值是否贴零。
+    hist = sample.histogram()
+    total = sum(hist) or 1
+    mean = sum(i * hist[i] for i in range(256)) / total
+    return mean <= BLACK_MEAN_MAX
+
+
+def _screen_info() -> dict:
+    import ctypes
+    user32 = ctypes.windll.user32
+    w = int(user32.GetSystemMetrics(0))
+    h = int(user32.GetSystemMetrics(1))
+    # SM_CXVIRTUALSCREEN / SM_CYVIRTUALSCREEN / SM_XVIRTUALSCREEN / SM_YVIRTUALSCREEN
+    vw = int(user32.GetSystemMetrics(78))
+    vh = int(user32.GetSystemMetrics(79))
+    vx = int(user32.GetSystemMetrics(76))
+    vy = int(user32.GetSystemMetrics(77))
+    if vw <= 0 or vh <= 0:
+        vw, vh, vx, vy = w, h, 0, 0
+    return {
+        "w": w,
+        "h": h,
+        "virtual": {"x": vx, "y": vy, "w": vw, "h": vh},
+        "dpiAware": True,
+    }
+
+
+def _cursor_pos() -> dict:
+    import ctypes
+    from ctypes import wintypes
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    pt = POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    return {"x": int(pt.x), "y": int(pt.y)}
+
+
+def _active_window() -> dict | None:
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    title = _window_title(hwnd)
+    rect = _window_rect(hwnd)
+    pid = _window_pid(hwnd)
+    return {
+        "hwnd": int(hwnd),
+        "title": title,
+        "pid": pid,
+        "rect": list(rect) if rect else None,
+    }
+
+
+def _window_title(hwnd: int) -> str:
+    import ctypes
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value or ""
+
+
+def _window_pid(hwnd: int) -> int:
+    import ctypes
+    pid = ctypes.c_ulong(0)
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return int(pid.value)
+
+
+def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    import ctypes
+    from ctypes import wintypes
+
+    rect = wintypes.RECT()
+    # DWM 扩展边框才是真实可见边界；GetWindowRect 会带上不可见阴影边。
+    try:
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd),
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect),
+            ctypes.sizeof(rect),
+        )
+        if hr == 0:
+            return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception:
+        pass
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+
+
+def _is_capturable(hwnd: int) -> bool:
+    import ctypes
+    user32 = ctypes.windll.user32
+    if not user32.IsWindow(hwnd):
+        return False
+    if not user32.IsWindowVisible(hwnd):
+        return False
+    if user32.IsIconic(hwnd):
+        return False
+    # 只要有标题的顶层窗；工具窗/幽灵窗通常无标题。
+    title = _window_title(hwnd)
+    if not title.strip():
+        return False
+    # 跳过 cloaked（UWP 挂起等）
+    try:
+        cloaked = ctypes.c_int(0)
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)
+        )
+        if hr == 0 and cloaked.value:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def list_windows() -> list[dict]:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    results: list[dict] = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def enum_proc(hwnd, _lparam):
+        if not _is_capturable(hwnd):
+            return True
+        rect = _window_rect(hwnd)
+        if not rect:
+            return True
+        left, top, right, bottom = rect
+        if right - left < 8 or bottom - top < 8:
+            return True
+        results.append({
+            "hwnd": int(hwnd),
+            "title": _window_title(hwnd),
+            "pid": _window_pid(hwnd),
+            "rect": [left, top, right, bottom],
+        })
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+    return results
+
+
+def score_title(query: str, title: str) -> float:
+    q = query.strip().lower()
+    t = title.strip().lower()
+    if not q or not t:
+        return 0.0
+    if q == t:
+        return 1.0
+    if q in t:
+        # 越短越具体
+        return 0.85 + 0.1 * (len(q) / max(1, len(t)))
+    return SequenceMatcher(None, q, t).ratio()
+
+
+def resolve_window(match: str) -> tuple[dict | None, list[str], str | None]:
+    """返回 (window, candidate_titles, error_code)。"""
+    query = str(match or "").strip()
+    if not query:
+        return None, [], "BAD_REQUEST"
+    windows = list_windows()
+    if not windows:
+        return None, [], "WINDOW_NOT_FOUND"
+
+    ranked = sorted(
+        ((score_title(query, w["title"]), w) for w in windows),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    best_score, best = ranked[0]
+    candidates = [w["title"] for _, w in ranked[:3]]
+
+    if best_score < 0.45:
+        return None, candidates, "WINDOW_NOT_FOUND"
+
+    # 多个几乎同分的包含匹配 → 歧义
+    near = [w for s, w in ranked if s >= best_score - 0.02 and s >= 0.85]
+    if len(near) > 1 and best_score < 1.0:
+        # 前台窗优先
+        active = _active_window()
+        if active:
+            for w in near:
+                if w["hwnd"] == active.get("hwnd"):
+                    return w, [x["title"] for x in near[:3]], None
+        return None, [w["title"] for w in near[:3]], "WINDOW_AMBIGUOUS"
+
+    return best, candidates, None
+
+
+def _hbitmap_to_image(hdc_mem, hbmp, width: int, height: int):
+    import ctypes
+    from ctypes import wintypes
+    from PIL import Image
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER)]
+
+    gdi32 = ctypes.windll.gdi32
+    bmi = BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth = width
+    bmi.bmiHeader.biHeight = -height  # top-down
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = 0
+
+    buf_len = width * height * 4
+    buf = (ctypes.c_ubyte * buf_len)()
+    got = gdi32.GetDIBits(hdc_mem, hbmp, 0, height, ctypes.byref(buf), ctypes.byref(bmi), 0)
+    if got != height:
+        raise RuntimeError("GetDIBits failed")
+
+    raw = bytes(buf)
+    # BGRA → RGB
+    rgb = bytearray(width * height * 3)
+    for i in range(width * height):
+        b = raw[i * 4]
+        g = raw[i * 4 + 1]
+        r = raw[i * 4 + 2]
+        rgb[i * 3] = r
+        rgb[i * 3 + 1] = g
+        rgb[i * 3 + 2] = b
+    return Image.frombytes("RGB", (width, height), bytes(rgb))
+
+
+def capture_window_hwnd(hwnd: int):
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+
+    rect = _window_rect(hwnd)
+    if not rect:
+        raise RuntimeError("window has no rect")
+    left, top, right, bottom = rect
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        raise RuntimeError("window has empty area")
+
+    hdc_screen = user32.GetDC(0)
+    if not hdc_screen:
+        raise RuntimeError("GetDC failed")
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+    hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
+    old = gdi32.SelectObject(hdc_mem, hbmp)
+    try:
+        ok = user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT)
+        if not ok:
+            # 部分窗口 PW_RENDERFULLCONTENT 失败时退到普通 PrintWindow
+            ok = user32.PrintWindow(hwnd, hdc_mem, 0)
+        if not ok:
+            raise RuntimeError("PrintWindow failed")
+        image = _hbitmap_to_image(hdc_mem, hbmp, width, height)
+    finally:
+        gdi32.SelectObject(hdc_mem, old)
+        gdi32.DeleteObject(hbmp)
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(0, hdc_screen)
+
+    return image, (left, top, right, bottom)
+
+
+def capture_screen_image(region: dict | None = None):
+    from PIL import ImageGrab
+
+    screen = _screen_info()
+    virtual = screen["virtual"]
+    if region:
+        x = int(region["x"])
+        y = int(region["y"])
+        w = int(region["w"])
+        h = int(region["h"])
+        if w <= 0 or h <= 0:
+            raise ValueError("region empty")
+        bbox = (x, y, x + w, y + h)
+    else:
+        bbox = (
+            virtual["x"],
+            virtual["y"],
+            virtual["x"] + virtual["w"],
+            virtual["y"] + virtual["h"],
+        )
+    image = ImageGrab.grab(bbox=bbox, all_screens=True)
+    return image
+
+
+def parse_region(value) -> dict | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        return {
+            "x": int(value["x"]),
+            "y": int(value["y"]),
+            "w": int(value["w"]),
+            "h": int(value["h"]),
+        }
+    text = str(value).strip()
+    parts = [p.strip() for p in text.replace(" ", ",").split(",") if p.strip()]
+    if len(parts) != 4:
+        raise ValueError('region 必须是 "x,y,w,h"')
+    x, y, w, h = (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def handle_hello(_req: dict) -> dict:
+    try:
+        import PIL  # noqa: F401
+        from PIL import ImageGrab  # noqa: F401
+    except Exception as e:
+        return _err("NO_PIL", f"Pillow 不可用：{e}")
+
+    screen = _screen_info()
+    return {
+        "ok": True,
+        "version": VERSION,
+        "screen": {
+            "w": screen["w"],
+            "h": screen["h"],
+            "dpi": 1.0,
+            "virtual": screen["virtual"],
+            "dpiAware": True,
+        },
+        "engine": "pillow",
+        "input": False,
+    }
+
+
+def handle_windows(_req: dict) -> dict:
+    return {"ok": True, "windows": list_windows()}
+
+
+def handle_capture(req: dict) -> dict:
+    source = req.get("source") or {"kind": "screen"}
+    kind = str(source.get("kind") or "screen").lower()
+    max_width = req.get("max_width")
+    try:
+        max_width_i = int(max_width) if max_width is not None else None
+    except (TypeError, ValueError):
+        return _err("BAD_REQUEST", "max_width 必须是整数")
+
+    t0 = time.perf_counter()
+    active = _active_window()
+    cursor = _cursor_pos()
+    meta_window = None
+
+    try:
+        if kind == "window":
+            match = source.get("match") or source.get("title") or source.get("window")
+            win, candidates, code = resolve_window(str(match or ""))
+            if code == "BAD_REQUEST":
+                return _err("BAD_REQUEST", "window 抓取需要 source.match")
+            if code == "WINDOW_NOT_FOUND":
+                return _err(
+                    "WINDOW_NOT_FOUND",
+                    f"没有标题匹配 {match!r} 的窗口",
+                    candidates=candidates,
+                )
+            if code == "WINDOW_AMBIGUOUS":
+                return _err(
+                    "WINDOW_AMBIGUOUS",
+                    f"有多个窗口匹配 {match!r}，请写得更具体",
+                    candidates=candidates,
+                )
+            assert win is not None
+            image, rect = capture_window_hwnd(win["hwnd"])
+            meta_window = {
+                "hwnd": win["hwnd"],
+                "title": win["title"],
+                "pid": win["pid"],
+                "rect": list(rect),
+            }
+            if _is_near_black(image):
+                return _err(
+                    "CAPTURE_FAILED",
+                    f"窗口 {win['title']!r} 抓到近黑图（常见于硬件加速窗口），请改抓整屏或换窗口",
+                    candidates=[win["title"]],
+                )
+        elif kind == "screen":
+            region = parse_region(source.get("region"))
+            image = capture_screen_image(region)
+        else:
+            return _err("BAD_REQUEST", f"未知 source.kind: {kind}")
+    except ValueError as e:
+        return _err("BAD_REQUEST", str(e))
+    except Exception as e:
+        return _err("CAPTURE_FAILED", f"抓屏失败：{e}")
+
+    image = _resize_max_width(image, max_width_i)
+    png = _png_b64(image)
+    ms = int((time.perf_counter() - t0) * 1000)
+    _stats["captures"] += 1
+    out = {
+        "ok": True,
+        "png": png,
+        "w": image.width,
+        "h": image.height,
+        "ms": ms,
+        "active": active,
+        "cursor": cursor,
+        "score": 0.0,
+    }
+    if meta_window is not None:
+        out["window"] = meta_window
+    return out
+
+
+def handle_thumb(req: dict) -> dict:
+    width = int(req.get("width") or 320)
+    if width < 32 or width > 1280:
+        return _err("BAD_REQUEST", "thumb.width 范围 32–1280")
+    t0 = time.perf_counter()
+    try:
+        image = capture_screen_image(None)
+        image = _resize_max_width(image, width)
+        jpeg = _jpeg_b64(image)
+    except Exception as e:
+        return _err("CAPTURE_FAILED", f"缩略图失败：{e}")
+    return {
+        "ok": True,
+        "jpeg": jpeg,
+        "w": image.width,
+        "h": image.height,
+        "ms": int((time.perf_counter() - t0) * 1000),
+    }
+
+
+def handle_stats(_req: dict) -> dict:
+    return {
+        "ok": True,
+        "stats": {
+            **_stats,
+            "uptimeMs": int((time.time() - _stats["started_at"]) * 1000),
+        },
+        "screen": _screen_info(),
+        "cursor": _cursor_pos(),
+        "active": _active_window(),
+    }
+
+
+def handle_quit(_req: dict) -> dict:
+    return {"ok": True, "bye": True}
+
+
+HANDLERS = {
+    "hello": handle_hello,
+    "capture": handle_capture,
+    "windows": handle_windows,
+    "thumb": handle_thumb,
+    "stats": handle_stats,
+    "quit": handle_quit,
+}
+
+
+def handle(req: dict) -> dict:
+    if not isinstance(req, dict):
+        return _err("BAD_REQUEST", "请求必须是 JSON 对象")
+    req_id = req.get("id")
+    op = str(req.get("op") or "").strip().lower()
+    _stats["requests"] += 1
+
+    if op == "input":
+        body = _err("INPUT_BLOCKED", "A2 还没有输入控制；那是 C1 的事")
+        body["id"] = req_id
+        return body
+
+    handler = HANDLERS.get(op)
+    if handler is None:
+        body = _err("BAD_REQUEST", f"未知 op: {op or '(空)'}")
+        body["id"] = req_id
+        return body
+
+    try:
+        result = handler(req)
+    except Exception as e:
+        result = _err("CAPTURE_FAILED", f"未处理异常：{e}")
+        sys.stderr.write(traceback.format_exc() + "\n")
+        sys.stderr.flush()
+
+    result["id"] = req_id
+    return result
+
+
+def main() -> int:
+    _reconfigure_stdio()
+    _set_dpi_aware()
+
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as e:
+            _emit({"id": None, "ok": False, "error": {"code": "BAD_REQUEST", "message": f"JSON 无法解析：{e}"}})
+            continue
+
+        resp = handle(req)
+        _emit(resp)
+        if req.get("op") == "quit" and resp.get("ok"):
+            return 0
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

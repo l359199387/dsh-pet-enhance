@@ -2,14 +2,16 @@
 
 小瞥：DSH 的桌面宠物插件。看得见、会说话、能动手。
 
-当前是 **A1**：装得上、拔得掉，`glance` 能抓一帧整屏交给模型。
+当前是 **A2**：常驻 Python sidecar + 整屏 / 单窗口 / 区域抓取；`glance` 能把图交给模型。
 
 ```
 Harness「插件」页 → 从目录安装 → 选这个目录
 ```
 
-装完重启宿主，打开 `http://127.0.0.1:50521/api/glance/status` 应返回
-`{ "ok": true, "stage": "A1", "tools": ["glance"] }`。
+装完重启宿主后：
+
+1. 新会话让模型调一次 `glance()`（外部浏览器打开 `/api/glance/status` 会 401，属正常）；
+2. 再试 `glance({window:"…"})`，应只看到该窗口；找不到时会给出最多三个标题候选。
 
 - 失败日志：`~/.dsh/glance-error.log`
 - 数据目录：`~/.dsh/glance/`（可用 `DSH_GLANCE_HOME` 覆盖）
@@ -19,14 +21,15 @@ Harness「插件」页 → 从目录安装 → 选这个目录
 
 | 文件 | 职责 |
 |---|---|
-| `src/index.js` | 入口：建目录、挂路由、挂工具（只装配） |
+| `src/index.js` | 入口：建目录、挂路由、挂工具、挂 sidecar（只装配） |
 | `src/trust.js` | `/api/glance/*` 的信任栅栏 |
 | `src/log.js` | 失败留痕（`~/.dsh/glance-error.log`） |
-| `src/define.js` | 取宿主的 `defineTool` |
-| `src/capture.js` | 起 PowerShell 抓整屏，拿回 PNG |
+| `src/sidecar.js` | Python 进程 + JSON Lines 协议 + 重建退避 |
+| `src/capture.js` | sidecar 优先，PowerShell 整屏降级 |
 | `src/tool-spec.js` | 模型看到的参数、说明、输出 schema |
 | `src/tool-glance.js` | 抓 → 存附件 → 交图 |
-| `sidecar/capture.ps1` | DPI 感知的整屏抓取与缩放 |
+| `sidecar/glance.py` | 抓屏（Pillow / PrintWindow） |
+| `sidecar/capture.ps1` | A1 降级：DPI 感知整屏 |
 
 ## 测试
 
@@ -34,4 +37,8 @@ Harness「插件」页 → 从目录安装 → 选这个目录
 node ../../tools/dev-check.mjs
 ```
 
-会跑 `node --test`，其中 `test/capture.test.mjs` 会真的抓一次屏（只在 Windows 上跑）。
+会跑 `node --test`；`capture.test.mjs` / `sidecar.test.mjs` 在 Windows 上会真的抓屏或起 Python。协议单测：
+
+```
+python sidecar/test_protocol.py
+```

@@ -10,45 +10,72 @@
  * @module src/tool-glance.js
  */
 
-import { captureScreen, normalizeQuality } from './capture.js'
+import { captureFrame, normalizeQuality } from './capture.js'
 import { glanceToolSpec } from './tool-spec.js'
 
 function failureText(error) {
   const code = error?.code
   if (code === 'ABORTED') return '这次抓屏被取消了，没有图。'
-  if (code === 'TIMEOUT') return '抓屏超时了（20 秒）。屏幕可能被独占或系统卡住，稍后再试。'
-  if (code === 'SPAWN_FAILED') return `起不来 PowerShell：${error?.message ?? error}`
+  if (code === 'TIMEOUT') return '抓屏超时了。屏幕可能被独占或 sidecar 卡住，稍后再试。'
+  if (code === 'SPAWN_FAILED') return `起不来抓屏进程：${error?.message ?? error}`
+  if (code === 'SIDECAR_DOWN' || code === 'NO_PYTHON' || code === 'NO_SCRIPT') {
+    return `Python sidecar 不可用（${error?.message ?? code}）。整屏可退 PowerShell；单窗口需要 sidecar。`
+  }
+  if (code === 'WINDOW_NOT_FOUND') {
+    const list = Array.isArray(error?.candidates) && error.candidates.length
+      ? `最接近的窗口：${error.candidates.join(' / ')}`
+      : '当前没有可匹配的可见窗口。'
+    return `没找到这个窗口。${list}`
+  }
+  if (code === 'WINDOW_AMBIGUOUS') {
+    const list = Array.isArray(error?.candidates) ? error.candidates.join(' / ') : ''
+    return `有多个窗口都像是这个名字，请写得更具体。候选：${list}`
+  }
+  if (code === 'BAD_REQUEST') return `参数不对：${error?.message ?? error}`
   return `抓屏失败：${error?.message ?? error}`
 }
 
 function envelope(shot) {
-  const monitors = shot.monitors.length
-  const screen = shot.screen ?? {}
-  const screenSize = screen.w && screen.h ? `${screen.w}×${screen.h}` : '未知尺寸'
-  return `整屏 ${screenSize}（${monitors || 1} 个显示器）→ ${shot.width}×${shot.height} · ${shot.quality} 档 · ${shot.ms}ms`
+  const bits = []
+  if (shot.window?.title) {
+    bits.push(`窗口「${shot.window.title}」`)
+    const rect = shot.window.rect
+    if (Array.isArray(rect) && rect.length === 4) {
+      bits.push(`原区域 ${rect[2] - rect[0]}×${rect[3] - rect[1]}`)
+    }
+  } else {
+    const screen = shot.screen ?? {}
+    const screenSize = screen.w && screen.h ? `${screen.w}×${screen.h}` : '未知尺寸'
+    const monitors = Array.isArray(shot.monitors) ? shot.monitors.length : 0
+    bits.push(`整屏 ${screenSize}${monitors ? `（${monitors} 个显示器）` : ''}`)
+  }
+  bits.push(`→ ${shot.width}×${shot.height}`)
+  bits.push(`${shot.quality} 档`)
+  bits.push(`${shot.ms}ms`)
+  bits.push(shot.engine || 'unknown')
+  return bits.join(' · ')
 }
 
 /**
- * 直接返回 `ctx.tools.register()` 收的**普通对象**：`defineTool()` 属于宿主内部包，
- * Host-only bundle 里 import 不到它（`Cannot find package '@deepseek-ai/dsh-tools'`）。
- * 本机的 billion-context 插件同样是裸注册纯对象，这是宿主支持的形状。
- *
  * @param {{
  *   home: string,
  *   attachments?: { saveImage?: Function },
  *   log?: (message: string) => void,
+ *   sidecar?: { call: Function, isAlive?: Function, getHello?: Function } | null,
  * }} options
  */
-export function createGlanceTool({ home, attachments, log } = {}) {
+export function createGlanceTool({ home, attachments, log, sidecar } = {}) {
   return {
     ...glanceToolSpec(),
     async execute(args, exec) {
       const action = String(args?.action ?? 'see').trim().toLowerCase() || 'see'
       const quality = normalizeQuality(args?.quality)
+      const window = args?.window
+      const region = args?.region
 
       if (action !== 'see') {
         return {
-          text: `A1 只会 action:"see"（收到 "${action}"）。窗口、区域、连看几帧是 A2 的事，现在请用 see 看整屏。`,
+          text: `目前只会 action:"see"（收到 "${action}"）。连看多帧是阶段 D 的 watch，现在请用 see。`,
           images: [],
           meta: { ok: false, unsupported: true, action, quality },
         }
@@ -56,13 +83,28 @@ export function createGlanceTool({ home, attachments, log } = {}) {
 
       let shot
       try {
-        shot = await captureScreen({ quality, home, signal: exec?.signal })
+        shot = await captureFrame({
+          sidecar: sidecar || undefined,
+          quality,
+          window,
+          region,
+          home,
+          signal: exec?.signal,
+        })
       } catch (error) {
         log?.(`glance 抓屏失败：${error?.code ?? ''} ${error?.message ?? error}`)
         return {
           text: failureText(error),
           images: [],
-          meta: { ok: false, error: { code: error?.code ?? 'CAPTURE_FAILED', message: String(error?.message ?? error) }, quality },
+          meta: {
+            ok: false,
+            error: {
+              code: error?.code ?? 'CAPTURE_FAILED',
+              message: String(error?.message ?? error),
+              candidates: error?.candidates,
+            },
+            quality,
+          },
         }
       }
 
@@ -76,6 +118,10 @@ export function createGlanceTool({ home, attachments, log } = {}) {
         screen: shot.screen,
         monitors: shot.monitors,
         ms: shot.ms,
+        engine: shot.engine,
+        window: shot.window,
+        active: shot.active,
+        cursor: shot.cursor,
       }
 
       const saveImage = attachments?.saveImage
