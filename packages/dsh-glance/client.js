@@ -149,6 +149,19 @@ window.__ModuleLoader__.load({
 }
 .dg-root:hover .dg-status,
 .dg-root[data-open="1"] .dg-status { opacity: 1; transform: none; }
+.dg-root[data-mode="chat"] {
+  width: 280px;
+  height: auto;
+  min-height: 0;
+}
+.dg-root[data-mode="chat"] .dg-panel {
+  position: relative;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  margin: 0;
+}
 .dg-status strong { font-weight: 600; }
 .dg-status .dg-muted { color: var(--dg-muted); }
 .dg-panel {
