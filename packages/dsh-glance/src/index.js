@@ -43,7 +43,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.6'
+export const VERSION = '0.0.7'
 
 const startedAt = Date.now()
 

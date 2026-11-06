@@ -3,10 +3,9 @@
  *
  * 挂在 `shell.overlay`。
  *
- * 若本机已装 `dsh-pet`：隐藏自绘形象，对话交给它（悬停按 L / Ctrl+Shift+L）；
- * Host 侧 chat-bridge 监听 `/chat`，提到看屏就抓帧并 `/broadcast`。
- * 急停挂在 dsh-pet 右键「更多 → 小蓝鲸急停」。不拷贝其 CC BY-NC-SA 素材。
- * 未安装时回退到原创 SVG 小蓝鲸。
+ * 若本机已装 `dsh-pet`：隐藏自绘形象，对话交给它；
+ * **单击宠物**弹出聊天窗（走 dsh-pet `/chat`，Host bridge 仍监听同一份记忆）；
+ * 急停在右键「更多」。未装 dsh-pet 时用内置 SVG，同样单击开聊。
  *
  * @module client.js
  */
@@ -34,6 +33,47 @@ window.__ModuleLoader__.load({
     const DOCK_W = 168
     const DOCK_H = 44
     const inject = ['slots']
+
+    /**
+     * 单击（非拖拽）落在 dsh-pet 命中区 → 回调。
+     * @param {(p: { x: number, y: number }) => void} onOpen
+     */
+    function bindDshPetClickToChat(onOpen) {
+      let start = null
+      const onDown = (e) => {
+        if (e.button !== 0) return
+        if (!e.target?.closest?.('.dsh-pet-hit')) return
+        start = { x: e.clientX, y: e.clientY }
+      }
+      const onUp = (e) => {
+        if (!start) return
+        const hit = e.target?.closest?.('.dsh-pet-hit')
+        const dx = e.clientX - start.x
+        const dy = e.clientY - start.y
+        const origin = start
+        start = null
+        if (!hit || Math.hypot(dx, dy) > 6) return
+        onOpen?.({ x: origin.x, y: origin.y })
+      }
+      const onCancel = () => { start = null }
+      document.addEventListener('pointerdown', onDown, true)
+      document.addEventListener('pointerup', onUp, true)
+      document.addEventListener('pointercancel', onCancel, true)
+      return () => {
+        document.removeEventListener('pointerdown', onDown, true)
+        document.removeEventListener('pointerup', onUp, true)
+        document.removeEventListener('pointercancel', onCancel, true)
+      }
+    }
+
+    function clampChatPanelPos(p) {
+      const w = 280
+      const h = 220
+      const margin = 8
+      const x = Math.min(Math.max(margin, p.x - w / 2), Math.max(margin, window.innerWidth - w - margin))
+      const y = Math.min(Math.max(margin, p.y - h - 12), Math.max(margin, window.innerHeight - h - margin))
+      return { x, y }
+    }
 
     const CSS = `
 .dg-root {
@@ -393,8 +433,13 @@ window.__ModuleLoader__.load({
       const [windowTitle, setWindowTitle] = useState('')
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [chatPos, setChatPos] = useState(() => ({
+        x: Math.max(8, window.innerWidth - 300),
+        y: Math.max(8, window.innerHeight - 260),
+      }))
       const [hint, setHint] = useState(
-        '装了 dsh-pet：悬停宠物按 L 对话；说「看一眼屏幕」小蓝鲸会抓帧。未装则用内置形象。',
+        '点一下小蓝鲸弹出聊天。说「看一眼桌面」会抓屏；干活需先开「允许动手」。',
       )
 
       useEffect(() => {
@@ -442,6 +487,15 @@ window.__ModuleLoader__.load({
           window.clearTimeout(timer)
         }
       }, [])
+
+      useEffect(() => {
+        if (!proxy) return undefined
+        return bindDshPetClickToChat((p) => {
+          setChatPos(clampChatPanelPos(p))
+          setOpen(true)
+          setHint('跟小蓝鲸说点什么吧。')
+        })
+      }, [proxy])
 
       useEffect(() => {
         if (proxy) return undefined
@@ -574,26 +628,120 @@ window.__ModuleLoader__.load({
         writeUseDshPet(next)
         setHint(next
           ? (dshPetOk
-            ? '已让位给 dsh-pet：悬停它按 L 对话；说「看屏幕」会触发小蓝鲸抓帧。'
+            ? '已让位给 dsh-pet：点一下宠物弹出对话。'
             : '勾选了，但还没探测到 dsh-pet；请先安装并启用。')
-          : '改用内置 SVG 小蓝鲸。')
+          : '改用内置 SVG 小蓝鲸：点一下打开聊天窗。')
       }, [useDshPet, dshPetOk])
 
-      const submit = useCallback(() => {
+      const submit = useCallback(async () => {
         const text = draft.trim()
-        if (!text) return
+        if (!text || busy) return
         setDraft('')
-        setHint(dshPetOk
-          ? '内置框只是备胎。请悬停 dsh-pet 按 L，在它的对话里说「看一眼屏幕」。'
-          : '收到了。真聊天是 B2；装上 dsh-pet 后可按 L 聊并触发看屏。')
-      }, [draft, dshPetOk])
-
-      // 已装 dsh-pet：不抢形象、不抢 L 对话窗；看屏由 Host chat-bridge 接手。
-      if (proxy) return null
+        setBusy(true)
+        setHint('小蓝鲸在想…')
+        try {
+          if (dshPetOk) {
+            const res = await fetch(`${DSH_PET}/chat?pet=main&surface=any`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ message: text }),
+            })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok || body?.ok === false) {
+              const why = body?.reason || body?.message || `http-${res.status}`
+              setHint(`对话失败：${why}`)
+              return
+            }
+            const reply = typeof body?.text === 'string' ? body.text.trim() : ''
+            setHint(reply || '已送出（回复会在宠物气泡里出现）。')
+            return
+          }
+          setHint('还没装 dsh-pet，这句话只留在本地。装上后点宠物就能真聊，并触发看屏/动手。')
+        } catch (e) {
+          setHint(`对话异常：${e?.message ?? e}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [draft, busy, dshPetOk])
 
       const statusText = windowTitle
         ? `看着 · ${windowTitle}`
         : `小蓝鲸 · ${stateLabel(petState)}`
+
+      const chatPanel = open
+        ? h('div', { className: 'dg-panel', onPointerDown: (e) => e.stopPropagation() },
+          h('textarea', {
+            value: draft,
+            placeholder: '跟小蓝鲸说点什么…',
+            disabled: busy,
+            autoFocus: true,
+            onChange: (e) => setDraft(e.target.value),
+            onKeyDown: (e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                submit()
+              }
+              if (e.key === 'Escape') setOpen(false)
+            },
+          }),
+          h('div', { className: 'dg-row' },
+            h('button', {
+              type: 'button',
+              className: 'dg-btn primary',
+              disabled: busy,
+              onClick: submit,
+            }, busy ? '…' : '发送'),
+            proxy
+              ? h('button', {
+                type: 'button',
+                className: 'dg-btn',
+                onClick: () => setOpen(false),
+              }, '关闭')
+              : h('button', { type: 'button', className: 'dg-btn', onClick: sleepToggle },
+                petState === 'sleeping' ? '叫醒' : '睡觉'),
+            h('button', {
+              type: 'button',
+              className: 'dg-btn danger',
+              title: '急停',
+              'aria-label': '急停',
+              onClick: stop,
+            }, '⏹'),
+          ),
+          proxy
+            ? null
+            : h('div', { className: 'dg-row' },
+              h('button', {
+                type: 'button',
+                className: 'dg-btn',
+                onClick: toggleAvatar,
+                title: dshPetOk ? '让位给 dsh-pet（点宠物弹对话）' : '未探测到 dsh-pet',
+              }, useDshPet ? (dshPetOk ? '形象：dsh-pet' : '形象：等 dsh-pet') : '形象：内置'),
+            ),
+          h('div', { className: 'dg-hint' }, hint),
+        )
+        : null
+
+      // 已装 dsh-pet：不抢形象；单击命中区只弹出聊天窗。
+      if (proxy) {
+        if (!open) return null
+        return h(
+          'div',
+          {
+            ref: rootRef,
+            className: 'dg-root',
+            'data-state': petState,
+            'data-mode': 'chat',
+            'data-open': '1',
+            style: { left: `${chatPos.x}px`, top: `${chatPos.y}px` },
+          },
+          h('div', { className: 'dg-status', title: statusText },
+            h('strong', null, '小蓝鲸'),
+            h('span', { className: 'dg-muted' }, ' · 对话'),
+          ),
+          chatPanel,
+        )
+      }
 
       return h(
         'div',
@@ -614,42 +762,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dg-muted' }, ` · ${stateLabel(petState)}`),
           windowTitle ? h('div', { className: 'dg-muted' }, windowTitle) : null,
         ),
-        open
-          ? h('div', { className: 'dg-panel', onPointerDown: (e) => e.stopPropagation() },
-            h('textarea', {
-              value: draft,
-              placeholder: '跟小蓝鲸说点什么…',
-              onChange: (e) => setDraft(e.target.value),
-              onKeyDown: (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  submit()
-                }
-              },
-            }),
-            h('div', { className: 'dg-row' },
-              h('button', { type: 'button', className: 'dg-btn primary', onClick: submit }, '发送'),
-              h('button', { type: 'button', className: 'dg-btn', onClick: sleepToggle },
-                petState === 'sleeping' ? '叫醒' : '睡觉'),
-              h('button', {
-                type: 'button',
-                className: 'dg-btn danger',
-                title: '急停',
-                'aria-label': '急停',
-                onClick: stop,
-              }, '⏹'),
-            ),
-            h('div', { className: 'dg-row' },
-              h('button', {
-                type: 'button',
-                className: 'dg-btn',
-                onClick: toggleAvatar,
-                title: dshPetOk ? '让位给 dsh-pet（按 L 对话）' : '未探测到 dsh-pet',
-              }, useDshPet ? (dshPetOk ? '形象：dsh-pet' : '形象：等 dsh-pet') : '形象：内置'),
-            ),
-            h('div', { className: 'dg-hint' }, hint),
-          )
-          : null,
+        chatPanel,
         h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小蓝鲸，${stateLabel(petState)}` },
           h(PetSvg, { state: petState, pupil, blinking }),
         ),
@@ -679,6 +792,8 @@ window.__ModuleLoader__.load({
       defaultPos,
       stateLabel,
       workStatusFor,
+      bindDshPetClickToChat,
+      clampChatPanelPos,
       STORAGE_POS,
       STORAGE_USE_PET,
       PET_SIZE,
