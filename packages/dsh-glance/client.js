@@ -479,44 +479,90 @@ window.__ModuleLoader__.load({
 }
 .dg-learn-actions button:hover { filter: brightness(1.08); }
 .dg-learn-actions button.danger { color: #f87171; }
-.dg-learn-editor {
-  margin-top: 12px;
+.dg-learn-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 10, 16, .55);
+  backdrop-filter: blur(4px);
+  box-sizing: border-box;
+}
+.dg-learn-modal {
+  width: min(520px, 100%);
+  max-height: min(86vh, 720px);
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.12));
+  background: var(--dsw-alias-bg-layer-1, #141820);
+  box-shadow: 0 18px 48px rgba(0,0,0,.45);
+  padding: 18px 18px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 4px;
-  border-top: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.08));
+  gap: 12px;
+  color: var(--dsw-alias-label-primary, #e8eaed);
 }
-.dg-learn-editor label {
+.dg-learn-modal h2 {
+  margin: 0;
+  font: 650 17px/1.3 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+}
+.dg-learn-modal .dg-learn-modal-sub {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-modal label {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #9aa3b2);
 }
-.dg-learn-editor .hint {
+.dg-learn-modal .hint {
   font-size: 11px;
-  opacity: .85;
-  margin-top: -2px;
+  opacity: .9;
 }
-.dg-learn-editor input,
-.dg-learn-editor textarea {
+.dg-learn-modal input,
+.dg-learn-modal textarea {
   border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.12));
   border-radius: 8px;
   padding: 9px 11px;
   font: 13px/1.45 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
   color: var(--dsw-alias-label-primary, #e8eaed);
-  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.22));
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.04));
   resize: vertical;
 }
-.dg-learn-editor-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
-.dg-learn-editor .status {
+.dg-learn-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 4px;
+}
+.dg-learn-modal-actions .status {
   margin-right: auto;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #9aa3b2);
 }
-.dg-learn-editor button.primary {
+.dg-learn-modal-actions button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.08));
+  color: var(--dsw-alias-label-primary, #e8eaed);
+}
+.dg-learn-modal-actions button.primary {
   background: var(--dsw-alias-brand-primary, #3b82f6);
+  color: #fff;
+}
+.dg-learn-modal-actions button.danger {
+  background: color-mix(in srgb, #ef4444 85%, #000);
   color: #fff;
 }
 .dg-learn-err { color: #f87171; font-size: 13px; margin: 0 0 10px; }
@@ -1202,7 +1248,8 @@ window.__ModuleLoader__.load({
       const [items, setItems] = useState([])
       const [loading, setLoading] = useState(true)
       const [error, setError] = useState('')
-      const [editingId, setEditingId] = useState(null)
+      const [editItem, setEditItem] = useState(null)
+      const [deleteItem, setDeleteItem] = useState(null)
       const [draft, setDraft] = useState({ goal: '', ownerNotes: '' })
       const [busy, setBusy] = useState(false)
       const [status, setStatus] = useState('')
@@ -1225,22 +1272,29 @@ window.__ModuleLoader__.load({
 
       useEffect(() => { reload() }, [reload])
 
-      const startEdit = (item) => {
-        setEditingId(item.id)
+      const openEdit = (item) => {
+        setDeleteItem(null)
+        setEditItem(item)
         setStatus('')
         setDraft({
           goal: item.goal || '',
-          ownerNotes: item.ownerNotes || '',
+          ownerNotes: '',
         })
       }
 
+      const closeEdit = () => {
+        if (busy) return
+        setEditItem(null)
+        setStatus('')
+      }
+
       const saveEdit = async () => {
-        if (!editingId || busy) return
+        if (!editItem || busy) return
         setBusy(true)
         setError('')
-        setStatus('保存中…若补充了想法，小蓝鲸会归纳进学习理解')
+        setStatus('保存中…有补充时会归纳进学习理解')
         try {
-          const res = await fetch(`${API}/learned/${encodeURIComponent(editingId)}`, {
+          const res = await fetch(`${API}/learned/${encodeURIComponent(editItem.id)}`, {
             method: 'PATCH',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
@@ -1253,9 +1307,9 @@ window.__ModuleLoader__.load({
           const body = await res.json().catch(() => ({}))
           if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '保存失败')
           setStatus(body.merged
-            ? '已保存，学习理解已根据主人想法更新'
+            ? '已保存：补充已并入学习理解，并已清空'
             : (body.mergeReason ? `已保存（未更新理解：${body.mergeReason}）` : '已保存'))
-          setEditingId(null)
+          setEditItem(null)
           await reload()
         } catch (e) {
           setError(String(e?.message || e))
@@ -1265,19 +1319,18 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const removeItem = async (item) => {
-        if (busy) return
-        const ok = window.confirm(`删除「${item.goal || item.id}」？\n会同时删除本地学习文件，以及对应的自动化定时任务（如有）。`)
-        if (!ok) return
+      const confirmDelete = async () => {
+        if (!deleteItem || busy) return
         setBusy(true)
         try {
-          const res = await fetch(`${API}/learned/${encodeURIComponent(item.id)}`, {
+          const res = await fetch(`${API}/learned/${encodeURIComponent(deleteItem.id)}`, {
             method: 'DELETE',
             credentials: 'same-origin',
           })
           const body = await res.json().catch(() => ({}))
           if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '删除失败')
-          if (editingId === item.id) setEditingId(null)
+          if (editItem?.id === deleteItem.id) setEditItem(null)
+          setDeleteItem(null)
           await reload()
         } catch (e) {
           setError(String(e?.message || e))
@@ -1287,19 +1340,20 @@ window.__ModuleLoader__.load({
       }
 
       const understandingOf = (item) => item.understanding || item.summary || ''
+      const editUnderstanding = editItem ? understandingOf(editItem) : ''
 
       return h('div', { className: 'dg-learn-page' },
         h('div', { className: 'dg-learn-head' },
           h('div', null,
             h('h1', null, '我学会的'),
             h('p', { className: 'dg-learn-sub' },
-              '先看小蓝鲸怎么理解这件事，再在下方补充你的想法并保存——它会把想法归纳进学习理解。删除会清本地文件与对应定时。',
+              '查看小蓝鲸的学习理解；需要时点编辑，用「补充」帮它纠正或加偏好。理解更新后补充会清空。',
             ),
           ),
           !loading ? h('div', { className: 'dg-learn-count' }, `${items.length} 条`) : null,
         ),
         error ? h('p', { className: 'dg-learn-err' }, error) : null,
-        status && !editingId ? h('p', { className: 'dg-learn-sub' }, status) : null,
+        status && !editItem ? h('p', { className: 'dg-learn-sub' }, status) : null,
         loading ? h('p', { className: 'dg-learn-empty' }, '加载中…') : null,
         !loading && !items.length
           ? h('p', { className: 'dg-learn-empty' },
@@ -1310,7 +1364,6 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dg-learn-list' },
           items.map((item) => {
             const understanding = understandingOf(item)
-            const open = editingId === item.id
             return h('article', { key: item.id, className: 'dg-learn-card' },
               h('div', { className: 'dg-learn-card-top' },
                 h('div', { className: 'dg-learn-row-title' },
@@ -1323,69 +1376,112 @@ window.__ModuleLoader__.load({
                   h('button', {
                     type: 'button',
                     disabled: busy,
-                    onClick: () => (open ? setEditingId(null) : startEdit(item)),
-                  }, open ? '收起' : '编辑'),
+                    onClick: () => openEdit(item),
+                  }, '编辑'),
                   h('button', {
                     type: 'button',
                     className: 'danger',
                     disabled: busy,
-                    onClick: () => removeItem(item),
+                    onClick: () => { setEditItem(null); setDeleteItem(item) },
                   }, '删除'),
                 ),
               ),
               h('div', { className: `dg-learn-block${understanding ? '' : ' is-muted'}` },
                 h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解'),
                 h('div', { className: 'dg-learn-block-body' },
-                  understanding || '（教完后会写在这里；你补充想法并保存后，会据此更新）',
+                  understanding || '（教完后会写在这里；点编辑用「补充」帮它完善）',
                 ),
               ),
-              !open && item.ownerNotes
-                ? h('div', { className: 'dg-learn-block is-muted' },
-                  h('div', { className: 'dg-learn-block-label' }, '主人想法'),
-                  h('div', { className: 'dg-learn-block-body' }, item.ownerNotes),
-                )
-                : null,
-              open
-                ? h('div', { className: 'dg-learn-editor' },
-                  h('label', null, '目标标题',
-                    h('input', {
-                      value: draft.goal,
-                      onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
-                    }),
-                  ),
-                  h('div', { className: 'dg-learn-block' },
-                    h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解（只读 · 保存想法后自动更新）'),
-                    h('div', { className: 'dg-learn-block-body' },
-                      understanding || '尚无理解，保存主人想法后会生成/更新。',
-                    ),
-                  ),
-                  h('label', null,
-                    '主人想法',
-                    h('span', { className: 'hint' },
-                      '不知道它怎么想？先看上方理解，再写下你的偏好、约束或纠正；点保存后会合并进去。',
-                    ),
-                    h('textarea', {
-                      rows: 4,
-                      placeholder: '例如：心情笔记要写到桌面「每日心情」文件夹；语气轻松一点…',
-                      value: draft.ownerNotes,
-                      onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
-                    }),
-                  ),
-                  h('div', { className: 'dg-learn-editor-actions' },
-                    status ? h('span', { className: 'status' }, status) : h('span', { className: 'status' }, ''),
-                    h('button', { type: 'button', disabled: busy, onClick: () => setEditingId(null) }, '取消'),
-                    h('button', {
-                      type: 'button',
-                      className: 'primary',
-                      disabled: busy || !String(draft.goal || '').trim(),
-                      onClick: saveEdit,
-                    }, busy ? '归纳中…' : '保存'),
-                  ),
-                )
-                : null,
             )
           }),
         ),
+
+        editItem
+          ? h('div', {
+            className: 'dg-learn-modal-mask',
+            onClick: (e) => { if (e.target === e.currentTarget) closeEdit() },
+          },
+            h('div', {
+              className: 'dg-learn-modal',
+              role: 'dialog',
+              'aria-modal': 'true',
+              'aria-label': '编辑学会条目',
+            },
+              h('h2', null, '编辑学会条目'),
+              h('p', { className: 'dg-learn-modal-sub' },
+                '「补充」只用来帮助小蓝鲸更新学习理解；理解完成后补充会自动清空。',
+              ),
+              h('label', null, '目标标题',
+                h('input', {
+                  value: draft.goal,
+                  onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
+                }),
+              ),
+              h('div', { className: `dg-learn-block${editUnderstanding ? '' : ' is-muted'}` },
+                h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解（只读）'),
+                h('div', { className: 'dg-learn-block-body' },
+                  editUnderstanding || '尚无理解，填写补充并保存后会生成/更新。',
+                ),
+              ),
+              h('label', null,
+                '补充',
+                h('span', { className: 'hint' },
+                  '写下你的偏好、约束或纠正；保存后会并入上方理解，并清空本栏。',
+                ),
+                h('textarea', {
+                  rows: 5,
+                  placeholder: '例如：心情笔记写到桌面「每日心情」；语气轻松一点…',
+                  value: draft.ownerNotes,
+                  onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
+                }),
+              ),
+              h('div', { className: 'dg-learn-modal-actions' },
+                status ? h('span', { className: 'status' }, status) : h('span', { className: 'status' }, ''),
+                h('button', { type: 'button', disabled: busy, onClick: closeEdit }, '取消'),
+                h('button', {
+                  type: 'button',
+                  className: 'primary',
+                  disabled: busy || !String(draft.goal || '').trim(),
+                  onClick: saveEdit,
+                }, busy ? '归纳中…' : '保存'),
+              ),
+            ),
+          )
+          : null,
+
+        deleteItem
+          ? h('div', {
+            className: 'dg-learn-modal-mask',
+            onClick: (e) => { if (e.target === e.currentTarget && !busy) setDeleteItem(null) },
+          },
+            h('div', {
+              className: 'dg-learn-modal',
+              role: 'dialog',
+              'aria-modal': 'true',
+              'aria-label': '确认删除',
+            },
+              h('h2', null, '确认删除？'),
+              h('p', { className: 'dg-learn-modal-sub' },
+                `将删除「${deleteItem.goal || deleteItem.id}」。`,
+                h('br'),
+                '本地学习文件、自动化记录会一并清除；若有对应定时任务也会删除。此操作不可撤销。',
+              ),
+              h('div', { className: 'dg-learn-modal-actions' },
+                h('button', {
+                  type: 'button',
+                  disabled: busy,
+                  onClick: () => setDeleteItem(null),
+                }, '取消'),
+                h('button', {
+                  type: 'button',
+                  className: 'danger',
+                  disabled: busy,
+                  onClick: confirmDelete,
+                }, busy ? '删除中…' : '确认删除'),
+              ),
+            ),
+          )
+          : null,
       )
     }
 

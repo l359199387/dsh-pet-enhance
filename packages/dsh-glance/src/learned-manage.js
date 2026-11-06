@@ -223,6 +223,9 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
             ...(learn.understanding || {}),
             summary: merged,
           }
+          // 补充只为帮助理解：归纳完成后清空，避免重复展示
+          learn.ownerNotes = ''
+          task.ownerNotes = ''
           now = new Date().toISOString()
           learn.updatedAt = now
           task.updatedAt = now
