@@ -30,11 +30,13 @@ test('parseTeachDigestReply：OK / NEED_MORE', () => {
     role: 'click',
     name: '00-click-step0.png',
     click: {
-      eventI: 0, action: 'click', screenX: 10, screenY: 20,
-      imageX: 5, imageY: 10, imageW: 798, imageH: 449, mapped: true,
+      eventI: 0, action: 'click', screenX: 800, screenY: 450,
+      imageX: 200, imageY: 200, imageW: 400, imageH: 400, mapped: true,
+      crop: { x: 600, y: 250, w: 400, h: 400 },
     },
   }])
-  assert.match(withClick, /图内坐标\(5,10\)/)
+  assert.match(withClick, /图内坐标 \(200,200\)/)
+  assert.match(withClick, /勿用整屏坐标/)
 })
 
 test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不自动动手', async () => {
@@ -44,6 +46,9 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
   const wakes = []
   const queued = [
     { kind: 'click', x: 800, y: 450, button: 'left', window: { title: '桌面' } },
+    { kind: 'click', x: 900, y: 500, button: 'right', window: { title: '桌面' } },
+    { kind: 'scroll_start', x: 820, y: 460, delta: 1, window: { title: '桌面' } },
+    { kind: 'scroll_end', x: 820, y: 460, delta: 5, window: { title: '桌面' } },
     { kind: 'key', keys: 'ctrl+s', window: { title: '记事本' } },
     { kind: 'type', text: 'hello', window: { title: '记事本' } },
   ]
@@ -69,13 +74,24 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
     log() {},
     pollChat: false,
     getPreferredSessionId: () => 'sess-teach',
-    capture: async () => ({
-      png: tinyPng,
-      width: 798,
-      height: 449,
-      screen: { w: 1600, h: 900 },
-      window: { title: '记事本' },
-    }),
+    capture: async (opts) => {
+      if (opts?.region) {
+        return {
+          png: tinyPng,
+          width: opts.region.w,
+          height: opts.region.h,
+          screen: { w: 1600, h: 900, virtual: { x: 0, y: 0, w: 1600, h: 900 } },
+          window: { title: '桌面' },
+        }
+      }
+      return {
+        png: tinyPng,
+        width: 798,
+        height: 449,
+        screen: { w: 1600, h: 900 },
+        window: { title: '记事本' },
+      }
+    },
     ensureLiveWatch: async (on) => { liveOps.push(on) },
     attachments: {
       async saveImage() { return { id: 'att-1' } },
@@ -87,6 +103,7 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
     waitReply: async () => ({ ok: true, text: 'OK: 保存记事本里的内容' }),
     sidecar: {
       isAlive: () => true,
+      getHello: () => ({ screen: { w: 1600, h: 900, virtual: { x: 0, y: 0, w: 1600, h: 900 } } }),
       async call(op, fields) {
         if (op !== 'observe') return { ok: false }
         if (fields.action === 'start') return { ok: true, running: true, events: [] }
@@ -121,10 +138,15 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
       pair.playbook.steps.some((s) => s.kind === 'typed-text' && s.text === 'hello'),
       '用户键入应记成 typed-text',
     )
-    const clickStep = pair.playbook.steps.find((s) => s.action === 'click')
+    const clickStep = pair.playbook.steps.find((s) => s.action === 'click' && s.button === 'left')
     assert.ok(clickStep?.hint?.frameFile, '点击步应绑定截图文件')
-    assert.equal(clickStep.hint.imageX, 399)
-    assert.equal(clickStep.hint.imageY, Math.round(450 * 449 / 900))
+    assert.equal(clickStep.hint.imageX, 200)
+    assert.equal(clickStep.hint.imageY, 200)
+    assert.ok(pair.playbook.steps.some((s) => s.action === 'click' && s.button === 'right'), '右键也应记录')
+    const scrolls = pair.playbook.steps.filter((s) => s.action === 'scroll')
+    assert.equal(scrolls.length, 2)
+    assert.ok(scrolls.every((s) => s.hint?.frameFile), '滑轮起止都应有截图')
+    assert.ok(wakes.some((w) => /滚动开始|滚动结束/.test(w.text)), '理解提示应含滑轮起止')
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh

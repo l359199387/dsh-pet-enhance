@@ -39,6 +39,52 @@ export function newTeachSessionId() {
   return `${stamp}-${randomUUID().slice(0, 8)}`
 }
 
+/** 教学认的鼠标点击 kind（任意键，不只左键） */
+export function isTeachMouseClickKind(kind) {
+  const k = String(kind || '').toLowerCase()
+  return (
+    k === 'click'
+    || k === 'double_click'
+    || k === 'right_click'
+    || k === 'middle_click'
+  )
+}
+
+/** 滑轮手势起止（中间每格不单独记） */
+export function isTeachScrollBoundaryKind(kind) {
+  const k = String(kind || '').toLowerCase()
+  return k === 'scroll_start' || k === 'scroll_end'
+}
+
+/**
+ * @param {unknown} button
+ * @param {string} [kind]
+ * @returns {'left'|'right'|'middle'|'x1'|'x2'}
+ */
+export function normalizeMouseButton(button, kind = '') {
+  const b = String(button || '').toLowerCase()
+  if (b === 'right' || b === 'r') return 'right'
+  if (b === 'middle' || b === 'm' || b === 'wheel') return 'middle'
+  if (b === 'x1' || b === 'back' || b === 'button4') return 'x1'
+  if (b === 'x2' || b === 'forward' || b === 'button5') return 'x2'
+  if (b === 'left' || b === 'l') return 'left'
+  const k = String(kind || '').toLowerCase()
+  if (k === 'right_click') return 'right'
+  if (k === 'middle_click') return 'middle'
+  return 'left'
+}
+
+/** 给人/模型看的键位名 */
+export function formatMouseButtonLabel(button) {
+  switch (normalizeMouseButton(button)) {
+    case 'right': return '右键'
+    case 'middle': return '中键'
+    case 'x1': return '侧键1'
+    case 'x2': return '侧键2'
+    default: return '左键'
+  }
+}
+
 /**
  * @param {object} raw
  * @param {number} index
@@ -54,13 +100,24 @@ export function normalizeTeachEvent(raw, index) {
     window: title ? { title: title.slice(0, 120) } : null,
     sensitive,
   }
-  if (kind === 'click' || kind === 'double_click' || kind === 'right_click') {
+  if (isTeachMouseClickKind(kind)) {
+    const button = normalizeMouseButton(raw?.button, kind)
     return {
       ...base,
-      kind: kind === 'right_click' ? 'click' : kind,
-      button: raw?.button || (kind === 'right_click' ? 'right' : 'left'),
+      kind: kind === 'right_click' || kind === 'middle_click' ? 'click' : kind,
+      button,
       x: Number(raw?.x),
       y: Number(raw?.y),
+    }
+  }
+  if (isTeachScrollBoundaryKind(kind)) {
+    return {
+      ...base,
+      kind,
+      x: Number(raw?.x),
+      y: Number(raw?.y),
+      delta: Number(raw?.delta) || 0,
+      horizontal: Boolean(raw?.horizontal),
     }
   }
   if (kind === 'type') {
@@ -163,15 +220,30 @@ export async function updateTeachMeta(home, id, patch) {
 export function buildPublicPlan(events) {
   const steps = []
   for (const ev of events) {
-    if (ev.kind === 'click' || ev.kind === 'double_click') {
+    if (isTeachMouseClickKind(ev.kind)) {
+      const button = normalizeMouseButton(ev.button, ev.kind)
       steps.push({
         eventI: ev.i,
         action: ev.kind === 'double_click' ? 'double_click' : 'click',
         x: ev.x,
         y: ev.y,
-        button: ev.button || 'left',
+        button,
         window: ev.window?.title || null,
-        reason: `教学步骤 #${ev.i}${ev.window?.title ? ` @ ${ev.window.title}` : ''}`,
+        reason: `教学步骤 #${ev.i} ${formatMouseButtonLabel(button)}${ev.window?.title ? ` @ ${ev.window.title}` : ''}`,
+      })
+    } else if (isTeachScrollBoundaryKind(ev.kind)) {
+      const phase = ev.kind === 'scroll_start' ? '开始' : '结束'
+      const axis = ev.horizontal ? '横向' : '纵向'
+      steps.push({
+        eventI: ev.i,
+        action: 'scroll',
+        phase: ev.kind === 'scroll_start' ? 'start' : 'end',
+        x: ev.x,
+        y: ev.y,
+        delta: ev.delta || 0,
+        horizontal: Boolean(ev.horizontal),
+        window: ev.window?.title || null,
+        reason: `教学步骤 #${ev.i} 滑轮${axis}滚动${phase}`,
       })
     } else if (ev.kind === 'type') {
       if (ev.sensitive || ev.secretRef) {
@@ -214,10 +286,21 @@ export function narratePlan(steps) {
     const n = i + 1
     if (s.action === 'click' || s.action === 'double_click') {
       const win = s.window ? ` 「${String(s.window).slice(0, 24)}」` : ''
+      const btn = formatMouseButtonLabel(s.button || s.hint?.button)
+      const act = s.action === 'double_click' ? `${btn}双击` : `${btn}点击`
       const img = s.hint?.imageX != null
         ? ` → 图内(${s.hint.imageX},${s.hint.imageY})`
         : ''
-      return `${n}. ${s.action} 屏幕(${s.x},${s.y})${img}${win}`
+      return `${n}. ${act} 屏幕(${s.x},${s.y})${img}${win}`
+    }
+    if (s.action === 'scroll') {
+      const win = s.window ? ` 「${String(s.window).slice(0, 24)}」` : ''
+      const phase = s.phase === 'start' ? '开始' : '结束'
+      const axis = s.horizontal ? '横向' : '纵向'
+      const img = s.hint?.imageX != null
+        ? ` → 图内(${s.hint.imageX},${s.hint.imageY})`
+        : ''
+      return `${n}. 滑轮${axis}滚动${phase} δ=${s.delta || 0} 屏幕(${s.x},${s.y})${img}${win}`
     }
     if (s.action === 'type') {
       if (s.secretRef || s.publicNote?.includes('敏感')) {
@@ -288,6 +371,19 @@ export function buildPlaybook(goal, steps, sessionId) {
         window: s.window || null,
         kind: 'typed-text',
         publicNote: s.publicNote || `用户键入文字「${text.slice(0, 40)}」`,
+      }
+    }
+    if (s.action === 'scroll') {
+      return {
+        i,
+        eventI: s.eventI != null ? s.eventI : i,
+        mode: 'glance',
+        action: 'scroll',
+        phase: s.phase === 'start' ? 'start' : 'end',
+        delta: Number(s.delta) || 0,
+        horizontal: Boolean(s.horizontal),
+        window: s.window || null,
+        hint: { x: s.x, y: s.y, delta: Number(s.delta) || 0 },
       }
     }
     return {

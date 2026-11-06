@@ -20,8 +20,11 @@ import {
   compactGlanceHints,
   createTeachSession,
   detectTeachAmbiguities,
+  isTeachMouseClickKind,
+  isTeachScrollBoundaryKind,
   narratePlan,
   newTeachSessionId,
+  normalizeMouseButton,
   readTeachEvents,
   readTeachSecrets,
   updateTeachMeta,
@@ -54,10 +57,11 @@ export function buildTeachDigestPrompt(goal, narrative, frameCountOrImages) {
   return (
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
     + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
-    + `附图 ${frameCount} 张（每次点击一张，坐标已标在对应图上；执行时不再带图）。\n`
+    + `附图 ${frameCount} 张（点击为鼠标附近小图，图内坐标已按该图规格换算；执行时不再带图）。\n`
     + (legend ? `附图与点击对应关系：\n${legend}\n` : '')
     + `步骤摘要：\n${String(narrative || '').slice(0, 500)}\n`
-    + '请结合「图内坐标」看用户点了界面何处；「用户键入文字「…」」是亲手打的字，记进语义。'
+    + '请只按「图内坐标」在对应小图上找点击目标，不要当成整屏坐标；'
+    + '「用户键入文字「…」」是亲手打的字，记进语义。'
     + '用一两句话说明在教什么自动化。'
     + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
     + '禁止调用 act；不要执行操作。'
@@ -368,14 +372,25 @@ export function createTeachBridge(options) {
       stepIndex += 1
       lastEventAt = Date.now()
       askedIdle = false
-      const isClick = norm.kind === 'click' || norm.kind === 'double_click'
-      if (isClick && frames) {
+      // 左/右/中/侧键任意点击 → 鼠标附近小图
+      if (isTeachMouseClickKind(norm.kind) && frames) {
         await frames.snapOnClick({
           eventI: norm.i,
           x: norm.x,
           y: norm.y,
-          button: norm.button || 'left',
+          button: normalizeMouseButton(norm.button, norm.kind),
           action: norm.kind,
+          window: norm.window?.title || null,
+        })
+      } else if (isTeachScrollBoundaryKind(norm.kind) && frames) {
+        // 滑轮：只在手势开始/结束截，中间每格不截
+        await frames.snapOnScrollBoundary({
+          eventI: norm.i,
+          x: norm.x,
+          y: norm.y,
+          phase: norm.kind === 'scroll_start' ? 'start' : 'end',
+          delta: norm.delta,
+          horizontal: norm.horizontal,
           window: norm.window?.title || null,
         })
       } else if (norm.window?.title && frames) {

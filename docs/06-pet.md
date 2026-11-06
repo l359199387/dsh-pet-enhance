@@ -131,7 +131,7 @@
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ **每次点击截一张图**，屏幕坐标映射为**图内坐标**一并喂模型理解（上下文关键帧仍≤5，可再补≤2；点击帧按次保留）→ 追问 → learned↔automations + **Harness `schedule.create(sessionId, { title, prompt, after_seconds })`**（绑定当前会话；一年后才到点，避免教完立刻投递）+ skill。**图只辅助学会，执行不再带图**；**学完关实时看屏幕**；教完不自动动手。明文键入记为 typed-text。
+- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ **任意鼠标键点击**各截鼠标附近 **400×400**（standard），坐标按该小图换算；**滑轮只在滚动开始/结束**各截一张（中间每格不截）→ 喂模型理解（上下文关键帧仍≤5，可再补≤2）→ 追问 → learned↔automations + **Harness `schedule.create(sessionId, { title, prompt, after_seconds })`**（绑定当前会话；一年后才到点，避免教完立刻投递）+ skill。**图只辅助学会，执行不再带图**；**学完关实时看屏幕**；教完不自动动手。明文键入记为 typed-text。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。

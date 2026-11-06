@@ -1,6 +1,6 @@
 /**
- * 教学帧：每次点击必截一张并绑定图内坐标；少量上下文帧控量。
- * 图只供「学会」时喂模型；自动化执行不再带图。
+ * 教学帧：每次点击抓鼠标附近小图（默认 400×400）并绑定图内坐标；
+ * 上下文关键帧仍整屏 low 控量。图只供学会；执行不再带图。
  *
  * @module src/teach-frames.js
  */
@@ -8,14 +8,22 @@
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { captureFrame } from './capture.js'
+import { formatMouseButtonLabel } from './teach-store.js'
 
 /** 开场/换窗/收尾等上下文关键帧上限（不含点击帧） */
 export const MAX_KEY_FRAMES = 5
 export const MAX_SUPPLEMENT_FRAMES = 2
 /** 点击帧软上限，防止极端连点撑爆磁盘/token */
 export const MAX_CLICK_FRAMES = 40
-/** @deprecated 旧合计上限；现点击帧单独预算 */
-export const MAX_TOTAL_FRAMES = MAX_KEY_FRAMES + MAX_SUPPLEMENT_FRAMES + MAX_CLICK_FRAMES
+/** 滑轮起止帧软上限（每次手势 2 张） */
+export const MAX_SCROLL_FRAMES = 24
+/** @deprecated 旧合计上限；现点击/滑轮帧单独预算 */
+export const MAX_TOTAL_FRAMES = MAX_KEY_FRAMES + MAX_SUPPLEMENT_FRAMES + MAX_CLICK_FRAMES + MAX_SCROLL_FRAMES
+
+/** 点击证据：鼠标附近正方形边长（屏幕像素） */
+export const CLICK_CROP_SIZE = 400
+/** 点击小图清晰度：standard（区域已小，几乎不缩放，token 可控） */
+export const CLICK_CAPTURE_QUALITY = 'standard'
 
 export function teachFramesDir(home, sessionId) {
   return join(home, 'teach', `${sessionId}-frames`)
@@ -26,10 +34,82 @@ export function learnedFramesDir(home, learnedId) {
 }
 
 /**
- * 把屏幕坐标映射到抓屏 PNG 像素坐标（整屏抓取再按 max_width 缩放）。
+ * 从 hello.screen / shot.screen 取虚拟桌面边界（可含负坐标多屏）。
+ * @param {{ w?: number, h?: number, width?: number, height?: number, virtual?: { x?: number, y?: number, w?: number, h?: number } } | null | undefined} screen
+ */
+export function resolveVirtualBounds(screen) {
+  const v = screen?.virtual
+  if (v && Number(v.w) > 0 && Number(v.h) > 0) {
+    return {
+      x: Number(v.x) || 0,
+      y: Number(v.y) || 0,
+      w: Number(v.w),
+      h: Number(v.h),
+    }
+  }
+  const w = Number(screen?.w ?? screen?.width) || 0
+  const h = Number(screen?.h ?? screen?.height) || 0
+  if (w > 0 && h > 0) return { x: 0, y: 0, w, h }
+  return null
+}
+
+/**
+ * 以点击为中心裁 400×400（贴边收缩），返回屏幕 region。
  * @param {number} screenX
  * @param {number} screenY
- * @param {{ width?: number, height?: number, screen?: { w?: number, h?: number, width?: number, height?: number } }} shot
+ * @param {{ x: number, y: number, w: number, h: number } | null} [bounds]
+ * @param {number} [size]
+ */
+export function clickCropRegion(screenX, screenY, bounds = null, size = CLICK_CROP_SIZE) {
+  const side = Math.max(32, Math.round(Number(size) || CLICK_CROP_SIZE))
+  const half = Math.floor(side / 2)
+  let x = Math.round(Number(screenX)) - half
+  let y = Math.round(Number(screenY)) - half
+  let w = side
+  let h = side
+  if (bounds && bounds.w > 0 && bounds.h > 0) {
+    const maxX = bounds.x + bounds.w
+    const maxY = bounds.y + bounds.h
+    if (x < bounds.x) x = bounds.x
+    if (y < bounds.y) y = bounds.y
+    if (x + w > maxX) x = Math.max(bounds.x, maxX - w)
+    if (y + h > maxY) y = Math.max(bounds.y, maxY - h)
+    w = Math.min(w, Math.max(1, maxX - x))
+    h = Math.min(h, Math.max(1, maxY - y))
+  }
+  return { x, y, w, h }
+}
+
+/**
+ * 点击落点 → 裁切图内像素（若 sidecar 又按 max_width 缩放，再乘缩放比）。
+ * @param {number} screenX
+ * @param {number} screenY
+ * @param {{ x: number, y: number, w: number, h: number }} region
+ * @param {{ width?: number, height?: number } | null} [shot]
+ */
+export function mapClickToCropImage(screenX, screenY, region, shot = null) {
+  const imgW = Number(shot?.width) || region.w
+  const imgH = Number(shot?.height) || region.h
+  const localX = Number(screenX) - region.x
+  const localY = Number(screenY) - region.y
+  const scaleX = region.w > 0 ? imgW / region.w : 1
+  const scaleY = region.h > 0 ? imgH / region.h : 1
+  let imageX = Math.round(localX * scaleX)
+  let imageY = Math.round(localY * scaleY)
+  if (imgW > 0) imageX = Math.max(0, Math.min(imgW - 1, imageX))
+  if (imgH > 0) imageY = Math.max(0, Math.min(imgH - 1, imageY))
+  return {
+    imageX,
+    imageY,
+    imageW: imgW,
+    imageH: imgH,
+    mapped: true,
+    region: { x: region.x, y: region.y, w: region.w, h: region.h },
+  }
+}
+
+/**
+ * @deprecated 整屏映射；点击请用 mapClickToCropImage。
  */
 export function mapScreenToImageCoords(screenX, screenY, shot) {
   const imgW = Number(shot?.width) || 0
@@ -51,7 +131,6 @@ export function mapScreenToImageCoords(screenX, screenY, shot) {
       mapped: true,
     }
   }
-  // 无屏幕尺寸时只能把屏幕坐标当图坐标候选（模型仍可知点击落点）
   return {
     imageX: Math.round(sx),
     imageY: Math.round(sy),
@@ -96,6 +175,10 @@ export function createFrameRecorder(options) {
     return frames.filter((f) => f.role === 'click').length
   }
 
+  function scrollCount() {
+    return frames.filter((f) => f.role === 'scroll').length
+  }
+
   async function writePng(buf, file) {
     const dir = teachFramesDir(options.home, options.sessionId)
     await mkdir(dir, { recursive: true })
@@ -104,19 +187,28 @@ export function createFrameRecorder(options) {
     return path
   }
 
-  async function grabShot() {
+  function helloScreen() {
+    const sc = sidecar()
+    try {
+      return sc?.getHello?.()?.screen ?? null
+    } catch {
+      return null
+    }
+  }
+
+  async function grabShot({ quality = 'low', region = null } = {}) {
     const sc = sidecar()
     const shot = await capture({
-      quality: 'low',
+      quality,
       home: options.home,
       sidecar: sc,
+      region: region || undefined,
       timeoutMs: 8_000,
     })
     if (!shot?.png?.byteLength) return null
-    // capture 未带 screen 时，尽量从 sidecar hello 补全，便于坐标映射
-    if (!shot.screen?.w && !shot.screen?.width && typeof sc?.getHello === 'function') {
-      const helloScreen = sc.getHello()?.screen
-      if (helloScreen) shot.screen = helloScreen
+    if (!shot.screen) {
+      const hs = helloScreen()
+      if (hs) shot.screen = hs
     }
     return shot
   }
@@ -165,35 +257,43 @@ export function createFrameRecorder(options) {
   }
 
   /**
-   * 每次点击必抓：截图 + 屏幕坐标映射到图内坐标。
+   * 鼠标附近 400×400 证据帧（点击 / 滑轮起止共用）。
    * @param {{
    *   eventI: number,
    *   x: number,
    *   y: number,
-   *   button?: string,
-   *   action?: string,
+   *   role: 'click'|'scroll',
+   *   reason: string,
+   *   meta?: object,
    *   window?: string | null,
    * }} info
    */
-  async function snapOnClick(info) {
-    if (clickCount() >= MAX_CLICK_FRAMES) {
+  async function snapNearCursor(info) {
+    const role = info.role === 'scroll' ? 'scroll' : 'click'
+    if (role === 'click' && clickCount() >= MAX_CLICK_FRAMES) {
       log(`teach-frame：点击帧已达上限 ${MAX_CLICK_FRAMES}`)
       return null
     }
+    if (role === 'scroll' && scrollCount() >= MAX_SCROLL_FRAMES) {
+      log(`teach-frame：滑轮帧已达上限 ${MAX_SCROLL_FRAMES}`)
+      return null
+    }
     try {
-      const shot = await grabShot()
+      const bounds = resolveVirtualBounds(helloScreen())
+      const region = clickCropRegion(info.x, info.y, bounds, CLICK_CROP_SIZE)
+      const shot = await grabShot({ quality: CLICK_CAPTURE_QUALITY, region })
       if (!shot) return null
-      const mapped = mapScreenToImageCoords(info.x, info.y, shot)
+      const mapped = mapClickToCropImage(info.x, info.y, region, shot)
       const i = seq
       seq += 1
-      const action = String(info.action || 'click')
-      const file = `${String(i).padStart(2, '0')}-click-step${info.eventI}.png`
+      const reason = String(info.reason || role)
+      const file = `${String(i).padStart(2, '0')}-${role}-step${info.eventI}.png`
       await writePng(shot.png, file)
       const win = info.window || shot.window?.title || shot.active?.title || null
-      const click = {
+      const pointer = {
         eventI: info.eventI,
-        action,
-        button: info.button || 'left',
+        role,
+        reason,
         screenX: Number(info.x),
         screenY: Number(info.y),
         imageX: mapped.imageX,
@@ -201,32 +301,73 @@ export function createFrameRecorder(options) {
         imageW: mapped.imageW,
         imageH: mapped.imageH,
         mapped: mapped.mapped,
+        crop: mapped.region,
+        cropSize: CLICK_CROP_SIZE,
+        quality: CLICK_CAPTURE_QUALITY,
+        ...(info.meta || {}),
       }
       const entry = {
         i,
-        reason: 'click',
-        role: 'click',
+        reason,
+        role,
         file,
         window: win ? String(win).slice(0, 80) : null,
         at: new Date().toISOString(),
         bytes: shot.png.byteLength,
         imageW: mapped.imageW,
         imageH: mapped.imageH,
-        click,
+        click: role === 'click' ? pointer : undefined,
+        scroll: role === 'scroll' ? pointer : undefined,
       }
       frames.push(entry)
       recent.push({ png: shot.png, entry })
       if (recent.length > 4) recent.shift()
       if (win) lastWindow = String(win)
       log(
-        `teach-frame：click #${i} step${info.eventI} `
-        + `screen(${click.screenX},${click.screenY})→img(${click.imageX},${click.imageY}) ${file}`,
+        `teach-frame：${role}/${reason} #${i} step${info.eventI} `
+        + `crop ${region.w}×${region.h}@(${region.x},${region.y}) `
+        + `→img(${pointer.imageX},${pointer.imageY}/${pointer.imageW}×${pointer.imageH}) ${file}`,
       )
       return entry
     } catch (e) {
-      log(`teach-frame 点击截图失败：${e?.message ?? e}`)
+      log(`teach-frame ${role} 截图失败：${e?.message ?? e}`)
       return null
     }
+  }
+
+  /** 任意鼠标键点击：抓鼠标附近小图。 */
+  async function snapOnClick(info) {
+    return snapNearCursor({
+      eventI: info.eventI,
+      x: info.x,
+      y: info.y,
+      role: 'click',
+      reason: 'click',
+      window: info.window,
+      meta: {
+        action: String(info.action || 'click'),
+        button: info.button || 'left',
+      },
+    })
+  }
+
+  /** 滑轮手势开始/结束：各抓一张鼠标附近小图（中间滚动不截）。 */
+  async function snapOnScrollBoundary(info) {
+    const phase = info.phase === 'start' ? 'start' : 'end'
+    return snapNearCursor({
+      eventI: info.eventI,
+      x: info.x,
+      y: info.y,
+      role: 'scroll',
+      reason: phase === 'start' ? 'scroll-start' : 'scroll-end',
+      window: info.window,
+      meta: {
+        action: 'scroll',
+        phase,
+        delta: Number(info.delta) || 0,
+        horizontal: Boolean(info.horizontal),
+      },
+    })
   }
 
   /** 窗口标题变化时抓上下文帧（控量；点击帧已覆盖主证据）。 */
@@ -292,6 +433,7 @@ export function createFrameRecorder(options) {
       imageH: f.imageH ?? null,
     }
     if (f.click) base.click = f.click
+    if (f.scroll) base.scroll = f.scroll
     return base
   }
 
@@ -303,6 +445,7 @@ export function createFrameRecorder(options) {
       maxKey: MAX_KEY_FRAMES,
       maxSupplement: MAX_SUPPLEMENT_FRAMES,
       maxClick: MAX_CLICK_FRAMES,
+      maxScroll: MAX_SCROLL_FRAMES,
       frames: frames.map(framePublicMeta),
     }
     await writeFile(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
@@ -329,17 +472,18 @@ export function createFrameRecorder(options) {
       count: frames.length,
       files: frames.map((f) => f.file),
       clicks: frames.filter((f) => f.role === 'click').length,
+      scrolls: frames.filter((f) => f.role === 'scroll').length,
     }
   }
 
   /**
-   * 理解阶段优先喂点击帧（带坐标），再上下文/补图。
+   * 理解阶段优先喂点击/滑轮附近图（带坐标），再上下文/补图。
    * @param {number} [limit]
    */
   async function loadPngBuffers(limit = MAX_TOTAL_FRAMES) {
     const dir = teachFramesDir(options.home, options.sessionId)
     const ordered = [
-      ...frames.filter((f) => f.role === 'click'),
+      ...frames.filter((f) => f.role === 'click' || f.role === 'scroll'),
       ...frames.filter((f) => f.role === 'key'),
       ...frames.filter((f) => f.role === 'supplement'),
     ].slice(0, limit)
@@ -357,6 +501,7 @@ export function createFrameRecorder(options) {
     snapStart,
     snapEnd,
     snapOnClick,
+    snapOnScrollBoundary,
     maybeOnWindow,
     supplement,
     writeManifest,
@@ -365,6 +510,7 @@ export function createFrameRecorder(options) {
     list: () => frames.slice(),
     keyCount,
     clickCount,
+    scrollCount,
     lastWindow: () => lastWindow,
   }
 }
@@ -377,25 +523,29 @@ export function createFrameRecorder(options) {
 export function attachClickFramesToPlaybook(playbook, frameList) {
   const byEvent = new Map()
   for (const f of frameList || []) {
-    if (f.role === 'click' && f.click && f.click.eventI != null) {
-      byEvent.set(f.click.eventI, f)
-    }
+    const meta = f.role === 'click' ? f.click : f.role === 'scroll' ? f.scroll : null
+    if (meta && meta.eventI != null) byEvent.set(meta.eventI, f)
   }
   for (const s of playbook?.steps || []) {
-    if (s.action !== 'click' && s.action !== 'double_click') continue
+    if (s.action !== 'click' && s.action !== 'double_click' && s.action !== 'scroll') continue
     const eventI = s.eventI != null ? s.eventI : s.i
     const f = byEvent.get(eventI)
-    if (!f?.click) continue
+    const meta = f?.click || f?.scroll
+    if (!meta) continue
     s.hint = {
       ...(s.hint || {}),
-      x: f.click.screenX,
-      y: f.click.screenY,
-      imageX: f.click.imageX,
-      imageY: f.click.imageY,
-      imageW: f.click.imageW,
-      imageH: f.click.imageH,
+      x: meta.screenX,
+      y: meta.screenY,
+      imageX: meta.imageX,
+      imageY: meta.imageY,
+      imageW: meta.imageW,
+      imageH: meta.imageH,
+      crop: meta.crop || null,
+      button: meta.button || s.button || undefined,
+      phase: meta.phase || s.phase || undefined,
+      delta: meta.delta != null ? meta.delta : s.delta,
       frameFile: f.file,
-      mapped: f.click.mapped,
+      mapped: meta.mapped,
     }
   }
   return playbook
@@ -409,15 +559,34 @@ export function describeClickFramesForPrompt(images) {
     n += 1
     if (img.role === 'click' && img.click) {
       const c = img.click
-      const size = (c.imageW && c.imageH) ? `，图尺寸 ${c.imageW}×${c.imageH}` : ''
-      const mapNote = c.mapped ? '图内坐标' : '坐标（未缩放映射，近似）'
+      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+      const crop = c.crop
+        ? `鼠标附近裁切 ${c.crop.w}×${c.crop.h}`
+        : `鼠标附近约 ${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+      const btn = formatMouseButtonLabel(c.button)
+      const act = c.action === 'double_click' ? `${btn}双击` : `${btn}点击`
       lines.push(
-        `图${n}（${img.name || img.file}）：步骤#${c.eventI} ${c.action}`
-        + ` 屏幕(${c.screenX},${c.screenY}) → ${mapNote}(${c.imageX},${c.imageY})${size}`
+        `图${n}（${img.name || img.file}）：步骤#${c.eventI} ${act}，${crop}；`
+        + `请在本图上看图内坐标 (${c.imageX},${c.imageY})，图规格 ${size}`
+        + '（勿用整屏坐标）'
+        + (img.window ? ` @「${String(img.window).slice(0, 40)}」` : ''),
+      )
+    } else if (img.role === 'scroll' && img.scroll) {
+      const c = img.scroll
+      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+      const crop = c.crop
+        ? `鼠标附近裁切 ${c.crop.w}×${c.crop.h}`
+        : `鼠标附近约 ${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+      const phase = c.phase === 'start' ? '滚动开始' : '滚动结束'
+      const axis = c.horizontal ? '横向' : '纵向'
+      lines.push(
+        `图${n}（${img.name || img.file}）：步骤#${c.eventI} 滑轮${axis}${phase} δ=${c.delta || 0}，${crop}；`
+        + `光标图内坐标 (${c.imageX},${c.imageY})，图规格 ${size}`
+        + '（勿用整屏坐标；中间滚动格不截图）'
         + (img.window ? ` @「${String(img.window).slice(0, 40)}」` : ''),
       )
     } else {
-      lines.push(`图${n}（${img.name || img.file}）：上下文/${img.reason || img.role}`)
+      lines.push(`图${n}（${img.name || img.file}）：上下文/${img.reason || img.role}（整屏缩略，仅辅助）`)
     }
   }
   return lines.join('\n')
