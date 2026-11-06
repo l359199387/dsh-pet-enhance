@@ -2,7 +2,7 @@
 
 > 一只住在 DSH 里的小宠物：**它看得见你的屏幕，会说话，能聊天，你让它做的事它会自己动手——鼠标、键盘、命令。**
 
-**小瞥**（宠物名）不是摆设。你指着屏幕上的一块问「这是啥」，它看得见；你说「帮我把这个设置改成中文」，它会真的去点。它也有脾气：违法的事不做，破坏性的事先问你，看不懂就停下来问，而不是瞎点。
+**小蓝鲸**（宠物名）不是摆设。你指着屏幕上的一块问「这是啥」，它看得见；你说「帮我把这个设置改成中文」，它会真的去点。它也有脾气：违法的事不做，破坏性的事先问你，看不懂就停下来问，而不是瞎点。
 
 这是一个 DeepSeek Harness 的**可热插拔插件**。装上它，桌面右下角多一只小东西；拔掉它，什么都不留。
 
@@ -97,7 +97,7 @@ Harness「插件」页 → 从目录安装 → 选 packages/dsh-glance
 装完重启宿主，检查三处：
 
 1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-glance`，且 `node_modules/dsh-glance` 是指向本仓库的链接（逐文件 junction，不是拷贝）；
-2. 打开任意会话应看到小瞥（未装 dsh-pet 时是右下角 SVG；**已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时**左下角控制条，形象由 dsh-pet 渲染——我们不拷贝它的 CC BY-NC-SA 素材）；
+2. 打开任意会话应看到小蓝鲸（未装 dsh-pet 时是右下角 SVG；**已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时**左下角控制条，形象由 dsh-pet 渲染——我们不拷贝它的 CC BY-NC-SA 素材）；
 3. 新会话里说「看一眼我屏幕」→ `glance` 出图；卸载后工具与宠物消失、无残留 `python` 进程。外部浏览器直接打开 `/api/glance/status` 会 401，属正常。
 
 没装上或工具没挂上，先看 `~/.dsh/glance-error.log`。开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。

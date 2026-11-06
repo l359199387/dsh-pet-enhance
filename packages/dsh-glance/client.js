@@ -5,8 +5,8 @@
  *
  * 若本机已装 `dsh-pet`：隐藏自绘形象，对话交给它（悬停按 L / Ctrl+Shift+L）；
  * Host 侧 chat-bridge 监听 `/chat`，提到看屏就抓帧并 `/broadcast`。
- * 急停挂在 dsh-pet 右键「更多 → 小瞥急停」。不拷贝其 CC BY-NC-SA 素材。
- * 未安装时回退到原创 SVG 小瞥。
+ * 急停挂在 dsh-pet 右键「更多 → 小蓝鲸急停」。不拷贝其 CC BY-NC-SA 素材。
+ * 未安装时回退到原创 SVG 小蓝鲸。
  *
  * @module client.js
  */
@@ -394,7 +394,7 @@ window.__ModuleLoader__.load({
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
       const [hint, setHint] = useState(
-        '装了 dsh-pet：悬停宠物按 L 对话；说「看一眼屏幕」小瞥会抓帧。未装则用内置形象。',
+        '装了 dsh-pet：悬停宠物按 L 对话；说「看一眼屏幕」小蓝鲸会抓帧。未装则用内置形象。',
       )
 
       useEffect(() => {
@@ -574,9 +574,9 @@ window.__ModuleLoader__.load({
         writeUseDshPet(next)
         setHint(next
           ? (dshPetOk
-            ? '已让位给 dsh-pet：悬停它按 L 对话；说「看屏幕」会触发小瞥抓帧。'
+            ? '已让位给 dsh-pet：悬停它按 L 对话；说「看屏幕」会触发小蓝鲸抓帧。'
             : '勾选了，但还没探测到 dsh-pet；请先安装并启用。')
-          : '改用内置 SVG 小瞥。')
+          : '改用内置 SVG 小蓝鲸。')
       }, [useDshPet, dshPetOk])
 
       const submit = useCallback(() => {
@@ -593,7 +593,7 @@ window.__ModuleLoader__.load({
 
       const statusText = windowTitle
         ? `看着 · ${windowTitle}`
-        : `小瞥 · ${stateLabel(petState)}`
+        : `小蓝鲸 · ${stateLabel(petState)}`
 
       return h(
         'div',
@@ -610,7 +610,7 @@ window.__ModuleLoader__.load({
           onPointerCancel: onPointerUp,
         },
         h('div', { className: 'dg-status', title: statusText },
-          h('strong', null, '小瞥'),
+          h('strong', null, '小蓝鲸'),
           h('span', { className: 'dg-muted' }, ` · ${stateLabel(petState)}`),
           windowTitle ? h('div', { className: 'dg-muted' }, windowTitle) : null,
         ),
@@ -618,7 +618,7 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'dg-panel', onPointerDown: (e) => e.stopPropagation() },
             h('textarea', {
               value: draft,
-              placeholder: '跟小瞥说点什么…',
+              placeholder: '跟小蓝鲸说点什么…',
               onChange: (e) => setDraft(e.target.value),
               onKeyDown: (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -650,7 +650,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dg-hint' }, hint),
           )
           : null,
-        h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小瞥，${stateLabel(petState)}` },
+        h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小蓝鲸，${stateLabel(petState)}` },
           h(PetSvg, { state: petState, pupil, blinking }),
         ),
       )

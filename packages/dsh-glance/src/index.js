@@ -306,7 +306,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
         const r = await registerGlanceMenu()
         if (r.ok) {
           registered = true
-          log('已在 dsh-pet 菜单挂上「小瞥急停」；对话请悬停宠物按 L，说「看一眼屏幕」')
+          log('已在 dsh-pet 菜单挂上「小蓝鲸急停」；对话请悬停宠物按 L，说「看一眼屏幕」')
         } else {
           log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
         }
@@ -322,7 +322,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (!r.ok || !r.data?.ok || !r.data.events) return
       if (r.data.events[MENU_STOP]) {
         state.glance.panic()
-        log('dsh-pet 菜单触发小瞥急停')
+        log('dsh-pet 菜单触发小蓝鲸急停')
       }
     }
 

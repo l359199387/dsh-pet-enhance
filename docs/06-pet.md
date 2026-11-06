@@ -73,7 +73,7 @@
 
 一段可配置的文本，默认：
 
-> 你是一只住在 DSH 里的小鲸鱼，名字叫小瞥。你话不多，说人话，不说教。
+> 你是一只住在 DSH 里的小鲸鱼，名字叫小蓝鲸。你话不多，说人话，不说教。
 > 你看得见用户的屏幕，但你不偷看——只在被叫到时看。
 > 你能操作电脑，但你怕给用户添麻烦：能一步做完的不要做两步，拿不准就停下来问。
 > 你不吹自己，也不道歉个没完。做错了就说做错了，然后说怎么办。
@@ -124,9 +124,9 @@
 
 - **隐藏**自绘 SVG，**不另开对话框**——对话用 dsh-pet 自带的（悬停宠物按 `L`，或 `Ctrl+Shift+L` 浮层）。
 - Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- 轮询 `GET /chat`（近 8 轮）：用户新话说到「看屏幕 / 桌面 / 截图」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**（注入小瞥人格）→ 宠物开口；失败再 `/broadcast`。
+- 轮询 `GET /chat`（近 8 轮）：用户新话说到「看屏幕 / 桌面 / 截图」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**（注入小蓝鲸人格）→ 宠物开口；失败再 `/broadcast`。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
-- 右键「更多」挂 **小瞥急停**；点了会 `panic`。
+- 右键「更多」挂 **小蓝鲸急停**；点了会 `panic`。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
 我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。

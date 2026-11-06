@@ -12,7 +12,7 @@
 
 export const DSH_PET_PREFIX = '/dsh-pet-7340'
 export const MENU_OWNER = 'dsh-glance'
-export const MENU_STOP = '小瞥急停'
+export const MENU_STOP = '小蓝鲸急停'
 /** 动作类接口必填；any = 网页/桌面都能收到。 */
 export const PET_SURFACE = 'any'
 

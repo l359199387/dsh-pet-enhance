@@ -1,5 +1,5 @@
 /**
- * 把小瞥能力接到 dsh-pet 自带对话上（悬停按 L / Ctrl+Shift+L）。
+ * 把小蓝鲸能力接到 dsh-pet 自带对话上（悬停按 L / Ctrl+Shift+L）。
  *
  * B2：会话记忆与气泡归 dsh-pet；我们只做看屏闭环 + episode 落盘 + 附图时注入人格。
  *
@@ -23,7 +23,7 @@ export const GLANCE_INTENT_RE =
   /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance/i
 
 /** 我们二次投喂的提示词前缀——不得命中 GLANCE_INTENT_RE，避免死循环。 */
-export const GLANCE_FOLLOWUP_PREFIX = '【小瞥已附上刚才的画面】'
+export const GLANCE_FOLLOWUP_PREFIX = '【小蓝鲸已附上刚才的画面】'
 
 export function isGlanceIntent(text) {
   const s = String(text ?? '').trim()
@@ -226,7 +226,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小瞥已接入：跟我说「看一眼桌面」或「看一眼屏幕」，我会真的看一眼再回你。',
+      '小蓝鲸已接入：跟我说「看一眼桌面」或「看一眼屏幕」，我会真的看一眼再回你。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {
