@@ -33,6 +33,14 @@ export const CLASSIFY_LABELS = Object.freeze([
 
 const LABEL_SET = new Set(CLASSIFY_LABELS)
 
+const SKILL_STATUS_RE = new RegExp(
+  [
+    '学会.{0,24}(?:了吗|了没|了嘛|了没呀)',
+    '(?:会不会|有没有学会|记得|教过).{0,24}[吗嘛没]',
+    '你(?:会|能|可以).{0,16}(?:吗|嘛|不)',
+  ].join('|'),
+)
+
 /**
  * @param {string} userText
  * @param {{ teaching?: boolean }} [opts]
@@ -81,10 +89,7 @@ export function parseClassifyLabel(reply) {
 export function isSkillStatusQuestion(text) {
   const s = String(text ?? '').trim()
   if (!s) return false
-  return (
-    /学会.{0,24}(?:了吗|了没|了嘛|了没呀)|(?:会不会|有没有学会|记得|教过).{0,24}[吗嘛没]/
-    |你(?:会|能|可以).{0,16}(?:吗|嘛|不)/.test(s)
-  )
+  return SKILL_STATUS_RE.test(s)
 }
 
 /**
