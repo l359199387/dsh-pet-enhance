@@ -18,13 +18,18 @@ afterEach(() => {
   setDshPetBaseUrl('')
 })
 
-test('isGlanceIntent：看屏相关命中，闲聊与 follow-up 不命中', () => {
+test('isGlanceIntent：看屏/桌面相关命中，闲聊与 follow-up 不命中', () => {
   assert.equal(isGlanceIntent('帮我看一眼屏幕'), true)
   assert.equal(isGlanceIntent('看一眼我的屏幕'), true)
+  assert.equal(isGlanceIntent('看一眼我的桌面'), true)
+  assert.equal(isGlanceIntent('看看桌面'), true)
+  assert.equal(isGlanceIntent('帮我看桌面'), true)
+  assert.equal(isGlanceIntent('桌面上有什么'), true)
   assert.equal(isGlanceIntent('看看屏幕上写了什么'), true)
   assert.equal(isGlanceIntent('截个图'), true)
   assert.equal(isGlanceIntent('glance please'), true)
   assert.equal(isGlanceIntent('今天吃什么'), false)
+  assert.equal(isGlanceIntent('帮我看一下天气预报'), false)
   assert.equal(isGlanceIntent(`${GLANCE_FOLLOWUP_PREFIX}请描述`), false)
   assert.equal(isGlanceIntent(''), false)
 })

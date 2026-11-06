@@ -15,15 +15,19 @@ import {
 } from './dsh-pet.js'
 import { captureFrame } from './capture.js'
 
+/**
+ * 用户要「真的看一下」时的说法。必须覆盖「桌面 / 屏幕」，
+ * 否则 dsh-pet 只会嘴上聊，bridge 根本不抓屏。
+ */
 export const GLANCE_INTENT_RE =
-  /看(?:一眼|看|下)?(?:我的)?屏幕|屏幕上|帮我看|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|glance/i
+  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance/i
 
 /** 我们二次投喂的提示词前缀——不得命中 GLANCE_INTENT_RE，避免死循环。 */
 export const GLANCE_FOLLOWUP_PREFIX = '【小瞥已附上刚才的画面】'
 
 export function isGlanceIntent(text) {
-  const s = String(text ?? '')
-  if (s.startsWith(GLANCE_FOLLOWUP_PREFIX)) return false
+  const s = String(text ?? '').trim()
+  if (!s || s.startsWith(GLANCE_FOLLOWUP_PREFIX)) return false
   return GLANCE_INTENT_RE.test(s)
 }
 
@@ -48,7 +52,7 @@ function followUpPrompt(userText, shot) {
     `${GLANCE_FOLLOWUP_PREFIX}`
     + `用户刚说「${userText.slice(0, 80)}」。`
     + `我已抓到${where} → ${shot.width}×${shot.height}。`
-    + '请根据附图用一两句口语告诉用户屏幕上现在有什么，不要提你是插件。'
+    + '请根据附图用一两句口语告诉用户桌面/屏幕上现在有什么，说具体内容，不要提你是插件。'
   )
 }
 
@@ -82,7 +86,7 @@ export function createChatBridge(options) {
       }).catch(() => {})
 
       // 先用气泡报一声（无锁也可投；surface=any）
-      const notice = await broadcastToDshPet('好，我看一眼屏幕…', { pet, duration: 6_000 })
+      const notice = await broadcastToDshPet('好，我瞅一眼桌面…', { pet, duration: 6_000 })
       if (!notice.ok || notice.data?.ok === false) {
         log(`chat-bridge 预告气泡失败：${notice.error || notice.data?.reason || notice.status}`)
       }
