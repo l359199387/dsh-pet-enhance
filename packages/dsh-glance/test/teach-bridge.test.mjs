@@ -26,14 +26,24 @@ test('parseTeachDigestReply：OK / NEED_MORE', () => {
   assert.equal(parseTeachDigestReply('NEED_MORE').needMore, true)
   assert.equal(parseTeachDigestReply('OK: 在记事本写心情').summary.includes('心情'), true)
   assert.ok(buildTeachDigestPrompt('g', 'n', 3).startsWith(AGENT_WAKE_PREFIX))
+  const withClick = buildTeachDigestPrompt('g', 'n', [{
+    role: 'click',
+    name: '00-click-step0.png',
+    click: {
+      eventI: 0, action: 'click', screenX: 10, screenY: 20,
+      imageX: 5, imageY: 10, imageW: 798, imageH: 449, mapped: true,
+    },
+  }])
+  assert.match(withClick, /图内坐标\(5,10\)/)
 })
 
-test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自动动手', async () => {
+test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不自动动手', async () => {
   await saveSettings(home, { liveWatch: true, actEnabled: true })
   const acts = []
   const liveOps = []
   const wakes = []
   const queued = [
+    { kind: 'click', x: 800, y: 450, button: 'left', window: { title: '桌面' } },
     { kind: 'key', keys: 'ctrl+s', window: { title: '记事本' } },
     { kind: 'type', text: 'hello', window: { title: '记事本' } },
   ]
@@ -59,7 +69,13 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
     log() {},
     pollChat: false,
     getPreferredSessionId: () => 'sess-teach',
-    capture: async () => ({ png: tinyPng, window: { title: '记事本' } }),
+    capture: async () => ({
+      png: tinyPng,
+      width: 798,
+      height: 449,
+      screen: { w: 1600, h: 900 },
+      window: { title: '记事本' },
+    }),
     ensureLiveWatch: async (on) => { liveOps.push(on) },
     attachments: {
       async saveImage() { return { id: 'att-1' } },
@@ -92,7 +108,8 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
     await bridge.startTeaching('我教你一下保存文件')
     await bridge.stopAndRun()
     assert.equal(acts.length, 0)
-    assert.ok(wakes.some((w) => w.images >= 1), '理解时应喂关键帧')
+    assert.ok(wakes.some((w) => w.images >= 1), '理解时应喂点击截图')
+    assert.ok(wakes.some((w) => /图内坐标|屏幕\(/.test(w.text)), '提示应含点击坐标')
     assert.ok(liveOps.includes(false), '学完应关实时看屏幕')
     const idx = await listLearnedIndex(home)
     assert.equal(idx.length, 1)
@@ -104,6 +121,10 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
       pair.playbook.steps.some((s) => s.kind === 'typed-text' && s.text === 'hello'),
       '用户键入应记成 typed-text',
     )
+    const clickStep = pair.playbook.steps.find((s) => s.action === 'click')
+    assert.ok(clickStep?.hint?.frameFile, '点击步应绑定截图文件')
+    assert.equal(clickStep.hint.imageX, 399)
+    assert.equal(clickStep.hint.imageY, Math.round(450 * 449 / 900))
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh

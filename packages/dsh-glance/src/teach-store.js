@@ -165,6 +165,7 @@ export function buildPublicPlan(events) {
   for (const ev of events) {
     if (ev.kind === 'click' || ev.kind === 'double_click') {
       steps.push({
+        eventI: ev.i,
         action: ev.kind === 'double_click' ? 'double_click' : 'click',
         x: ev.x,
         y: ev.y,
@@ -175,6 +176,7 @@ export function buildPublicPlan(events) {
     } else if (ev.kind === 'type') {
       if (ev.sensitive || ev.secretRef) {
         steps.push({
+          eventI: ev.i,
           action: 'type',
           secretRef: ev.secretRef,
           window: ev.window?.title || null,
@@ -183,6 +185,7 @@ export function buildPublicPlan(events) {
         })
       } else {
         steps.push({
+          eventI: ev.i,
           action: 'type',
           text: ev.text || '',
           window: ev.window?.title || null,
@@ -191,6 +194,7 @@ export function buildPublicPlan(events) {
       }
     } else if (ev.kind === 'key') {
       steps.push({
+        eventI: ev.i,
         action: 'key',
         keys: ev.keys,
         window: ev.window?.title || null,
@@ -209,7 +213,11 @@ export function narratePlan(steps) {
   return steps.map((s, i) => {
     const n = i + 1
     if (s.action === 'click' || s.action === 'double_click') {
-      return `${n}. ${s.action} (${s.x},${s.y})${s.window ? ` 「${String(s.window).slice(0, 24)}」` : ''}`
+      const win = s.window ? ` 「${String(s.window).slice(0, 24)}」` : ''
+      const img = s.hint?.imageX != null
+        ? ` → 图内(${s.hint.imageX},${s.hint.imageY})`
+        : ''
+      return `${n}. ${s.action} 屏幕(${s.x},${s.y})${img}${win}`
     }
     if (s.action === 'type') {
       if (s.secretRef || s.publicNote?.includes('敏感')) {
@@ -284,6 +292,7 @@ export function buildPlaybook(goal, steps, sessionId) {
     }
     return {
       i,
+      eventI: s.eventI != null ? s.eventI : i,
       mode: 'glance',
       action: s.action,
       button: s.button || 'left',

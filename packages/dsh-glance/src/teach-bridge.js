@@ -32,19 +32,33 @@ import {
   readAutomationPlaybook,
 } from './learned-automation.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
-import { createFrameRecorder } from './teach-frames.js'
+import {
+  attachClickFramesToPlaybook,
+  createFrameRecorder,
+  describeClickFramesForPrompt,
+} from './teach-frames.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 
-/** 教学理解提示：只消化附图+文字，禁止动手。 */
-export function buildTeachDigestPrompt(goal, narrative, frameCount) {
+/**
+ * 教学理解提示：每张点击图带图内坐标，供模型理解点了哪里。
+ * @param {string} goal
+ * @param {string} narrative
+ * @param {number|object[]} frameCountOrImages 张数，或带 click 元数据的附图列表
+ */
+export function buildTeachDigestPrompt(goal, narrative, frameCountOrImages) {
+  const images = Array.isArray(frameCountOrImages) ? frameCountOrImages : null
+  const frameCount = images ? images.length : Number(frameCountOrImages) || 0
+  const legend = images ? describeClickFramesForPrompt(images) : ''
   return (
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
     + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
-    + `附图 ${frameCount} 张（关键帧，控 token）。步骤摘要：\n${String(narrative || '').slice(0, 400)}\n`
-    + '「用户键入文字「…」」是主人亲手打的字（如文件夹名），要记进自动化语义，不是坐标。'
-    + '请根据图与摘要用一两句话说明用户在教什么自动化。'
+    + `附图 ${frameCount} 张（每次点击一张，坐标已标在对应图上；执行时不再带图）。\n`
+    + (legend ? `附图与点击对应关系：\n${legend}\n` : '')
+    + `步骤摘要：\n${String(narrative || '').slice(0, 500)}\n`
+    + '请结合「图内坐标」看用户点了界面何处；「用户键入文字「…」」是亲手打的字，记进语义。'
+    + '用一两句话说明在教什么自动化。'
     + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
     + '禁止调用 act；不要执行操作。'
   )
@@ -325,7 +339,7 @@ export function createTeachBridge(options) {
     }).catch(() => {})
     await frames.snapStart()
     await broadcastToDshPet(
-      `好，眼睛开着，我跟着学（关键帧少量截图只用于学会）。目标：${clip(goal, 36)}。`
+      `好，眼睛开着，我跟着学（每次点击都会截一张图，只用于学会）。目标：${clip(goal, 36)}。`
       + '你点、你输入；做完告诉我。不懂我会问，问清再建自动化。学完会关实时看屏幕。密码只记本地。',
       { pet, duration: 14_000 },
     )
@@ -354,7 +368,17 @@ export function createTeachBridge(options) {
       stepIndex += 1
       lastEventAt = Date.now()
       askedIdle = false
-      if (norm.window?.title && frames) {
+      const isClick = norm.kind === 'click' || norm.kind === 'double_click'
+      if (isClick && frames) {
+        await frames.snapOnClick({
+          eventI: norm.i,
+          x: norm.x,
+          y: norm.y,
+          button: norm.button || 'left',
+          action: norm.kind,
+          window: norm.window?.title || null,
+        })
+      } else if (norm.window?.title && frames) {
         await frames.maybeOnWindow(norm.window.title)
       }
       if (norm.sensitive && norm.kind === 'type') {
@@ -386,7 +410,7 @@ export function createTeachBridge(options) {
 
     const preferred = options.getPreferredSessionId?.() ?? null
     const askOnce = async (imageList) => {
-      const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList.length)
+      const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
       const woken = await wake(options.ctx, {
         text: prompt,
         preferredId: preferred,
@@ -497,10 +521,19 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 1) 关键帧 + 文字 → 模型理解（不够再补前后帧）；不执行
-    await broadcastToDshPet('好，我用少量关键帧理解你刚才的操作…', { pet, duration: 6_000 })
+    // 1) 点击截图（含图内坐标）+ 文字 → 模型理解；不执行
+    await broadcastToDshPet('好，我用每次点击的截图理解你刚才的操作…', { pet, duration: 6_000 })
     const playbook = buildPlaybook(goal, steps, id)
-    const narrative = narratePlan(steps)
+    if (frames) {
+      attachClickFramesToPlaybook(playbook, frames.list())
+    }
+    const narrative = narratePlan(playbook.steps.map((s) => ({
+      ...s,
+      x: s.hint?.x ?? s.x,
+      y: s.hint?.y ?? s.y,
+      text: s.text,
+      window: s.window,
+    })))
     await updateTeachMeta(options.home, id, { status: 'understanding' })
     const digested = await digestWithFrames(id, goal, narrative)
 
@@ -566,14 +599,14 @@ export function createTeachBridge(options) {
 
     if (harness.ok) {
       await broadcastToDshPet(
-        `理解清楚了（用了 ${frameMeta.count} 张关键帧，执行时不再看这些图）。`
+        `理解清楚了（${frameMeta.clicks ?? frameMeta.count} 次点击截图，执行时不再看这些图）。`
         + `学习文件已存，Harness 自动化「${clip(goal, 24)}」已创建（暂停）。`
         + '我不会现在动手。要跑时说「再做一次」或自动化页立即运行。',
         { pet, duration: 16_000 },
       )
     } else {
       await broadcastToDshPet(
-        `学习文件已存（含 ${frameMeta.count} 张关键帧），本地自动化已建；`
+        `学习文件已存（含 ${frameMeta.count} 张教学截图），本地自动化已建；`
         + `Harness 页登记失败（${harness.reason || '无 schedule'}）。这次不动手。`,
         { pet, duration: 16_000 },
       )
