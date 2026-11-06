@@ -14,9 +14,10 @@ import { test } from 'node:test'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const CLIENT = join(HERE, '..', 'client.js')
 
-function loadClientTestApi() {
+function loadClientTestApi(opts = {}) {
   const source = readFileSync(CLIENT, 'utf8')
   let api
+  const keys = opts.keys || null
   const sandbox = {
     window: {
       __ModuleLoader__: {
@@ -38,7 +39,23 @@ function loadClientTestApi() {
           api = factory(fakeRequire)
         },
       },
+      setTimeout: (fn) => fn(),
     },
+    document: {
+      dispatchEvent(ev) {
+        if (keys) {
+          keys.push({
+            key: ev.key,
+            code: ev.code,
+            ctrlKey: Boolean(ev.ctrlKey),
+            metaKey: Boolean(ev.metaKey),
+            shiftKey: Boolean(ev.shiftKey),
+          })
+        }
+        return true
+      },
+    },
+    navigator: { platform: 'Win32', userAgent: 'test' },
     console,
   }
   vm.runInNewContext(source, sandbox, { filename: CLIENT })
@@ -61,6 +78,7 @@ test('client 纯函数：clampPos / stateLabel', () => {
     assert.equal(api.STORAGE_POS, 'dsh-glance.pos')
     assert.equal(typeof api.eventOnDshPet, 'function')
     assert.equal(typeof api.bindDshPetClickToChat, 'function')
+    assert.equal(typeof api.openDshPetNativeChat, 'function')
   } finally {
     if (prev === undefined) delete globalThis.window
     else globalThis.window = prev
@@ -78,4 +96,20 @@ test('eventOnDshPet：识别命中区 class', () => {
     composedPath: () => [{ classList: { contains: () => false } }],
     target: { closest: () => null },
   }), false)
+})
+
+test('openDshPetNativeChat：hover 发裸 L，global 发主键+Shift+L', () => {
+  const keys = []
+  const api = loadClientTestApi({ keys })
+  api.openDshPetNativeChat('hover')
+  assert.equal(keys.length, 1)
+  assert.equal(keys[0].key, 'l')
+  assert.equal(keys[0].shiftKey, false)
+  assert.equal(keys[0].ctrlKey, false)
+  keys.length = 0
+  api.openDshPetNativeChat('global')
+  assert.equal(keys.length, 1)
+  assert.equal(keys[0].key, 'l')
+  assert.equal(keys[0].shiftKey, true)
+  assert.equal(keys[0].ctrlKey || keys[0].metaKey, true)
 })

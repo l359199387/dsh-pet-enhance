@@ -122,7 +122,7 @@
 
 探测：`GET /dsh-pet-7340/state` 成功 → 进入代理模式：
 
-- **隐藏**自绘 SVG 形象；网页里**单击宠物**弹出聊天窗；桌面独立窗请点页面右下角「小蓝鲸 · 聊天」（也可仍用 dsh-pet 右键「对话」/ `Ctrl+Shift+L`）。
+- **隐藏**自绘 SVG 形象；网页里**单击宠物**打开 dsh-pet 自带对话弹窗（同右键「对话」/ 悬停 `L`）；右下角「对话」钮等价 `Ctrl+Shift+L`。桌面独立窗请右键「对话」。
 - Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
 - 轮询 `GET /chat`（近 8 轮）：
   - 「看屏幕 / 桌面 / 截图」→ `chat-bridge` 抓帧附图让宠物开口。

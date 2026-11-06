@@ -3,9 +3,9 @@
  *
  * 挂在 `shell.overlay`。
  *
- * 若本机已装 `dsh-pet`：隐藏自绘形象，对话交给它；
- * **单击宠物**弹出聊天窗（走 dsh-pet `/chat`，Host bridge 仍监听同一份记忆）；
- * 急停在右键「更多」。未装 dsh-pet 时用内置 SVG，同样单击开聊。
+ * 若本机已装 `dsh-pet`：隐藏自绘形象；
+ * **单击宠物**打开 dsh-pet 自带对话弹窗（等同悬停按 L / 右键「对话」）；
+ * 急停在右键「更多」。未装时用内置 SVG。
  *
  * @module client.js
  */
@@ -50,10 +50,58 @@ window.__ModuleLoader__.load({
       return false
     }
 
+    function dispatchKey(partial) {
+      const doc = (typeof document !== 'undefined' && document)
+        || globalThis.document
+        || globalThis.window?.document
+      if (!doc?.dispatchEvent) return null
+      const init = { bubbles: true, cancelable: true, ...partial }
+      let ev
+      if (typeof KeyboardEvent === 'function') {
+        try { ev = new KeyboardEvent('keydown', init) } catch { ev = { type: 'keydown', ...init } }
+      } else {
+        ev = { type: 'keydown', ...init }
+      }
+      doc.dispatchEvent(ev)
+      return ev
+    }
+
     /**
-     * 网页端单击（非拖拽）落在 dsh-pet → 回调。
-     * 桌面独立窗里的点击进不了本页 document，需另靠常驻「聊天」钮。
-     * @param {(p: { x: number, y: number }) => void} onOpen
+     * 打开 dsh-pet 自带对话弹窗（右键「对话」/ 悬停 L 那一套）。
+     * - hover：刚点在宠物上，hover 仍为 true → 发裸 L（dsh-pet bindOpenChat）
+     * - global：无悬停（如右下角按钮）→ Ctrl/Cmd+Shift+L（pet-chat.float）
+     */
+    function openDshPetNativeChat(mode = 'hover') {
+      if (mode === 'global') {
+        const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || '')
+        dispatchKey({
+          key: 'l',
+          code: 'KeyL',
+          keyCode: 76,
+          which: 76,
+          ctrlKey: !isMac,
+          metaKey: isMac,
+          shiftKey: true,
+          altKey: false,
+        })
+        return
+      }
+      // 裸 L：与菜单 hint「L 键」一致；要求指针仍停在宠物上（单击抬起时通常满足）
+      dispatchKey({
+        key: 'l',
+        code: 'KeyL',
+        keyCode: 76,
+        which: 76,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+      })
+    }
+
+    /**
+     * 网页端单击（非拖拽）落在 dsh-pet → 打开原生对话。
+     * 桌面独立窗的点击进不了本页；桌面请继续右键「对话」，或把显示位置设成含网页。
      */
     function bindDshPetClickToChat(onOpen) {
       let start = null
@@ -67,11 +115,10 @@ window.__ModuleLoader__.load({
         if (start.pointerId != null && e.pointerId !== start.pointerId) return
         const dx = e.clientX - start.x
         const dy = e.clientY - start.y
-        const origin = start
         start = null
-        // 抬起时不必仍在命中区：dsh-pet 会 pointer capture，target 可能变。
         if (Math.hypot(dx, dy) > 6) return
-        onOpen?.({ x: origin.x, y: origin.y })
+        // 下一帧再发键：让 dsh-pet 先处理完 pointerup / click，hover 标记仍在
+        window.setTimeout(() => onOpen?.(), 0)
       }
       const onCancel = (e) => {
         if (start && start.pointerId != null && e.pointerId !== start.pointerId) return
@@ -87,20 +134,14 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function clampChatPanelPos(p) {
-      const w = 280
-      const h = 220
-      const margin = 8
-      const x = Math.min(Math.max(margin, p.x - w / 2), Math.max(margin, window.innerWidth - w - margin))
-      const y = Math.min(Math.max(margin, p.y - h - 12), Math.max(margin, window.innerHeight - h - margin))
-      return { x, y }
-    }
-
-    function defaultChatPos() {
-      return clampChatPanelPos({
-        x: window.innerWidth - 160,
-        y: window.innerHeight - 80,
-      })
+    function clampDockPos() {
+      const w = 148
+      const h = 36
+      const margin = 12
+      return {
+        x: Math.max(margin, window.innerWidth - w - margin),
+        y: Math.max(margin, window.innerHeight - h - margin),
+      }
     }
 
     const CSS = `
@@ -498,19 +539,9 @@ window.__ModuleLoader__.load({
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
-      const [chatPos, setChatPos] = useState(() => defaultChatPos())
       const [hint, setHint] = useState(
-        '点网页里的宠物，或右下角「聊天」打开对话。桌面独立窗点不到网页监听，请用「聊天」钮。',
+        '点宠物打开对话（同右键「对话」/ L）。桌面独立窗请右键「对话」，或显示位置含网页后再点。',
       )
-
-      const openChatAt = useCallback((p) => {
-        setChatPos(clampChatPanelPos(p || {
-          x: window.innerWidth - 160,
-          y: window.innerHeight - 80,
-        }))
-        setOpen(true)
-        setHint('跟小蓝鲸说点什么吧。')
-      }, [])
 
       useEffect(() => {
         setPos((p) => clampPos(p, false))
@@ -560,8 +591,8 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         if (!proxy) return undefined
-        return bindDshPetClickToChat((p) => openChatAt(p))
-      }, [proxy, openChatAt])
+        return bindDshPetClickToChat(() => openDshPetNativeChat('hover'))
+      }, [proxy])
 
       useEffect(() => {
         if (proxy) return undefined
@@ -694,9 +725,9 @@ window.__ModuleLoader__.load({
         writeUseDshPet(next)
         setHint(next
           ? (dshPetOk
-            ? '已让位给 dsh-pet：点一下宠物弹出对话。'
+            ? '已让位给 dsh-pet：点一下打开右键「对话」同款弹窗。'
             : '勾选了，但还没探测到 dsh-pet；请先安装并启用。')
-          : '改用内置 SVG 小蓝鲸：点一下打开聊天窗。')
+          : '改用内置 SVG 小蓝鲸。')
       }, [useDshPet, dshPetOk])
 
       const submit = useCallback(async () => {
@@ -758,14 +789,8 @@ window.__ModuleLoader__.load({
               disabled: busy,
               onClick: submit,
             }, busy ? '…' : '发送'),
-            proxy
-              ? h('button', {
-                type: 'button',
-                className: 'dg-btn',
-                onClick: () => setOpen(false),
-              }, '关闭')
-              : h('button', { type: 'button', className: 'dg-btn', onClick: sleepToggle },
-                petState === 'sleeping' ? '叫醒' : '睡觉'),
+            h('button', { type: 'button', className: 'dg-btn', onClick: sleepToggle },
+              petState === 'sleeping' ? '叫醒' : '睡觉'),
             h('button', {
               type: 'button',
               className: 'dg-btn danger',
@@ -774,44 +799,21 @@ window.__ModuleLoader__.load({
               onClick: stop,
             }, '⏹'),
           ),
-          proxy
-            ? null
-            : h('div', { className: 'dg-row' },
-              h('button', {
-                type: 'button',
-                className: 'dg-btn',
-                onClick: toggleAvatar,
-                title: dshPetOk ? '让位给 dsh-pet（点宠物弹对话）' : '未探测到 dsh-pet',
-              }, useDshPet ? (dshPetOk ? '形象：dsh-pet' : '形象：等 dsh-pet') : '形象：内置'),
-            ),
+          h('div', { className: 'dg-row' },
+            h('button', {
+              type: 'button',
+              className: 'dg-btn',
+              onClick: toggleAvatar,
+              title: dshPetOk ? '让位给 dsh-pet（点宠物 = 右键对话）' : '未探测到 dsh-pet',
+            }, useDshPet ? (dshPetOk ? '形象：dsh-pet' : '形象：等 dsh-pet') : '形象：内置'),
+          ),
           h('div', { className: 'dg-hint' }, hint),
         )
         : null
 
-      // 已装 dsh-pet：不抢形象；网页宠物可点开聊；桌面窗点不到时用右下角「聊天」钮。
+      // 已装 dsh-pet：不抢形象；单击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
       if (proxy) {
-        if (open) {
-          return h(
-            'div',
-            {
-              ref: rootRef,
-              className: 'dg-root',
-              'data-state': petState,
-              'data-mode': 'chat',
-              'data-open': '1',
-              style: { left: `${chatPos.x}px`, top: `${chatPos.y}px` },
-            },
-            h('div', { className: 'dg-status', title: statusText },
-              h('strong', null, '小蓝鲸'),
-              h('span', { className: 'dg-muted' }, ' · 对话'),
-            ),
-            chatPanel,
-          )
-        }
-        const dock = clampChatPanelPos({
-          x: window.innerWidth - 72,
-          y: window.innerHeight - 36,
-        })
+        const dock = clampDockPos()
         return h(
           'div',
           {
@@ -823,13 +825,10 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dg-dock',
-            title: '打开小蓝鲸聊天（桌面宠物请点这里）',
-            'aria-label': '打开小蓝鲸聊天',
-            onClick: () => openChatAt({
-              x: window.innerWidth - 160,
-              y: window.innerHeight - 80,
-            }),
-          }, '小蓝鲸 · 聊天'),
+            title: '打开 dsh-pet 对话（同 Ctrl+Shift+L / 右键「对话」）',
+            'aria-label': '打开桌宠对话',
+            onClick: () => openDshPetNativeChat('global'),
+          }, '对话'),
         )
       }
 
@@ -883,7 +882,7 @@ window.__ModuleLoader__.load({
       stateLabel,
       workStatusFor,
       bindDshPetClickToChat,
-      clampChatPanelPos,
+      openDshPetNativeChat,
       eventOnDshPet,
       STORAGE_POS,
       STORAGE_USE_PET,
