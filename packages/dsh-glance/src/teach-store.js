@@ -212,7 +212,11 @@ export function narratePlan(steps) {
       return `${n}. ${s.action} (${s.x},${s.y})${s.window ? ` 「${String(s.window).slice(0, 24)}」` : ''}`
     }
     if (s.action === 'type') {
-      return `${n}. ${s.publicNote || `输入「${String(s.text || '').slice(0, 24)}」`}`
+      if (s.secretRef || s.publicNote?.includes('敏感')) {
+        return `${n}. ${s.publicNote || '输入（敏感·仅本地）'}`
+      }
+      const t = String(s.text || '').slice(0, 40)
+      return `${n}. 用户键入文字「${t}」`
     }
     if (s.action === 'key') return `${n}. 按键 ${s.keys}`
     return `${n}. ${s.action}`
@@ -228,8 +232,10 @@ const SAFE_SCRIPT_KEYS = new Set([
 
 /**
  * Host 侧零模型消化。
- * 明文 type / 点击 → glance（给模型理解，禁止盲重放）；
- * secretRef 与少数安全快捷键 → script。
+ * - 用户亲手键入的明文 → script（记成「文字」步骤，自动化可复打同一段字）
+ * - 敏感 type → script + secretRef（不上模型）
+ * - 点击坐标 → glance（界面易变，禁止盲点）
+ * 教完仍不自动执行；只有用户说跑才动手。
  */
 export function buildPlaybook(goal, steps, sessionId) {
   const items = (steps || []).map((s, i) => {
@@ -260,17 +266,20 @@ export function buildPlaybook(goal, steps, sessionId) {
         action: 'type',
         secretRef: `${sessionId}/${s.secretRef}`,
         window: s.window || null,
+        publicNote: '输入（本地敏感·已保存，不上模型）',
       }
     }
     if (s.action === 'type') {
-      // 演示打字只作证据，绝不本地盲打（曾导致「胡乱打字」）
+      const text = String(s.text || '').slice(0, 500)
+      // 主人自己打的字：记成文字步骤（如文件夹名 meirixinqing1）
       return {
         i,
-        mode: 'glance',
+        mode: 'script',
         action: 'type',
+        text,
         window: s.window || null,
-        hint: { typed: String(s.text || '').slice(0, 80) },
-        publicNote: s.publicNote || `演示输入「${String(s.text || '').slice(0, 24)}」`,
+        kind: 'typed-text',
+        publicNote: s.publicNote || `用户键入文字「${text.slice(0, 40)}」`,
       }
     }
     return {

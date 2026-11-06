@@ -43,6 +43,7 @@ export function buildTeachDigestPrompt(goal, narrative, frameCount) {
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
     + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
     + `附图 ${frameCount} 张（关键帧，控 token）。步骤摘要：\n${String(narrative || '').slice(0, 400)}\n`
+    + '「用户键入文字「…」」是主人亲手打的字（如文件夹名），要记进自动化语义，不是坐标。'
     + '请根据图与摘要用一两句话说明用户在教什么自动化。'
     + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
     + '禁止调用 act；不要执行操作。'

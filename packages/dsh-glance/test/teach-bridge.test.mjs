@@ -100,6 +100,10 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
     assert.equal(pair.ok, true)
     assert.ok(existsSync(join(learnedFramesDir(home, idx[0].id), 'manifest.json')))
     assert.ok(pair.learn.frames?.forLearningOnly)
+    assert.ok(
+      pair.playbook.steps.some((s) => s.kind === 'typed-text' && s.text === 'hello'),
+      '用户键入应记成 typed-text',
+    )
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh
