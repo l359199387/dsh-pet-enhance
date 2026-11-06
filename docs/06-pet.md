@@ -131,6 +131,7 @@
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
+- **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/glance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
 - **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 教学中头顶常驻可点 **「我教完了」**（`/api/glance/teach-end`）→ 点击/滑轮附近截图作证据 → 理解阶段要 **OK+FAST 快捷路径**（不鼓励机械复刻）并 **主动多问几句**（目的/变通/以达成目的为准）→ learned↔automations（`strategy.approach=smart`）+ Harness 标题 `小蓝鲸｜…`。执行优先按 FAST 叫醒变通；**学完关实时看屏幕**；教完不自动动手。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import {
+  ACT_SHIELD_PATCH_MARK,
   CONFIRM_PATCH_MARK,
   CONFIRM_SCRIPT_NAME,
   applyDshPetConfirmPatches,
@@ -50,15 +51,26 @@ test('applyDshPetConfirmPatches 写入脚本并改 html/input/renderer', () => {
     '    window.__dshPetDebug.configOk = true;',
     '',
   ].join('\n'), 'utf8')
+  mkdirSync(join(helper, 'main'), { recursive: true })
+  writeFileSync(join(helper, 'main', 'windows.js'), [
+    '    const pointerTimer = setInterval(() => {',
+    '      if (pointerFallbackPaused || win.isDestroyed()) return;',
+    '      const bounds = win.getBounds();',
+    '    }, POINTER_POLL_MS);',
+    '',
+  ].join('\n'), 'utf8')
 
   const a = applyDshPetConfirmPatches({ roots: [root], token: 'tokentokentoken12' })
   assert.equal(a.ok, true)
   assert.ok(a.results.some((r) => r.changed))
   const script = readFileSync(join(sprite, CONFIRM_SCRIPT_NAME), 'utf8')
   assert.ok(script.includes('tokentokentoken12'))
+  assert.ok(script.includes("petState === 'acting'"))
   assert.ok(readFileSync(join(helper, 'index.html'), 'utf8').includes(CONFIRM_SCRIPT_NAME))
   assert.ok(readFileSync(join(sprite, 'input.js'), 'utf8').includes('_glanceConfirmOn'))
   assert.ok(readFileSync(join(helper, 'renderer.js'), 'utf8').includes('__dshGlanceSprites'))
+  assert.ok(readFileSync(join(helper, 'main', 'windows.js'), 'utf8').includes(ACT_SHIELD_PATCH_MARK))
+  assert.ok(readFileSync(join(helper, 'main', 'windows.js'), 'utf8').includes('desktop-act.lock'))
 
   const b = applyDshPetConfirmPatches({ roots: [root], token: 'tokentokentoken12' })
   assert.ok(b.results.every((r) => !r.changed || r.reason === 'unchanged' || r.reason === 'already-patched'))

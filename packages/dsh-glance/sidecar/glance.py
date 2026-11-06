@@ -662,12 +662,16 @@ def handle_input(req: dict) -> dict:
 
     _abort_event.clear()
     try:
-        return run_actions(
-            actions if isinstance(actions, list) else [],
-            abort_event=_abort_event,
-            dry_run=dry_run,
-            resolve_focus=resolve_focus,
-        )
+        from pet_shield import pet_act_shield
+
+        # 动手期间锁住桌宠穿透，避免 Helper 轮询翻 setIgnoreMouseEvents 弄丢置顶（表现为「卡没了」）
+        with pet_act_shield(dry_run=dry_run):
+            return run_actions(
+                actions if isinstance(actions, list) else [],
+                abort_event=_abort_event,
+                dry_run=dry_run,
+                resolve_focus=resolve_focus,
+            )
     except FailsafeAbort:
         x, y = cursor_pos()
         return {

@@ -10,6 +10,25 @@ import { listDshPetRoots } from './patch-dsh-pet-click.js'
 
 export const CONFIRM_PATCH_MARK = 'dsh-glance:confirm-bubble-v2'
 export const CONFIRM_SCRIPT_NAME = 'glance-confirm.js'
+/** Helper 穿透兜底：动手锁文件存在时强制 ignore，避免自动化把桌宠顶掉。 */
+export const ACT_SHIELD_PATCH_MARK = 'dsh-glance:act-shield'
+
+const WINDOWS_POINTER_NEEDLE = [
+  '    const pointerTimer = setInterval(() => {',
+  '      if (pointerFallbackPaused || win.isDestroyed()) return;',
+].join('\n')
+
+const WINDOWS_POINTER_REPLACEMENT = [
+  '    const pointerTimer = setInterval(() => {',
+  '      if (pointerFallbackPaused || win.isDestroyed()) return;',
+  `      try { /* ${ACT_SHIELD_PATCH_MARK} */`,
+  "        var _glanceActHome = process.env.DSH_GLANCE_HOME || require('path').join(require('os').homedir(), '.dsh', 'glance');",
+  "        if (require('fs').existsSync(require('path').join(_glanceActHome, 'desktop-act.lock'))) {",
+  '          if (windowIgnore.get(win.id) !== true) setWindowIgnore(win, true);',
+  '          return;',
+  '        }',
+  '      } catch (_glanceActErr) { /* ignore */ }',
+].join('\n')
 
 const HTML_NEEDLE = '    <script src="./sprite/menu.js"></script>\n    <script src="./events.js"></script>'
 const HTML_REPLACEMENT = [
@@ -263,6 +282,16 @@ export function buildGlanceConfirmScript(token) {
       } else if (teachEndOn) {
         hideTeachEnd();
       }
+      // 动手中尽量保持穿透（主防护在 windows.js 的 desktop-act.lock）
+      var petState = body && body.pet && body.pet.state && body.pet.state.data;
+      if (petState === 'acting') {
+        var sprites = window.__dshGlanceSprites || [];
+        for (var si = 0; si < sprites.length; si++) {
+          try {
+            if (typeof sprites[si].setInteractive === 'function') sprites[si].setInteractive(false);
+          } catch (e2) { /* ignore */ }
+        }
+      }
     } catch (e) {
       /* Host 未起或令牌未就绪：静默 */
     }
@@ -383,6 +412,21 @@ export function applyDshPetConfirmPatches(options = {}) {
       }
     } else {
       results.push({ path: rendererJs, reason: 'missing', changed: false })
+    }
+
+    const windowsJs = join(helper, 'main', 'windows.js')
+    if (existsSync(windowsJs)) {
+      let raw = readFileSync(windowsJs, 'utf8')
+      if (raw.includes(ACT_SHIELD_PATCH_MARK)) {
+        results.push({ path: windowsJs, reason: 'already-patched', changed: false })
+      } else if (raw.includes(WINDOWS_POINTER_NEEDLE)) {
+        writeFileSync(windowsJs, raw.replace(WINDOWS_POINTER_NEEDLE, WINDOWS_POINTER_REPLACEMENT), 'utf8')
+        results.push({ path: windowsJs, reason: 'patched', changed: true })
+      } else {
+        results.push({ path: windowsJs, reason: 'needle-not-found', changed: false })
+      }
+    } else {
+      results.push({ path: windowsJs, reason: 'missing', changed: false })
     }
   }
 

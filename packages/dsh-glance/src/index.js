@@ -663,7 +663,7 @@ function installSessionTracker(ctx, log, state) {
 }
 
 function installSidecar(ctx, log, state, disposers) {
-  const manager = createSidecarManager({ log })
+  const manager = createSidecarManager({ log, home: glanceHome() })
   state.sidecar = manager
 
   if (process.env.DSH_GLANCE_NO_SIDECAR === '1') {

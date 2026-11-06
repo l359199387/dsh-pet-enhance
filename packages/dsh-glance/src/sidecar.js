@@ -60,6 +60,7 @@ function nextId(state) {
  * @param {{
  *   python?: string | null,
  *   script?: string,
+ *   home?: string,
  *   log?: (message: string) => void,
  *   onState?: (state: object) => void,
  * }} [options]
@@ -227,11 +228,18 @@ export function createSidecarManager(options = {}) {
         state.child = null
       }
 
+      const glanceHomeEnv = String(
+        options.home || process.env.DSH_GLANCE_HOME || join(homedir(), '.dsh', 'glance'),
+      )
       const child = spawn(python, [script], {
         cwd: dirname(script),
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: 'utf-8',
+          DSH_GLANCE_HOME: glanceHomeEnv,
+        },
       })
       attach(child)
 
