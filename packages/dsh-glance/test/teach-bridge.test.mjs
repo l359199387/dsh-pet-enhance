@@ -26,20 +26,36 @@ test('buildTeachGlancePrompt：短提示只含 glance 线索', () => {
   assert.ok(p.startsWith(AGENT_WAKE_PREFIX))
   assert.ok(p.includes(TEACH_FOLLOWUP_PREFIX))
   assert.ok(p.includes('glance'))
-  assert.ok(p.includes('记事本'))
 })
 
-test('教完：理解后建 learned↔automation，纯脚本不叫醒', async () => {
+test('教完：建学习对但不自动动手（防胡乱打字）', async () => {
   await saveSettings(home, { liveWatch: true, actEnabled: true })
-  const wakes = []
   const acts = []
+  const wakes = []
   const queued = [
     { kind: 'key', keys: 'ctrl+s', window: { title: '记事本' } },
-    { kind: 'type', text: 'hello', window: { title: '记事本' } },
+    { kind: 'type', text: 'hello-should-not-type', window: { title: '记事本' } },
   ]
+  const schedules = []
   const bridge = createTeachBridge({
     home,
-    ctx: {},
+    ctx: {
+      get(name) {
+        if (name === 'schedule') {
+          return {
+            async create(spec) {
+              schedules.push(spec)
+              return { id: 'sched-1' }
+            },
+            async edit(spec) {
+              schedules.push({ edit: spec })
+              return { ok: true }
+            },
+          }
+        }
+        return null
+      },
+    },
     log() {},
     pollChat: false,
     sidecar: {
@@ -61,70 +77,28 @@ test('教完：理解后建 learned↔automation，纯脚本不叫醒', async ()
     },
     wake: async (_ctx, { text }) => {
       wakes.push(text)
-      return { ok: true, sessionId: 's1', via: 'followup' }
+      return { ok: true, sessionId: 's1' }
     },
-    waitReply: async () => ({ ok: true, text: '不应到这里' }),
+    waitReply: async () => ({ ok: true, text: 'no' }),
   })
 
-  await bridge.startTeaching('我教你一下保存文件')
-  await bridge.stopAndRun()
-  assert.equal(bridge.isTeaching(), false)
-  assert.equal(wakes.length, 0)
-  assert.ok(acts.length >= 2)
-  const idx = await listLearnedIndex(home)
-  assert.equal(idx.length, 1)
-  const pair = await assertLearnedAutomationPair(home, idx[0].id)
-  assert.equal(pair.ok, true)
-  assert.equal(pair.playbook.stats.script, 2)
-  bridge.stop()
-})
-
-test('含 click：问清后建对，再脚本+glance', async () => {
-  await saveSettings(home, { liveWatch: true, actEnabled: true })
-  const wakes = []
-  const acts = []
-  const queued = [
-    { kind: 'click', x: 9, y: 8, button: 'left', window: { title: '记事本' } },
-    { kind: 'type', text: 'secret!', sensitive: true, window: { title: '密码本' } },
-  ]
-  const bridge = createTeachBridge({
-    home,
-    ctx: {},
-    log() {},
-    pollChat: false,
-    sidecar: {
-      isAlive: () => true,
-      async call(op, fields) {
-        if (op !== 'observe') return { ok: false }
-        if (fields.action === 'start') return { ok: true, running: true, events: [] }
-        if (fields.action === 'poll') {
-          const batch = queued.splice(0, queued.length)
-          return { ok: true, running: true, events: batch }
-        }
-        if (fields.action === 'stop') return { ok: true, running: false, events: [] }
-        return { ok: true, events: [] }
-      },
-    },
-    runAct: async (args) => {
-      acts.push(args)
-      return { text: 'ok', meta: { ok: true } }
-    },
-    wake: async (_ctx, { text }) => {
-      wakes.push(text)
-      return { ok: true, sessionId: 's1', via: 'followup' }
-    },
-    waitReply: async () => ({ ok: true, text: '看屏步好了' }),
-  })
-
-  await bridge.startTeaching('教你登录')
-  await bridge.stopAndRun()
-  assert.equal(wakes.length, 1)
-  assert.ok(!wakes[0].includes('secret!'))
-  const idx = await listLearnedIndex(home)
-  assert.ok(idx.length >= 1)
-  const latest = idx[0]
-  const pair = await assertLearnedAutomationPair(home, latest.id)
-  assert.equal(pair.ok, true)
-  assert.equal(pair.learn.automationId, pair.task.id)
-  bridge.stop()
+  const prevDsh = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    await bridge.startTeaching('我教你一下保存文件')
+    await bridge.stopAndRun()
+    assert.equal(bridge.isTeaching(), false)
+    assert.equal(acts.length, 0, '教完不得自动 act')
+    assert.equal(wakes.length, 0, '教完不得自动叫醒动手')
+    assert.ok(schedules.length >= 1, '应登记 Harness schedule')
+    const idx = await listLearnedIndex(home)
+    assert.equal(idx.length, 1)
+    const pair = await assertLearnedAutomationPair(home, idx[0].id)
+    assert.equal(pair.ok, true)
+    assert.ok(pair.playbook.steps.some((s) => s.mode === 'glance' && s.action === 'type'))
+  } finally {
+    if (prevDsh === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevDsh
+    bridge.stop()
+  }
 })

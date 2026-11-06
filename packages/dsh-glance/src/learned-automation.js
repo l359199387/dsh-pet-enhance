@@ -212,8 +212,19 @@ export async function findLearnedForQuery(home, query) {
   const list = await listLearnedIndex(home)
   if (!list.length) return null
 
+  async function usable(id) {
+    const learn = await readLearned(home, id)
+    if (!learn) return null
+    if (learn.status === 'deprecated-reteach' || learn.deprecatedReason) return null
+    return learn
+  }
+
   if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化/.test(q)) {
-    return readLearned(home, list[0].id)
+    for (const row of list) {
+      const learn = await usable(row.id)
+      if (learn) return learn
+    }
+    return null
   }
 
   let best = null
@@ -232,7 +243,7 @@ export async function findLearnedForQuery(home, query) {
     }
   }
   if (!best || bestScore < 2) return null
-  return readLearned(home, best.id)
+  return usable(best.id)
 }
 
 export async function findAutomationForQuery(home, query) {

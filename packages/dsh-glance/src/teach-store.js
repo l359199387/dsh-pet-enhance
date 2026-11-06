@@ -219,21 +219,38 @@ export function narratePlan(steps) {
   }).join('\n')
 }
 
+/** 仅这些按键允许本地脚本；其余（含演示打字）一律 glance，避免教完盲打字。 */
+const SAFE_SCRIPT_KEYS = new Set([
+  'enter', 'tab', 'esc', 'escape',
+  'ctrl+s', 'ctrl+c', 'ctrl+v', 'ctrl+a', 'ctrl+z',
+  'alt+f4', 'ctrl+enter',
+])
+
 /**
- * Host 侧零模型消化：能脚本化的标 script，点击类标 glance（下次少 token）。
- * @param {string} goal
- * @param {object[]} steps buildPublicPlan 结果
- * @param {string} sessionId
+ * Host 侧零模型消化。
+ * 明文 type / 点击 → glance（给模型理解，禁止盲重放）；
+ * secretRef 与少数安全快捷键 → script。
  */
 export function buildPlaybook(goal, steps, sessionId) {
   const items = (steps || []).map((s, i) => {
     if (s.action === 'key') {
+      const keys = String(s.keys || '').toLowerCase()
+      if (SAFE_SCRIPT_KEYS.has(keys)) {
+        return {
+          i,
+          mode: 'script',
+          action: 'key',
+          keys: s.keys,
+          window: s.window || null,
+        }
+      }
       return {
         i,
-        mode: 'script',
+        mode: 'glance',
         action: 'key',
         keys: s.keys,
         window: s.window || null,
+        hint: { keys: s.keys },
       }
     }
     if (s.action === 'type' && s.secretRef) {
@@ -246,12 +263,14 @@ export function buildPlaybook(goal, steps, sessionId) {
       }
     }
     if (s.action === 'type') {
+      // 演示打字只作证据，绝不本地盲打（曾导致「胡乱打字」）
       return {
         i,
-        mode: 'script',
+        mode: 'glance',
         action: 'type',
-        text: String(s.text || '').slice(0, 500),
         window: s.window || null,
+        hint: { typed: String(s.text || '').slice(0, 80) },
+        publicNote: s.publicNote || `演示输入「${String(s.text || '').slice(0, 24)}」`,
       }
     }
     return {
@@ -316,6 +335,10 @@ export function compactGlanceHints(playbook) {
     .map((s) => {
       const win = s.window ? String(s.window).slice(0, 28) : '?'
       const h = s.hint || {}
+      if (s.action === 'type' && h.typed != null) {
+        return `${s.i + 1}.type@${win}~「${String(h.typed).slice(0, 20)}」`
+      }
+      if (s.action === 'key') return `${s.i + 1}.key@${win}~${h.keys || s.keys || ''}`
       return `${s.i + 1}.${s.action}@${win}~(${h.x},${h.y})`
     })
     .join(';')

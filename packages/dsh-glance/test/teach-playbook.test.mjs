@@ -15,18 +15,21 @@ import {
 const home = mkdtempSync(join(tmpdir(), 'glance-pb-'))
 after(() => rmSync(home, { recursive: true, force: true }))
 
-test('buildPlaybook：key/type→script，click→glance；secret 无明文', () => {
+test('buildPlaybook：明文 type/click→glance；安全键与 secret→script', () => {
   const steps = buildPublicPlan([
     { kind: 'click', i: 0, x: 1, y: 2, window: { title: 'A' } },
     { kind: 'key', i: 1, keys: 'enter', window: { title: 'A' } },
-    { kind: 'type', i: 2, secretRef: 'step:2', sensitive: true, window: { title: '密码本' } },
+    { kind: 'type', i: 2, text: 'hello', window: { title: 'A' } },
+    { kind: 'type', i: 3, secretRef: 'step:3', sensitive: true, window: { title: '密码本' } },
   ])
   const pb = buildPlaybook('登录', steps, 'sid1')
-  assert.equal(pb.stats.glance, 1)
-  assert.equal(pb.stats.script, 2)
-  assert.equal(pb.steps[2].secretRef, 'sid1/step:2')
-  assert.equal(pb.steps[2].text, undefined)
+  assert.equal(pb.steps[0].mode, 'glance')
+  assert.equal(pb.steps[1].mode, 'script')
+  assert.equal(pb.steps[2].mode, 'glance')
+  assert.equal(pb.steps[3].mode, 'script')
+  assert.equal(pb.steps[3].secretRef, 'sid1/step:3')
   assert.match(compactGlanceHints(pb), /click@A/)
+  assert.match(compactGlanceHints(pb), /type@A/)
 })
 
 test('detectTeachAmbiguities：目标不清 / 步少会提问', () => {

@@ -93,6 +93,15 @@ export function createPetRouter(options) {
       }
     }
     if (hit) {
+      const { readLearned } = await import('./learned-automation.js')
+      const learn = await readLearned(options.home, hit.id)
+      if (learn?.status === 'deprecated-reteach' || learn?.deprecatedReason) {
+        await broadcastToDshPet(
+          `「${String(hit.goal).slice(0, 36)}」旧记录已作废（教完曾误动手）。请开实时看屏幕再教一遍。`,
+          { pet, duration: 14_000 },
+        )
+        return true
+      }
       await broadcastToDshPet(
         `学会了「${String(hit.goal).slice(0, 40)}」，对应自动化已建好。要我跑一次吗？`,
         { pet, duration: 12_000 },

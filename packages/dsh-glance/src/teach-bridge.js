@@ -31,6 +31,7 @@ import {
   findAutomationForQuery,
   readAutomationPlaybook,
 } from './learned-automation.js'
+import { registerHarnessAutomation } from './harness-schedule.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
@@ -404,7 +405,7 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 3) 问清后创建：学习文件 ↔ 自动化任务（同 id 一一对应）
+    // 3) 问清后创建：学习文件 ↔ 本地自动化（同 id）——此时绝不自动动手
     const pair = await createLearnedAutomationPair(options.home, {
       id,
       goal,
@@ -418,27 +419,43 @@ export function createTeachBridge(options) {
       playbook,
     })
     lastPairId = id
+
+    // 4) 登记到 Harness 自动化页 + ~/.dsh/skills（暂停，等你说跑）
+    const preferred = options.getPreferredSessionId?.() ?? null
+    const harness = await registerHarnessAutomation(options.ctx, {
+      goal,
+      learnedId: id,
+      automationId: pair.task.id,
+      summary: narrative,
+      preferredSessionId: preferred,
+      log,
+    })
+
     await updateTeachMeta(options.home, id, {
       status: 'paired',
       learnedId: pair.learn.id,
       automationId: pair.task.id,
+      scheduleId: harness.scheduleId || null,
+      skillName: harness.skillName || null,
+      harnessOk: harness.ok,
+      harnessReason: harness.reason || null,
       playbookStats: playbook.stats,
     })
 
-    await broadcastToDshPet(
-      `理解清楚了。已记学习文件，并建好自动化「${clip(goal, 32)}」`
-      + `（脚本 ${playbook.stats.script} / 看屏 ${playbook.stats.glance}，一一对应）。`,
-      { pet, duration: 14_000 },
-    )
-
-    if (!actOn(options.home)) {
-      await broadcastToDshPet('要跑自动化请先打开「允许动手」，然后再说去做。', { pet, duration: 12_000 })
-      await updateTeachMeta(options.home, id, { status: 'awaiting-act' })
-      sessionId = null
-      return
+    if (harness.ok) {
+      await broadcastToDshPet(
+        `理解清楚了。学习文件已存，Harness 自动化「${clip(goal, 28)}」已创建（先暂停）。`
+        + '我不会现在动手。要跑时请说「再做一次」或在自动化页点立即运行。',
+        { pet, duration: 16_000 },
+      )
+    } else {
+      await broadcastToDshPet(
+        `学习文件与本地自动化已存「${clip(goal, 28)}」，但 Harness 自动化页登记失败`
+        + `（${harness.reason || '无 schedule 服务'}）。重启宿主或检查自动化插件后再说。`
+        + '这次我不会动手，避免胡乱打字。',
+        { pet, duration: 16_000 },
+      )
     }
-
-    await runPlaybook(pair.playbook)
     sessionId = null
   }
 
