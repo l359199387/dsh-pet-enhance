@@ -131,7 +131,7 @@
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 你操作 → 教完 **先理解 → 不懂就问** → 再写入 `learned/<id>/` 与本地 `automations/<id>/`（同 id），并尝试登记 **Harness schedule（自动化页，默认暂停）** + `~/.dsh/skills/glance-learn-*`。**教完绝不自动动手**（曾盲打字已修）。明文输入/点击只作 glance 证据；仅安全快捷键与 secretRef 可脚本。要跑时再说「再做一次」或自动化页「立即运行」。
+- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 你操作并采 **少量关键帧**（≤5，不懂可再补前后共≤7）到 `learned/<id>/frames/` → 教完用图+文字理解 → 不懂就问 → 写入 learned↔automations，登记 Harness schedule（暂停）+ skill。**图只辅助学会，自动化执行不再加载学习帧**。**学完自动关实时看屏幕**；教完不自动动手。要跑时说「再做一次」或自动化页「立即运行」。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。

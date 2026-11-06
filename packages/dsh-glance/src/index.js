@@ -50,7 +50,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.2.5'
+export const VERSION = '0.2.6'
 
 const startedAt = Date.now()
 
@@ -326,6 +326,7 @@ function installTools(ctx, log, state) {
             if (cur === 'looking' || cur === 'acting') state.glance.setPet('idle')
           },
         }
+        state.attachments = scoped.attachments
         disposers.push(scoped.tools.register(createGlanceTool({
           home: glanceHome(),
           attachments: scoped.attachments,
@@ -458,6 +459,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       confirmGate: state.confirmGate,
       getPreferredSessionId: () => state.lastSessionId,
       ensureLiveWatch: async (on) => { await setLiveWatchRef(on) },
+      get attachments() { return state.attachments || null },
       runAct: (args) => {
         if (typeof state.runAct === 'function') return state.runAct(args)
         return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })

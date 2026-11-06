@@ -50,6 +50,7 @@ export function automationPaths(home, id) {
  *   understanding: { summary: string, stats?: object, clarified?: string[] },
  *   evidence: object[],
  *   playbook: object,
+ *   frames?: { count?: number, files?: string[], forLearningOnly?: boolean },
  * }} spec
  */
 export async function createLearnedAutomationPair(home, spec) {
@@ -71,11 +72,17 @@ export async function createLearnedAutomationPair(home, spec) {
     teachSessionId: spec.teachSessionId || id,
     automationId: id,
     understanding: {
-      summary: String(spec.understanding?.summary || '').slice(0, 500),
+      summary: String(spec.understanding?.summary || '').slice(0, 800),
       stats: spec.understanding?.stats || null,
       clarified: Array.isArray(spec.understanding?.clarified)
         ? spec.understanding.clarified
         : [],
+    },
+    frames: {
+      count: Number(spec.frames?.count) || 0,
+      files: Array.isArray(spec.frames?.files) ? spec.frames.files : [],
+      forLearningOnly: true,
+      note: '仅辅助学会；自动化执行不要加载',
     },
     createdAt: now,
   }

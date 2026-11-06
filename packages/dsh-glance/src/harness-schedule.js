@@ -30,9 +30,9 @@ export function buildHarnessAutomationPrompt({ goal, learnedId, skillName }) {
   return (
     `执行小蓝鲸已学会的自动化「${clip(goal, 80)}」。`
     + `学习 id=${learnedId}；可用 skill「${skillName}」加载说明。`
-    + '先 glance 看清当前屏幕，再按目标用 act 操作。'
-    + '教学录制里的坐标与演示打字只是参考，禁止盲重点击或盲打录制原文；'
-    + '敏感输入只用 secretRef。做完用一两句汇报。'
+    + '先 glance 看清**当前**屏幕，再按目标用 act。'
+    + '不要加载 learned/frames 教学图片（图只用于学习，执行不用）。'
+    + '坐标与演示打字只是参考，禁止盲打录制原文；敏感输入只用 secretRef。一两句汇报。'
   )
 }
 

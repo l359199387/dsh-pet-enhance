@@ -32,9 +32,32 @@ import {
   readAutomationPlaybook,
 } from './learned-automation.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
+import { createFrameRecorder } from './teach-frames.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
+
+/** 教学理解提示：只消化附图+文字，禁止动手。 */
+export function buildTeachDigestPrompt(goal, narrative, frameCount) {
+  return (
+    `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
+    + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
+    + `附图 ${frameCount} 张（关键帧，控 token）。步骤摘要：\n${String(narrative || '').slice(0, 400)}\n`
+    + '请根据图与摘要用一两句话说明用户在教什么自动化。'
+    + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
+    + '禁止调用 act；不要执行操作。'
+  )
+}
+
+export function parseTeachDigestReply(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return { ok: false, needMore: true, summary: '' }
+  if (/NEED_MORE|看不清|不够|再给图/i.test(raw) && !/^OK\s*:/i.test(raw)) {
+    return { ok: false, needMore: true, summary: raw.slice(0, 200) }
+  }
+  const m = raw.match(/^OK\s*[:：]\s*([\s\S]+)/i)
+  return { ok: true, needMore: false, summary: (m ? m[1] : raw).trim().slice(0, 500) }
+}
 
 export const TEACH_POLL_MS = 350
 
@@ -161,6 +184,7 @@ function stepToActArgs(step, sessionId) {
  *   isActEnabled?: (home: string) => boolean,
  *   isLiveWatchEnabled?: (home: string) => boolean,
  *   ensureLiveWatch?: (on: boolean) => Promise<void>,
+ *   attachments?: { saveImage?: Function },
  *   runAct?: (args: object) => Promise<{ text?: string, meta?: object }>,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
@@ -193,6 +217,8 @@ export function createTeachBridge(options) {
   let askedIdle = false
   /** @type {string | null} 最近一对 learned↔automation 的 id */
   let lastPairId = null
+  /** @type {ReturnType<typeof createFrameRecorder> | null} */
+  let frames = null
 
   function sidecar() {
     return typeof options.sidecar === 'function' ? options.sidecar() : options.sidecar
@@ -276,10 +302,18 @@ export function createTeachBridge(options) {
     stepIndex = 0
     lastEventAt = Date.now()
     askedIdle = false
+    frames = createFrameRecorder({
+      home: options.home,
+      sessionId,
+      sidecar: options.sidecar,
+      capture: options.capture,
+      log,
+    })
     await createTeachSession(options.home, sessionId, { goal })
     const started = await observe('start')
     if (!started?.ok) {
       await broadcastToDshPet('没法开始录操作，稍后再试。', { pet, duration: 8_000 })
+      frames = null
       return
     }
     teaching = true
@@ -288,15 +322,26 @@ export function createTeachBridge(options) {
       method: 'POST',
       body: { state: 'working', task: 'teaching' },
     }).catch(() => {})
+    await frames.snapStart()
     await broadcastToDshPet(
-      `好，眼睛开着，我跟着学。目标：${clip(goal, 40)}。你点、你输入；做完告诉我。`
-      + '我会先理解，不懂就问，问清了再建成自动化（和学习记录一一对应）。密码只记本地。',
+      `好，眼睛开着，我跟着学（关键帧少量截图只用于学会）。目标：${clip(goal, 36)}。`
+      + '你点、你输入；做完告诉我。不懂我会问，问清再建自动化。学完会关实时看屏幕。密码只记本地。',
       { pet, duration: 14_000 },
     )
     if (!observeTimer) {
       observeTimer = setInterval(() => { pollEvents().catch(() => {}) }, TEACH_POLL_MS)
     }
     log(`teach：开始 ${sessionId} goal=${goal}`)
+  }
+
+  async function turnOffLiveWatchQuiet() {
+    if (typeof options.ensureLiveWatch !== 'function') return
+    try {
+      await options.ensureLiveWatch(false)
+      await broadcastToDshPet('学完了，已关掉实时看屏幕。', { pet, duration: 6_000 })
+    } catch (e) {
+      log(`学完关实时看屏幕失败：${e?.message ?? e}`)
+    }
   }
 
   async function pollEvents() {
@@ -308,6 +353,9 @@ export function createTeachBridge(options) {
       stepIndex += 1
       lastEventAt = Date.now()
       askedIdle = false
+      if (norm.window?.title && frames) {
+        await frames.maybeOnWindow(norm.window.title)
+      }
       if (norm.sensitive && norm.kind === 'type') {
         await broadcastToDshPet('嗯，敏感输入我只记在本地了。', { pet, duration: 5_000 })
       }
@@ -318,6 +366,60 @@ export function createTeachBridge(options) {
         '还在教吗？做完了告诉我一声；有哪步我没看懂也请直接说。',
         { pet, duration: 10_000 },
       )
+    }
+  }
+
+  /**
+   * 用关键帧（必要时补前后帧）喂模型理解；不执行自动化。
+   * @returns {Promise<{ summary: string, usedFrames: number, supplemented: boolean }>}
+   */
+  async function digestWithFrames(id, runGoal, narrative) {
+    if (!frames) {
+      return { summary: narrative, usedFrames: 0, supplemented: false }
+    }
+    await frames.snapEnd()
+    let imgs = await frames.loadPngBuffers()
+    if (!imgs.length) {
+      return { summary: narrative, usedFrames: 0, supplemented: false }
+    }
+
+    const preferred = options.getPreferredSessionId?.() ?? null
+    const askOnce = async (imageList) => {
+      const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList.length)
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        preferredId: preferred,
+        images: imageList,
+        attachments: options.attachments,
+      })
+      if (!woken.ok) {
+        log(`teach digest 叫醒失败：${woken.reason}`)
+        return { needMore: false, summary: narrative }
+      }
+      const reply = await waitReply(options.ctx, woken.sessionId, {
+        timeoutMs: 60_000,
+        isAborted: () => stopped,
+      })
+      if (!reply.ok || !reply.text) {
+        return { needMore: true, summary: narrative }
+      }
+      return parseTeachDigestReply(reply.text)
+    }
+
+    let parsed = await askOnce(imgs)
+    let supplemented = false
+    if (parsed.needMore) {
+      await frames.supplement('before')
+      await frames.supplement('after')
+      imgs = await frames.loadPngBuffers()
+      supplemented = true
+      parsed = await askOnce(imgs)
+    }
+
+    return {
+      summary: parsed.summary || narrative,
+      usedFrames: imgs.length,
+      supplemented,
     }
   }
 
@@ -388,45 +490,59 @@ export function createTeachBridge(options) {
 
     if (!steps.length) {
       await broadcastToDshPet('这轮没记到点击或输入。我们再来一次？', { pet, duration: 12_000 })
+      await turnOffLiveWatchQuiet()
+      frames = null
       sessionId = null
       return
     }
 
-    // 1) 理解操作（Host 短消化，0 模型 token）
-    await broadcastToDshPet('好，我开始理解你刚才的操作…', { pet, duration: 6_000 })
+    // 1) 关键帧 + 文字 → 模型理解（不够再补前后帧）；不执行
+    await broadcastToDshPet('好，我用少量关键帧理解你刚才的操作…', { pet, duration: 6_000 })
     const playbook = buildPlaybook(goal, steps, id)
     const narrative = narratePlan(steps)
     await updateTeachMeta(options.home, id, { status: 'understanding' })
+    const digested = await digestWithFrames(id, goal, narrative)
 
     // 2) 不动就问，问清才继续
     const clarified = await clarifyAmbiguities(id, goal, steps)
     if (!clarified.ok) {
+      await turnOffLiveWatchQuiet()
+      frames = null
       sessionId = null
       return
     }
 
-    // 3) 问清后创建：学习文件 ↔ 本地自动化（同 id）——此时绝不自动动手
+    // 3) 关键帧落入 learned/<id>/frames（仅学习用）
+    let frameMeta = { count: 0, files: [] }
+    if (frames) {
+      frameMeta = await frames.promoteToLearned(id)
+    }
+
+    // 4) 创建学习文件 ↔ 本地自动化（同 id）——绝不自动动手
     const pair = await createLearnedAutomationPair(options.home, {
       id,
       goal,
       teachSessionId: id,
       understanding: {
-        summary: narrative,
+        summary: digested.summary || narrative,
         stats: playbook.stats,
         clarified: clarified.clarified,
+        framesUsed: digested.usedFrames,
+        framesSupplemented: digested.supplemented,
       },
       evidence: steps,
       playbook,
+      frames: frameMeta,
     })
     lastPairId = id
 
-    // 4) 登记到 Harness 自动化页 + ~/.dsh/skills（暂停，等你说跑）
+    // 5) 登记 Harness（执行提示不含学习图）
     const preferred = options.getPreferredSessionId?.() ?? null
     const harness = await registerHarnessAutomation(options.ctx, {
       goal,
       learnedId: id,
       automationId: pair.task.id,
-      summary: narrative,
+      summary: digested.summary || narrative,
       preferredSessionId: preferred,
       log,
     })
@@ -440,19 +556,24 @@ export function createTeachBridge(options) {
       harnessOk: harness.ok,
       harnessReason: harness.reason || null,
       playbookStats: playbook.stats,
+      frameCount: frameMeta.count,
     })
+
+    // 6) 学完自动关实时看屏幕
+    await turnOffLiveWatchQuiet()
+    frames = null
 
     if (harness.ok) {
       await broadcastToDshPet(
-        `理解清楚了。学习文件已存，Harness 自动化「${clip(goal, 28)}」已创建（先暂停）。`
-        + '我不会现在动手。要跑时请说「再做一次」或在自动化页点立即运行。',
+        `理解清楚了（用了 ${frameMeta.count} 张关键帧，执行时不再看这些图）。`
+        + `学习文件已存，Harness 自动化「${clip(goal, 24)}」已创建（暂停）。`
+        + '我不会现在动手。要跑时说「再做一次」或自动化页立即运行。',
         { pet, duration: 16_000 },
       )
     } else {
       await broadcastToDshPet(
-        `学习文件与本地自动化已存「${clip(goal, 28)}」，但 Harness 自动化页登记失败`
-        + `（${harness.reason || '无 schedule 服务'}）。重启宿主或检查自动化插件后再说。`
-        + '这次我不会动手，避免胡乱打字。',
+        `学习文件已存（含 ${frameMeta.count} 张关键帧），本地自动化已建；`
+        + `Harness 页登记失败（${harness.reason || '无 schedule'}）。这次不动手。`,
         { pet, duration: 16_000 },
       )
     }

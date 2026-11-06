@@ -8,11 +8,19 @@
 import { randomUUID } from 'node:crypto'
 import { serviceOf } from './host-ctx.js'
 
-export function followupMessage(text, sourceKind = 'dsh-glance') {
+/**
+ * @param {string} text
+ * @param {string | { sourceKind?: string, contentExtra?: object[] }} [opts]
+ */
+export function followupMessage(text, opts = 'dsh-glance') {
+  const sourceKind = typeof opts === 'string' ? opts : (opts.sourceKind || 'dsh-glance')
+  const contentExtra = typeof opts === 'object' && Array.isArray(opts.contentExtra)
+    ? opts.contentExtra
+    : []
   return {
     id: randomUUID(),
     role: 'user',
-    content: [{ type: 'text', text: String(text ?? '') }],
+    content: [{ type: 'text', text: String(text ?? '') }, ...contentExtra],
     source: { kind: sourceKind },
   }
 }
@@ -39,9 +47,23 @@ export function pickSessionId(ctx, preferredId = null) {
 }
 
 /**
+ * @param {object} ctx
+ * @param {{
+ *   sessionId?: string,
+ *   text?: string,
+ *   preferredId?: string | null,
+ *   images?: { png?: Buffer, data?: Buffer, name?: string }[],
+ *   attachments?: { saveImage?: Function },
+ * }} [opts]
  * @returns {Promise<{ ok: boolean, reason?: string, via?: string, flushed?: unknown, sessionId?: string }>}
  */
-export async function wakeSession(ctx, { sessionId, text, preferredId = null } = {}) {
+export async function wakeSession(ctx, {
+  sessionId,
+  text,
+  preferredId = null,
+  images = null,
+  attachments = null,
+} = {}) {
   const sc = serviceOf(ctx, 'sessionController')
   if (!sc?.resolveAgent) return { ok: false, reason: 'no-session-controller' }
 
@@ -54,7 +76,25 @@ export async function wakeSession(ctx, { sessionId, text, preferredId = null } =
       const reason = resolved?.error?.message ?? resolved?.error ?? 'resolve-failed'
       return { ok: false, reason: String(reason).slice(0, 160), sessionId: sid }
     }
-    resolved.agent.followup(followupMessage(text))
+
+    const contentExtra = []
+    const saveImage = attachments?.saveImage
+    if (typeof saveImage === 'function' && Array.isArray(images) && images.length) {
+      for (const img of images.slice(0, 7)) {
+        const data = img.png || img.data
+        if (!data) continue
+        try {
+          const ref = await saveImage.call(attachments, {
+            data,
+            mediaType: 'image/png',
+            name: img.name || 'teach-frame.png',
+          })
+          if (ref) contentExtra.push({ type: 'image', attachment: ref })
+        } catch { /* 单张失败不挡文字 */ }
+      }
+    }
+
+    resolved.agent.followup(followupMessage(text, { contentExtra }))
     let flushed = null
     try {
       const sessions = serviceOf(ctx, 'sessions')
@@ -62,7 +102,7 @@ export async function wakeSession(ctx, { sessionId, text, preferredId = null } =
     } catch {
       flushed = false
     }
-    return { ok: true, via: 'followup', flushed, sessionId: sid }
+    return { ok: true, via: 'followup', flushed, sessionId: sid, imageCount: contentExtra.length }
   } catch (e) {
     return { ok: false, reason: String(e?.message ?? e).slice(0, 160), sessionId: sid }
   }
