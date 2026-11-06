@@ -26,7 +26,7 @@
 | ① | 只做一个可验收的最小切片 | — | 能一句话说出「这次验收什么」 |
 | ② | 语法 | `node --check src/index.js` | 退出码 0 |
 | ③ | 静态门 | `node tools/dev-check.mjs` | 全绿（见 §3） |
-| ④ | 安装 | GUI 插件页 → 从目录安装 → 选 `packages/dsh-glance`；改代码后重启 DSH | `~/.dsh/profiles/desktop/cordis.patch.yml` 出现该条目 |
+| ④ | 安装 | GUI 插件页 → 从目录安装 → 选 `packages/dsh-glance`；改代码后重启 DSH | profile `package.json` 的 `dsh.profile.bundles` 里有 `dsh-glance`，且 `node_modules/dsh-glance` 是链接 |
 | ⑤ | 实测 | 按 04 的对应验收项逐条做 | 每条都有「看到什么」的记录，不是「应该行」 |
 | ⑥ | 拔掉一次 | 插件页禁用 → 再启用 | 没有残留进程、路由 404、`~/.dsh/glance/` 不被继续写 |
 | ⑦ | 卸载检查 | 卸载 → 查残留 | `node_modules/dsh-glance` 消失；`~/.dsh/glance/` 里的用户数据**保留**（可以搬回来） |
@@ -48,9 +48,9 @@ C:\Users\13591\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.
 
 | 位置 | 里面是什么 |
 |---|---|
-| `~/.dsh/profiles/desktop/package.json` | 依赖列表 + `dsh.profile.bundles` |
-| `~/.dsh/profiles/desktop/cordis.patch.yml` | 插件行的插入记录（**权威**：装了没装看这里） |
-| `~/.dsh/profiles/desktop/node_modules/dsh-glance` | 实际被加载的代码（官方说本地目录安装是「链接 checkout」，不是拷贝；确认用 `Get-Item …\dsh-glance | Select LinkType,Target`） |
+| `~/.dsh/profiles/desktop/package.json` | 依赖列表 + `dsh.profile.bundles`——**装了没装看这里**（`dsh-glance` 出现在 bundles 里才是装了） |
+| `~/.dsh/profiles/desktop/cordis.patch.yml` | profile 自己的 patch（模型、UI、插件市场）。**本地目录安装的插件不会写进这里**，它的行由插件包内 `cordis.patch.yml` 在加载时插入 |
+| `~/.dsh/profiles/desktop/node_modules/dsh-glance` | 实际被加载的代码（官方说本地目录安装是「链接 checkout」，不是拷贝；本机实测是**逐文件 junction**：`Get-Item …\dsh-glance | Select LinkType,Target`） |
 | `~/.dsh/profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log` | 安装失败的唯一现场 |
 | `~/.dsh/glance-error.log` | 插件自己写的失败日志（硬约束 6） |
 
@@ -118,7 +118,7 @@ packages/dsh-glance/
 
 ## 7. 故障排查顺序（照这个顺序，别跳）
 
-1. **工具根本没出现** → 看 `~/.dsh/profiles/desktop/cordis.patch.yml` 有没有 `dsh-glance` 这条；没有就是没装上。
+1. **工具根本没出现** → 看 `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有没有 `dsh-glance`；没有就是没装上。
 2. **装上了但工具没出现** → 看 `~/.dsh/glance-error.log`；`apply` 里任何一次 throw 都会让整行静默失败。
 3. **改了代码没变化** → 宿主持有旧进程：重启宿主（或重装插件）再看。
 4. **安装就失败** → `.plugin-manager/logs/operation-*/pnpm.log`；常见是 `package.json` 里 `dsh.bundle.patch` 路径写错。
@@ -135,7 +135,8 @@ packages/dsh-glance/
 **卸载**（验干净）：
 
 - `~/.dsh/profiles/desktop/node_modules/dsh-glance` 消失；
-- `cordis.patch.yml` 里的条目消失；
+- profile `package.json` 的 `dsh.profile.bundles` 里不再有 `dsh-glance`；
+- `Get-Process python` 无残留 sidecar（卸载要真的停掉它，不能只停在文件层面）；
 - `~/.dsh/glance/` **保留**（这是用户数据：profile、episodes、技能都在里面）；
 - `~/.dsh/glance-error.log` 保留（下次装上还能看到上次为什么坏）。
 
