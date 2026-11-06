@@ -72,7 +72,8 @@ packages/dsh-glance/
 │   ├── tool-spec.js      # glance 的参数/输出/说明（模型看到的就是这里）
 │   └── tool-glance.js    # 抓一帧 → 存附件 → 交图
 ├── sidecar/
-│   ├── glance.py         # A2：hello/capture/windows/thumb/quit（C1 起加 input）
+│   ├── glance.py         # hello/capture/windows/thumb/input/abort/quit
+│   ├── input_win.py      # C1：SendInput + failsafe
 │   ├── test_protocol.py  # 协议单测（不许动鼠标）
 │   └── capture.ps1       # A1 的降级抓屏（DPI aware + 整屏 + 缩放）
 ├── test/                 # node --test：trust / apply / capture / tool-glance / sidecar / state

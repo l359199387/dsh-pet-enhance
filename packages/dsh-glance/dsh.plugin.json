@@ -1,7 +1,7 @@
 {
   "name": "dsh-glance",
   "description": "桌面宠物小蓝鲸：看屏、说话、在授权下动手。",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "entry": {
     "name": "dsh-glance",
     "inject": []

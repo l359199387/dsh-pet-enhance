@@ -77,7 +77,7 @@ class ProtocolTests(unittest.TestCase):
         hello = self._ask("hello")
         self.assertTrue(hello.get("ok"), hello)
         self.assertEqual(hello.get("engine"), "pillow")
-        self.assertFalse(hello.get("input"))
+        self.assertTrue(hello.get("input"))
         self.assertIn("screen", hello)
         self.assertGreater(hello["screen"]["w"], 0)
         self.assertGreater(hello["screen"]["h"], 0)
@@ -122,11 +122,32 @@ class ProtocolTests(unittest.TestCase):
         self.assertGreaterEqual(len(err["candidates"]), 1)
         self.assertLessEqual(len(err["candidates"]), 3)
 
-    def test_input_blocked_in_a2(self):
+    def test_input_dry_run_move(self):
+        """不许真的动鼠标：dryRun 只校验协议。"""
         self._ask("hello")
-        resp = self._ask("input", actions=[{"kind": "move", "x": 1, "y": 1}])
-        self.assertFalse(resp.get("ok"))
-        self.assertEqual(resp["error"]["code"], "INPUT_BLOCKED")
+        resp = self._ask(
+            "input",
+            actions=[{"kind": "move", "x": 100, "y": 100, "duration": 0}],
+            dryRun=True,
+        )
+        self.assertTrue(resp.get("ok"), resp)
+        self.assertTrue(resp.get("dryRun"))
+        self.assertEqual(resp["done"][0]["kind"], "move")
+
+    def test_input_dry_run_type_and_key(self):
+        self._ask("hello")
+        typed = self._ask(
+            "input",
+            actions=[{"kind": "type", "text": "你好hello"}],
+            dryRun=True,
+        )
+        self.assertTrue(typed.get("ok"), typed)
+        keyed = self._ask(
+            "input",
+            actions=[{"kind": "key", "keys": "ctrl+s"}],
+            dryRun=True,
+        )
+        self.assertTrue(keyed.get("ok"), keyed)
 
     def test_score_title_helper(self):
         # 纯函数，不需要进程；确认中文/大小写匹配方向对。

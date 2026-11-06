@@ -32,7 +32,7 @@ test('握手 hello + capture 整屏 + stop 不留进程', { skip: !canRun, timeo
   const hello = await manager.start()
   assert.equal(hello.ok, true)
   assert.equal(hello.engine, 'pillow')
-  assert.equal(hello.input, false)
+  assert.equal(hello.input, true)
   assert.ok(manager.isAlive())
   const pid = manager.getPid()
   assert.ok(pid)

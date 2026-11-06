@@ -2,6 +2,16 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
+## 0.0.5 · 未发布
+
+### C1 · 动手（默认关闭）
+
+- sidecar `input`：move / click / double_click / right_click / drag / scroll / type / key / focus / wait / screen；`hello.input=true`。
+- 中文 `type` 走剪贴板粘贴并尽量恢复；组合键 `key`（如 `ctrl+s`）。
+- failsafe：动作前光标在左上角 ≤2px → `FAILSAFE`，不重试；`abort` op 可打断进行中的 input。
+- 工具 `act` 已注册，**默认关闭**（`settings.actEnabled` 或 `DSH_GLANCE_ACT=1`）；急停会 `panic` + `sidecar.abort()`。
+- `/status` 的 `stage` 为 `C1`；版本 `0.0.5`。
+
 ## 0.0.4 · 未发布
 
 ### 命名

@@ -46,6 +46,8 @@ export function createGlanceState() {
       const state = normalizePetState(next)
       if (data.pet === state) return counter
       data.pet = state
+      // 从急停恢复：回到 idle/sleeping 时重新武装。
+      if (state === 'idle' || state === 'sleeping') data.armed = true
       return bump()
     },
 

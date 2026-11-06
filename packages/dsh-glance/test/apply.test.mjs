@@ -95,7 +95,7 @@ async function call(url, { method = 'GET', headers = { host: '127.0.0.1:50521' }
   return res
 }
 
-test('apply 注册路由与 glance 工具，status 到 B2', async () => {
+test('apply 注册路由与工具，status 到 C1', async () => {
   const ctx = fakeCtx()
   const dispose = await apply(ctx)
   await flush()
@@ -103,16 +103,18 @@ test('apply 注册路由与 glance 工具，status 到 B2', async () => {
   assert.equal(typeof dispose, 'function')
   assert.equal(registered?.kind, 'prefix')
   assert.equal(registered?.path, ROUTE_PREFIX)
-  assert.equal(ctx._tools.length, 1)
-  assert.equal(ctx._tools[0].name, 'glance')
+  assert.equal(ctx._tools.length, 2)
+  assert.deepEqual(ctx._tools.map((t) => t.name), ['glance', 'act'])
 
   const res = await call(`${ROUTE_PREFIX}/status`)
   assert.equal(res.status, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.ok, true)
-  assert.equal(body.stage, 'B2')
+  assert.equal(body.stage, 'C1')
+  assert.ok(body.tools.includes('glance'))
+  assert.ok(body.tools.includes('act'))
   assert.equal(body.home, home)
-  assert.deepEqual(body.tools, ['glance'])
+  assert.deepEqual(body.tools, ['glance', 'act'])
   assert.equal(body.pet, 'idle')
 
   dispose()

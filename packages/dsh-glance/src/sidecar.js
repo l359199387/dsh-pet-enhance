@@ -310,10 +310,23 @@ export function createSidecarManager(options = {}) {
     })
   }
 
+  /** 急停：打断正在执行的 input（读线程会立刻置位）。 */
+  async function abort(timeoutMs = 3_000) {
+    if (!state.child?.stdin || state.child.killed) {
+      return { ok: false, error: 'sidecar-down' }
+    }
+    try {
+      return await request('abort', {}, timeoutMs)
+    } catch (e) {
+      return { ok: false, error: e?.message ?? String(e) }
+    }
+  }
+
   return {
     start,
     ensure,
     call,
+    abort,
     stop,
     /** 测试/status 用：当前是否握过手。 */
     getHello: () => state.hello,

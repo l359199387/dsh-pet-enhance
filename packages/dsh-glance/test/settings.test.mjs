@@ -9,16 +9,17 @@ import { glanceMenuLabels, MENU_LIVE_OFF, MENU_LIVE_ON, MENU_STOP } from '../src
 const home = mkdtempSync(join(tmpdir(), 'glance-set-'))
 after(() => { rmSync(home, { recursive: true, force: true }) })
 
-test('默认 liveWatch 关闭', async () => {
+test('默认 liveWatch / actEnabled 关闭', async () => {
   const s = await loadSettings(home)
   assert.deepEqual(s, { ...DEFAULT_SETTINGS })
 })
 
-test('saveSettings 可读写 liveWatch', async () => {
-  const on = await saveSettings(home, { liveWatch: true })
+test('saveSettings 可读写 liveWatch 与 actEnabled', async () => {
+  const on = await saveSettings(home, { liveWatch: true, actEnabled: true })
   assert.equal(on.liveWatch, true)
-  assert.equal((await loadSettings(home)).liveWatch, true)
-  await saveSettings(home, { liveWatch: false })
+  assert.equal(on.actEnabled, true)
+  assert.equal((await loadSettings(home)).actEnabled, true)
+  await saveSettings(home, { liveWatch: false, actEnabled: false })
   assert.equal((await loadSettings(home)).liveWatch, false)
 })
 

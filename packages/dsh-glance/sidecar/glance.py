@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""dsh-glance sidecar：抓屏 +（C1 起）输入。A2 只做 hello/capture/windows/thumb/quit/stats。
+"""dsh-glance sidecar：抓屏 + 输入（C1）。
 
 协议：stdin/stdout 各一行一个 JSON，UTF-8，请求带 id，响应回同一个 id。
-Host 负责判断；本进程只执行「抓这一块」。
+abort 在读线程里立刻置位，可打断正在跑的 input 串。
 """
 
 from __future__ import annotations
@@ -10,12 +10,15 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
+import queue
 import sys
+import threading
 import time
 import traceback
 from difflib import SequenceMatcher
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PW_RENDERFULLCONTENT = 2
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 BLACK_RANGE_MAX = 8
@@ -456,7 +459,7 @@ def handle_hello(_req: dict) -> dict:
             "dpiAware": True,
         },
         "engine": "pillow",
-        "input": False,
+        "input": True,
     }
 
 
@@ -576,6 +579,94 @@ def handle_quit(_req: dict) -> dict:
     return {"ok": True, "bye": True}
 
 
+_abort_event = threading.Event()
+
+
+def handle_abort(_req: dict) -> dict:
+    _abort_event.set()
+    return {"ok": True, "aborted": True}
+
+
+def _want_dry_run(req: dict) -> bool:
+    if req.get("dryRun") is True or req.get("dry_run") is True:
+        return True
+    return os.environ.get("DSH_GLANCE_INPUT_DRY_RUN", "").strip() in ("1", "true", "yes")
+
+
+def handle_input(req: dict) -> dict:
+    from input_win import FailsafeAbort, HostAbort, cursor_pos, run_actions
+
+    actions = req.get("actions")
+    dry_run = _want_dry_run(req)
+
+    def resolve_focus(match: str) -> dict:
+        win, candidates, code = resolve_window(str(match or ""))
+        if code == "BAD_REQUEST":
+            raise ValueError("focus 需要 window/match")
+        if code != "ok" or win is None:
+            err = _err(code or "WINDOW_NOT_FOUND", f"无法聚焦：{match}", candidates=candidates or [])
+            raise RuntimeError(json.dumps(err, ensure_ascii=False))
+        return win
+
+    # 只读 screen：不需 failsafe
+    if (
+        isinstance(actions, list)
+        and len(actions) == 1
+        and str((actions[0] or {}).get("kind") or "").lower() == "screen"
+    ):
+        x, y = cursor_pos()
+        return {
+            "ok": True,
+            "done": [{"kind": "screen", "ms": 0}],
+            "aborted": False,
+            "cursor": {"x": x, "y": y},
+            "screen": _screen_info(),
+            "dryRun": dry_run,
+        }
+
+    _abort_event.clear()
+    try:
+        return run_actions(
+            actions if isinstance(actions, list) else [],
+            abort_event=_abort_event,
+            dry_run=dry_run,
+            resolve_focus=resolve_focus,
+        )
+    except FailsafeAbort:
+        x, y = cursor_pos()
+        return {
+            "ok": False,
+            "aborted": True,
+            "cause": "failsafe",
+            "error": {"code": "FAILSAFE", "message": "光标在左上角，已急停"},
+            "done": [],
+            "cursor": {"x": x, "y": y},
+        }
+    except HostAbort:
+        x, y = cursor_pos()
+        return {
+            "ok": False,
+            "aborted": True,
+            "cause": "abort",
+            "error": {"code": "ABORTED", "message": "Host 发了 abort"},
+            "done": [],
+            "cursor": {"x": x, "y": y},
+        }
+    except RuntimeError as e:
+        # resolve_focus 塞进来的 JSON 错误
+        try:
+            parsed = json.loads(str(e))
+            if isinstance(parsed, dict) and parsed.get("error"):
+                return parsed
+        except Exception:
+            pass
+        return _err("BAD_REQUEST", str(e))
+    except ValueError as e:
+        return _err("BAD_REQUEST", str(e))
+    except Exception as e:
+        return _err("INPUT_FAILED", f"输入失败：{e}")
+
+
 HANDLERS = {
     "hello": handle_hello,
     "capture": handle_capture,
@@ -583,6 +674,8 @@ HANDLERS = {
     "thumb": handle_thumb,
     "stats": handle_stats,
     "quit": handle_quit,
+    "abort": handle_abort,
+    "input": handle_input,
 }
 
 
@@ -592,11 +685,6 @@ def handle(req: dict) -> dict:
     req_id = req.get("id")
     op = str(req.get("op") or "").strip().lower()
     _stats["requests"] += 1
-
-    if op == "input":
-        body = _err("INPUT_BLOCKED", "A2 还没有输入控制；那是 C1 的事")
-        body["id"] = req_id
-        return body
 
     handler = HANDLERS.get(op)
     if handler is None:
@@ -619,16 +707,35 @@ def main() -> int:
     _reconfigure_stdio()
     _set_dpi_aware()
 
-    for raw in sys.stdin:
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError as e:
-            _emit({"id": None, "ok": False, "error": {"code": "BAD_REQUEST", "message": f"JSON 无法解析：{e}"}})
-            continue
+    # 读线程可随时处理 abort；工作线程串行执行其它 op（含可能很长的 input）。
+    req_q: queue.Queue = queue.Queue()
+    stop_flag = threading.Event()
 
+    def reader() -> None:
+        for raw in sys.stdin:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError as e:
+                _emit({"id": None, "ok": False, "error": {"code": "BAD_REQUEST", "message": f"JSON 无法解析：{e}"}})
+                continue
+            op = str(req.get("op") or "").strip().lower()
+            if op == "abort":
+                resp = handle(req)
+                _emit(resp)
+                continue
+            req_q.put(req)
+        stop_flag.set()
+        req_q.put(None)
+
+    threading.Thread(target=reader, name="glance-stdin", daemon=True).start()
+
+    while True:
+        req = req_q.get()
+        if req is None:
+            break
         resp = handle(req)
         _emit(resp)
         if req.get("op") == "quit" and resp.get("ok"):

@@ -1,7 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * B2 装配：A2/B1 + dsh-pet L 对话看屏闭环 + episode 落盘 + 附图人格。
+ * C1 装配：看屏 + dsh-pet 桥 + act（默认关）+ input/failsafe/abort。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
 import { createGlanceTool } from './tool-glance.js'
+import { createActTool, ACT_TOOL_NAME } from './tool-act.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
@@ -32,14 +33,14 @@ import {
 } from './dsh-pet.js'
 import { createChatBridge } from './chat-bridge.js'
 import { createLiveWatch } from './live-watch.js'
-import { loadSettings, saveSettings } from './settings.js'
+import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 
 export const name = 'dsh-glance'
 
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.4'
+export const VERSION = '0.0.5'
 
 const startedAt = Date.now()
 
@@ -141,7 +142,8 @@ async function handle(req, res, connection, log, state) {
       ok: true,
       name,
       version: VERSION,
-      stage: 'B2',
+      stage: 'C1',
+      actEnabled: isActEnabled(glanceHome()),
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
       tools: state.tools.slice(),
@@ -173,9 +175,13 @@ async function handle(req, res, connection, log, state) {
       return
     }
     state.glance.panic()
-    // A2/B1 还没有动作队列；C1 起这里再 abort sidecar input。
+    try {
+      await state.sidecar?.abort?.()
+    } catch (e) {
+      log(`急停 abort 失败：${e?.message ?? e}`)
+    }
     log('用户急停')
-    send(res, 200, { ok: true, pet: 'alarmed' })
+    send(res, 200, { ok: true, pet: 'alarmed', armed: false })
     return
   }
 
@@ -241,38 +247,55 @@ function installTools(ctx, log, state) {
   }
   try {
     ctx.inject(['tools', 'attachments'], (scoped) => {
-      let dispose
+      const disposers = []
       let disposed = false
 
       scoped.effect(() => () => {
         disposed = true
-        state.tools = state.tools.filter((n) => n !== TOOL_NAME)
-        try { dispose?.() } catch { /* 已经摘过 */ }
-      }, 'dsh-glance: glance tool')
+        state.tools = state.tools.filter((n) => n !== TOOL_NAME && n !== ACT_TOOL_NAME)
+        for (const d of disposers.splice(0)) {
+          try { d() } catch { /* 已经摘过 */ }
+        }
+      }, 'dsh-glance: tools')
 
       try {
         if (disposed) return
-        dispose = scoped.tools.register(createGlanceTool({
+        const petHooks = {
+          onLooking: () => state.glance.setPet('looking'),
+          onActing: () => state.glance.setPet('acting'),
+          onIdle: () => {
+            const cur = state.glance.snapshot().pet.state.data
+            if (cur === 'looking' || cur === 'acting') state.glance.setPet('idle')
+          },
+        }
+        disposers.push(scoped.tools.register(createGlanceTool({
           home: glanceHome(),
           attachments: scoped.attachments,
           log,
           sidecar: state.sidecar,
-          onLooking: () => state.glance.setPet('looking'),
-          onIdle: () => {
-            if (state.glance.snapshot().pet.state.data === 'looking') {
-              state.glance.setPet('idle')
-            }
-          },
-        }))
+          onLooking: petHooks.onLooking,
+          onIdle: petHooks.onIdle,
+        })))
         state.tools.push(TOOL_NAME)
         log(`工具已注册：${TOOL_NAME}`)
+
+        disposers.push(scoped.tools.register(createActTool({
+          home: glanceHome(),
+          log,
+          sidecar: state.sidecar,
+          isArmed: () => state.glance.snapshot().guard.armed.data,
+          onActing: petHooks.onActing,
+          onIdle: petHooks.onIdle,
+        })))
+        state.tools.push(ACT_TOOL_NAME)
+        log(`工具已注册：${ACT_TOOL_NAME}（默认关闭，见 settings.actEnabled / DSH_GLANCE_ACT）`)
       } catch (e) {
-        writeError(e, 'glance-tool')
+        writeError(e, 'glance-tools')
         log(`工具没挂上：${e?.message ?? e}`)
       }
     })
   } catch (e) {
-    writeError(e, 'glance-tool')
+    writeError(e, 'glance-tools')
     log(`工具没挂上：${e?.message ?? e}`)
   }
 }
@@ -365,6 +388,9 @@ function installDshPetBridge(ctx, log, state, disposers) {
       const ev = r.data.events
       if (ev[MENU_STOP]) {
         state.glance.panic()
+        try {
+          await state.sidecar?.abort?.()
+        } catch { /* ignore */ }
         log('dsh-pet 菜单触发小蓝鲸急停')
       }
       // 点当前文案即翻转；开/关两态都认，避免重注册竞态漏点。
