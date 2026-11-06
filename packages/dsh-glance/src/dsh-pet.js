@@ -8,6 +8,38 @@
  */
 
 export const DSH_PET_PREFIX = '/dsh-pet-7340'
+export const MENU_OWNER = 'dsh-glance'
+export const MENU_STOP = '小瞥急停'
+
+/** 在 dsh-pet 右键「更多」里挂急停；对话请用它自带的 L，不要另开输入框。 */
+export async function registerGlanceMenu(options = {}) {
+  return callDshPet('/menu/item', {
+    method: 'POST',
+    body: {
+      owner: MENU_OWNER,
+      labels: [MENU_STOP],
+      target: 'web',
+    },
+    ...options,
+  })
+}
+
+export async function clearGlanceMenu(options = {}) {
+  return callDshPet(`/menu/item?owner=${encodeURIComponent(MENU_OWNER)}`, {
+    method: 'DELETE',
+    ...options,
+  })
+}
+
+/** 跟 dsh-pet 聊一句：走它自己的对话与气泡。 */
+export async function chatWithDshPet(text, { pet = 'main', ...options } = {}) {
+  return callDshPet(`/chat?pet=${encodeURIComponent(pet)}`, {
+    method: 'POST',
+    body: { text: String(text ?? '') },
+    timeoutMs: 120_000,
+    ...options,
+  })
+}
 
 /**
  * @param {{

@@ -122,9 +122,9 @@
 
 探测：`GET /dsh-pet-7340/state` 成功 → 进入代理模式：
 
-- **隐藏**自绘 SVG；左下角只留「小瞥」控制条（dsh-pet 默认右上，不抢位）。
-- 工作态写入 `POST /dsh-pet-7340/work-status`；睡觉/叫醒走 `/sleep` `/wake`；急停顺带 `wake` + `error` 态。
-- B2 起：`say` → 带锁 `POST /dsh-pet-7340/broadcast`（需先 `/lock`）。
-- 面板可切回「形象：内置」。
+- **隐藏**自绘 SVG，**不另开对话框**——对话用 dsh-pet 自带的（悬停宠物按 `L`，或 `Ctrl+Shift+L` 浮层）。
+- Host `chat-bridge` 轮询 `GET /dsh-pet-7340/chat`：用户新话说到「看屏幕 / 截图 / glance」等 → `captureFrame` → 带锁 `POST /broadcast` 把看屏事实塞进气泡；工作态走 `/work-status`。
+- 右键「更多」挂 **小瞥急停**（`POST /menu/item`，owner=`dsh-glance`）；点了会 `panic`。
+- 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
 我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。

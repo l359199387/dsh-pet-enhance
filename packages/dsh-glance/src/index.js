@@ -1,7 +1,8 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * B1 装配：status / state / stop / pet 路由 + glance 工具 + sidecar + 宠物叶子状态。
+ * B1 装配：status / state / stop / pet 路由 + glance 工具 + sidecar + 宠物叶子状态
+ * + dsh-pet chat-bridge（L 对话触发看屏广播）。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -17,7 +18,8 @@ import { createGlanceTool } from './tool-glance.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
-import { probeDshPet } from './dsh-pet.js'
+import { clearGlanceMenu, callDshPet, MENU_OWNER, MENU_STOP, probeDshPet, registerGlanceMenu } from './dsh-pet.js'
+import { createChatBridge } from './chat-bridge.js'
 
 export const name = 'dsh-glance'
 
@@ -262,6 +264,66 @@ function installTools(ctx, log, state) {
   }
 }
 
+function installDshPetBridge(ctx, log, state, disposers) {
+  let stopped = false
+  let registered = false
+  const bridge = createChatBridge({
+    home: glanceHome(),
+    sidecar: () => state.sidecar,
+    log,
+  })
+
+  const ensureMenu = async () => {
+    if (stopped) return
+    const probed = await probeDshPet({ timeoutMs: 1_200 })
+    if (!probed.available) {
+      registered = false
+      return
+    }
+    if (!registered) {
+      const r = await registerGlanceMenu()
+      if (r.ok) {
+        registered = true
+        log('已在 dsh-pet 菜单挂上「小瞥急停」；对话请悬停宠物按 L')
+      }
+    }
+  }
+
+  const pollMenu = async () => {
+    if (stopped || !registered) return
+    const r = await callDshPet(
+      `/menu/events?owner=${encodeURIComponent(MENU_OWNER)}&wait=0`,
+      { method: 'GET', timeoutMs: 3_000 },
+    )
+    if (!r.ok || !r.data?.ok || !r.data.events) return
+    if (r.data.events[MENU_STOP]) {
+      state.glance.panic()
+      log('dsh-pet 菜单触发小瞥急停')
+    }
+  }
+
+  const start = () => {
+    bridge.start()
+    ensureMenu().catch(() => {})
+    const timer = setInterval(() => {
+      ensureMenu().catch(() => {})
+      pollMenu().catch(() => {})
+    }, 4_000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      bridge.stop()
+      if (registered) clearGlanceMenu().catch(() => {})
+    }
+  }
+
+  if (typeof ctx?.effect === 'function') {
+    ctx.effect(() => start(), 'dsh-glance: dsh-pet bridge')
+    return
+  }
+  disposers.push(start())
+}
+
 function installSidecar(ctx, log, state, disposers) {
   const manager = createSidecarManager({ log })
   state.sidecar = manager
@@ -306,6 +368,7 @@ export async function apply(ctx) {
     mkdirSync(join(home, 'episodes'), { recursive: true })
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)
+    installDshPetBridge(ctx, log, state, disposers)
     installRoutes(ctx, log, state)
     installTools(ctx, log, state)
   } catch (e) {
