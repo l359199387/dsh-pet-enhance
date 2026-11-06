@@ -22,7 +22,12 @@ function mockSidecar(handlers = {}) {
     async call(op, fields) {
       if (handlers[op]) return handlers[op](fields)
       if (op === 'stats') {
-        return { ok: true, active: { title: '记事本' }, screen: { w: 1920, h: 1080 } }
+        return {
+          ok: true,
+          active: { title: '记事本' },
+          atPoint: { title: '记事本' },
+          screen: { w: 1920, h: 1080 },
+        }
       }
       if (op === 'capture') {
         return { ok: true, png: 'aaa' }
@@ -96,10 +101,35 @@ test('黑名单窗口拒绝点击', async () => {
     log() {},
     isArmed: () => true,
     sidecar: mockSidecar({
-      stats: () => ({ ok: true, active: { title: '1Password' }, screen: { w: 1920, h: 1080 } }),
+      stats: () => ({
+        ok: true,
+        active: { title: '1Password' },
+        atPoint: { title: '1Password' },
+        screen: { w: 1920, h: 1080 },
+      }),
     }),
   })
   const r = await tool.execute({ action: 'click', x: 10, y: 10, reason: '点一下' })
+  assert.equal(r.meta.ok, false)
+  assert.equal(r.meta.code, 'DENIED_WINDOW')
+})
+
+test('前台是桌宠、点下方是密码本 → 仍拒绝', async () => {
+  process.env.DSH_GLANCE_ACT = '1'
+  const tool = createActTool({
+    home,
+    log() {},
+    isArmed: () => true,
+    sidecar: mockSidecar({
+      stats: () => ({
+        ok: true,
+        active: { title: 'dsh-pet 桌宠（桌面模式）' },
+        atPoint: { title: '密码本.txt - 记事本' },
+        screen: { w: 1920, h: 1080 },
+      }),
+    }),
+  })
+  const r = await tool.execute({ action: 'click', x: 100, y: 100, reason: '点中间' })
   assert.equal(r.meta.ok, false)
   assert.equal(r.meta.code, 'DENIED_WINDOW')
 })

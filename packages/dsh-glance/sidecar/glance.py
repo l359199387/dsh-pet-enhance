@@ -166,6 +166,31 @@ def _active_window() -> dict | None:
     }
 
 
+def _window_at_point(x: int, y: int) -> dict | None:
+    """点下方的顶层窗（用于黑名单：前台常是桌宠，真正要点的是下面的记事本）。"""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    pt = wintypes.POINT(int(x), int(y))
+    hwnd = user32.WindowFromPoint(pt)
+    if not hwnd:
+        return None
+    # GA_ROOT = 2：爬到顶层，避免拿到编辑控件子窗而无标题
+    root = user32.GetAncestor(hwnd, 2)
+    if root:
+        hwnd = root
+    title = _window_title(hwnd)
+    rect = _window_rect(hwnd)
+    pid = _window_pid(hwnd)
+    return {
+        "hwnd": int(hwnd),
+        "title": title,
+        "pid": pid,
+        "rect": list(rect) if rect else None,
+    }
+
+
 def _window_title(hwnd: int) -> str:
     import ctypes
     user32 = ctypes.windll.user32
@@ -562,7 +587,17 @@ def handle_thumb(req: dict) -> dict:
     }
 
 
-def handle_stats(_req: dict) -> dict:
+def handle_stats(req: dict) -> dict:
+    cursor = _cursor_pos()
+    ax = req.get("x")
+    ay = req.get("y")
+    if ax is not None and ay is not None:
+        try:
+            at_point = _window_at_point(int(ax), int(ay))
+        except Exception:
+            at_point = _window_at_point(cursor["x"], cursor["y"])
+    else:
+        at_point = _window_at_point(cursor["x"], cursor["y"])
     return {
         "ok": True,
         "stats": {
@@ -570,8 +605,9 @@ def handle_stats(_req: dict) -> dict:
             "uptimeMs": int((time.time() - _stats["started_at"]) * 1000),
         },
         "screen": _screen_info(),
-        "cursor": _cursor_pos(),
+        "cursor": cursor,
         "active": _active_window(),
+        "atPoint": at_point,
     }
 
 

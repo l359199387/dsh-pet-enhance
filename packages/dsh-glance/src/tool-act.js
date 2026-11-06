@@ -147,12 +147,29 @@ export function createActTool(options = {}) {
 
       windowTitle = options.getWindowTitle?.() ?? null
       screen = options.getScreen?.() ?? sidecar.getHello?.()?.screen ?? null
+      /** @type {string[]} */
+      let windowTitles = windowTitle ? [windowTitle] : []
 
-      // 尽量用当前前台窗标题（stats 失败则沿用缓存）
+      // 前台窗 + 点击坐标下方窗（桌宠常抢前台，黑名单必须看真下的窗）
       try {
-        const stats = await sidecar.call('stats', {}, 2_000)
+        const statsFields = {}
+        if (args?.x != null && args?.y != null) {
+          statsFields.x = Number(args.x)
+          statsFields.y = Number(args.y)
+        }
+        const stats = await sidecar.call('stats', statsFields, 2_000)
         if (stats?.ok) {
-          if (stats.active?.title) windowTitle = String(stats.active.title)
+          if (stats.active?.title) {
+            windowTitle = String(stats.active.title)
+            windowTitles.push(windowTitle)
+          }
+          if (stats.atPoint?.title) {
+            windowTitles.push(String(stats.atPoint.title))
+            // 审计优先记点下方的非桌宠窗
+            if (!/dsh-pet|桌宠/i.test(stats.atPoint.title)) {
+              windowTitle = String(stats.atPoint.title)
+            }
+          }
           if (stats.screen?.w && stats.screen?.h) {
             screen = { w: stats.screen.w, h: stats.screen.h }
           }
@@ -162,6 +179,7 @@ export function createActTool(options = {}) {
       const decision = evaluateActPolicy({
         args,
         windowTitle,
+        windowTitles,
         screen,
         denyTitles: options.denyTitles,
         budget: options.budget,
@@ -169,6 +187,7 @@ export function createActTool(options = {}) {
         remembered,
       })
       tier = decision.tier
+      if (decision.windowTitle) windowTitle = decision.windowTitle
 
       if (!decision.ok) {
         return finishAudit({

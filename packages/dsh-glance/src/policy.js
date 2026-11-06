@@ -11,10 +11,30 @@ export const CONFIRM_TIMEOUT_MS = 60_000
 
 /** 07 §7：可读不可点。 */
 export const DENY_TITLE_RES = [
-  /1password|bitwarden|keepass|lastpass|密码|口令|credential|password|passwd/i,
+  /1password|bitwarden|keepass|lastpass|密码本|密码|口令|credential|password|passwd/i,
   /bank|银行|支付|alipay|微信支付|paypal/i,
   /uac|用户账户控制|windows\s*安全|consent\.exe/i,
 ]
+
+/** 桌宠自己的窗标题：不当成「用户目标窗」来过黑名单。 */
+export function isPetChromeTitle(title) {
+  return /dsh-pet|桌宠/i.test(String(title ?? ''))
+}
+
+/**
+ * 合并前台窗 + 点击点下方窗；优先用非桌宠标题做黑名单判断。
+ * @param {...(string | null | undefined)} titles
+ * @returns {string[]}
+ */
+export function policyWindowTitles(...titles) {
+  const list = []
+  for (const t of titles) {
+    const s = String(t ?? '').trim()
+    if (s && !list.includes(s)) list.push(s)
+  }
+  const nonPet = list.filter((t) => !isPetChromeTitle(t))
+  return nonPet.length ? nonPet : list
+}
 
 const SUBMIT_REASON_RE = /保存|确定|确认|提交|发送|发布|关闭|删除|卸载|支付|转账|登录|登陆|ok|save|submit|send|delete|close/i
 
@@ -207,13 +227,19 @@ export function evaluateActPolicy(input) {
     }
   }
 
-  if (isDeniedWindow(input.windowTitle, input.denyTitles)) {
+  const titles = policyWindowTitles(
+    ...(Array.isArray(input.windowTitles) ? input.windowTitles : []),
+    input.windowTitle,
+  )
+  const deniedTitle = titles.find((t) => isDeniedWindow(t, input.denyTitles))
+  if (deniedTitle) {
     return {
       ok: false,
       tier,
       needsConfirm: false,
       code: 'DENIED_WINDOW',
-      reason: `当前窗口「${String(input.windowTitle).slice(0, 60)}」在黑名单里：可以看，不能点、不能打字。`,
+      reason: `窗口「${String(deniedTitle).slice(0, 60)}」在黑名单里：可以看，不能点、不能打字。`,
+      windowTitle: deniedTitle,
     }
   }
 

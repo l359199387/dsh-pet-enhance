@@ -11,12 +11,24 @@ import {
   validateActionCoords,
 } from '../src/policy.js'
 
-test('黑名单窗口：密码管理器/银行/UAC', () => {
+test('黑名单窗口：密码管理器/银行/UAC/密码本', () => {
   assert.equal(isDeniedWindow('1Password'), true)
   assert.equal(isDeniedWindow('Bitwarden - Vault'), true)
+  assert.equal(isDeniedWindow('我的密码本.txt - 记事本'), true)
   assert.equal(isDeniedWindow('中国银行网银'), true)
   assert.equal(isDeniedWindow('用户账户控制'), true)
   assert.equal(isDeniedWindow('记事本'), false)
+})
+
+test('黑名单：前台是桌宠时仍看点下方窗标题', () => {
+  const r = evaluateActPolicy({
+    args: { action: 'click', x: 10, y: 10, reason: '点一下' },
+    windowTitles: ['dsh-pet 桌宠（桌面模式）', '密码本.txt - 记事本'],
+    screen: { w: 1920, h: 1080 },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.code, 'DENIED_WINDOW')
+  assert.match(r.windowTitle, /密码本/)
 })
 
 test('分级：观察 / 可逆 / 提交 / 危险 / 禁止', () => {
