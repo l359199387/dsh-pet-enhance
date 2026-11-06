@@ -18,7 +18,16 @@ import { createGlanceTool } from './tool-glance.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
-import { clearGlanceMenu, callDshPet, MENU_OWNER, MENU_STOP, probeDshPet, registerGlanceMenu } from './dsh-pet.js'
+import {
+  clearGlanceMenu,
+  callDshPet,
+  MENU_OWNER,
+  MENU_STOP,
+  probeDshPet,
+  registerGlanceMenu,
+  resolveDshOrigin,
+  setDshPetBaseUrl,
+} from './dsh-pet.js'
 import { createChatBridge } from './chat-bridge.js'
 
 export const name = 'dsh-glance'
@@ -265,44 +274,53 @@ function installTools(ctx, log, state) {
 }
 
 function installDshPetBridge(ctx, log, state, disposers) {
-  let stopped = false
-  let registered = false
-  const bridge = createChatBridge({
-    home: glanceHome(),
-    sidecar: () => state.sidecar,
-    log,
-  })
-
-  const ensureMenu = async () => {
-    if (stopped) return
-    const probed = await probeDshPet({ timeoutMs: 1_200 })
-    if (!probed.available) {
-      registered = false
-      return
+  const run = (origin) => {
+    if (!origin) {
+      log('dsh-pet bridge：拿不到 DSH origin，跳过（Host 不能用相对路径 fetch）')
+      return () => {}
     }
-    if (!registered) {
-      const r = await registerGlanceMenu()
-      if (r.ok) {
-        registered = true
-        log('已在 dsh-pet 菜单挂上「小瞥急停」；对话请悬停宠物按 L')
+    setDshPetBaseUrl(origin)
+    log(`dsh-pet bridge origin=${origin}`)
+
+    let stopped = false
+    let registered = false
+    const bridge = createChatBridge({
+      home: glanceHome(),
+      sidecar: () => state.sidecar,
+      log,
+    })
+
+    const ensureMenu = async () => {
+      if (stopped) return
+      const probed = await probeDshPet({ timeoutMs: 1_200 })
+      if (!probed.available) {
+        registered = false
+        return
+      }
+      if (!registered) {
+        const r = await registerGlanceMenu()
+        if (r.ok) {
+          registered = true
+          log('已在 dsh-pet 菜单挂上「小瞥急停」；对话请悬停宠物按 L，说「看一眼屏幕」')
+        } else {
+          log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
+        }
       }
     }
-  }
 
-  const pollMenu = async () => {
-    if (stopped || !registered) return
-    const r = await callDshPet(
-      `/menu/events?owner=${encodeURIComponent(MENU_OWNER)}&wait=0`,
-      { method: 'GET', timeoutMs: 3_000 },
-    )
-    if (!r.ok || !r.data?.ok || !r.data.events) return
-    if (r.data.events[MENU_STOP]) {
-      state.glance.panic()
-      log('dsh-pet 菜单触发小瞥急停')
+    const pollMenu = async () => {
+      if (stopped || !registered) return
+      const r = await callDshPet(
+        `/menu/events?owner=${encodeURIComponent(MENU_OWNER)}&wait=0`,
+        { method: 'GET', timeoutMs: 3_000 },
+      )
+      if (!r.ok || !r.data?.ok || !r.data.events) return
+      if (r.data.events[MENU_STOP]) {
+        state.glance.panic()
+        log('dsh-pet 菜单触发小瞥急停')
+      }
     }
-  }
 
-  const start = () => {
     bridge.start()
     ensureMenu().catch(() => {})
     const timer = setInterval(() => {
@@ -317,11 +335,28 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
   }
 
+  // Host 侧必须经 webServer 拿绝对 origin；没有 inject 时（单测）允许空跑。
+  if (typeof ctx?.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (scoped) => {
+        if (typeof scoped?.effect === 'function') {
+          scoped.effect(() => run(resolveDshOrigin(scoped.webServer)), 'dsh-glance: dsh-pet bridge')
+          return
+        }
+        disposers.push(run(resolveDshOrigin(scoped.webServer)))
+      })
+      return
+    } catch (e) {
+      log(`dsh-pet bridge 没挂上：${e?.message ?? e}`)
+      return
+    }
+  }
+
   if (typeof ctx?.effect === 'function') {
-    ctx.effect(() => start(), 'dsh-glance: dsh-pet bridge')
+    ctx.effect(() => run(resolveDshOrigin(ctx.webServer)), 'dsh-glance: dsh-pet bridge')
     return
   }
-  disposers.push(start())
+  disposers.push(run(resolveDshOrigin(ctx?.webServer)))
 }
 
 function installSidecar(ctx, log, state, disposers) {

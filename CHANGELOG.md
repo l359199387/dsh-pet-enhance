@@ -7,8 +7,9 @@
 ### 接到 dsh-pet 自带对话（L）
 
 - 探测到 dsh-pet 后：**不再**另开小瞥输入框；悬停宠物按 `L`（或 `Ctrl+Shift+L`）用它自己的对话。
-- Host `chat-bridge` 轮询 `/chat`：提到看屏/截图等 → 抓一帧，带锁 `/broadcast` 把窗口与分辨率事实塞进宠物气泡。
+- Host `chat-bridge` 用绝对 origin 调 dsh-pet；提到看屏/截图等 → 抓一帧 → **`POST /chat` 附图**让宠物开口描述（失败则 `/broadcast` 报错）。动作接口带 `surface=any`。
 - dsh-pet 右键「更多」只挂 **小瞥急停**；对话能力全部让给 L。
+- 修复：原先 Host 侧相对路径 `fetch` 在 Node 会失败，导致「看一眼屏幕」完全没反应。
 
 ### 宠物形象
 

@@ -2,19 +2,29 @@
  * 把小瞥能力接到 dsh-pet 自带对话上（悬停按 L / Ctrl+Shift+L）。
  *
  * 不另开输入框：用户继续用 dsh-pet 聊；我们轮询 `/chat` 记忆，
- * 一旦用户提到看屏，就抓一帧并通过 `/broadcast` 把事实塞进宠物气泡。
+ * 一旦用户提到看屏，就抓一帧，再 `POST /chat` 附图让宠物自己开口描述。
+ * 失败时用 `/broadcast` 把原因吐到气泡。
  *
  * @module src/chat-bridge.js
  */
 
-import { callDshPet } from './dsh-pet.js'
+import {
+  broadcastToDshPet,
+  callDshPet,
+  chatWithDshPet,
+} from './dsh-pet.js'
 import { captureFrame } from './capture.js'
 
 export const GLANCE_INTENT_RE =
   /看(?:一眼|看|下)?(?:我的)?屏幕|屏幕上|帮我看|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|glance/i
 
+/** 我们二次投喂的提示词前缀——不得命中 GLANCE_INTENT_RE，避免死循环。 */
+export const GLANCE_FOLLOWUP_PREFIX = '【小瞥已附上刚才的画面】'
+
 export function isGlanceIntent(text) {
-  return GLANCE_INTENT_RE.test(String(text ?? ''))
+  const s = String(text ?? '')
+  if (s.startsWith(GLANCE_FOLLOWUP_PREFIX)) return false
+  return GLANCE_INTENT_RE.test(s)
 }
 
 function lastUserMessage(messages) {
@@ -28,25 +38,18 @@ function lastUserMessage(messages) {
   return null
 }
 
-async function withLock(pet, fn) {
-  const lockRes = await callDshPet(`/lock?pet=${encodeURIComponent(pet)}`, {
-    method: 'POST',
-    body: {},
-    timeoutMs: 5_000,
-  })
-  const lockId = lockRes.data?.lockId
-  if (!lockRes.ok || !lockId) {
-    return { ok: false, error: 'lock-failed', detail: lockRes }
-  }
-  try {
-    return await fn(lockId)
-  } finally {
-    await callDshPet(`/lock/release?pet=${encodeURIComponent(pet)}`, {
-      method: 'POST',
-      body: { lockId },
-      timeoutMs: 3_000,
-    }).catch(() => {})
-  }
+function followUpPrompt(userText, shot) {
+  const where = shot.window?.title
+    ? `当前焦点窗口「${shot.window.title}」`
+    : (shot.screen?.w && shot.screen?.h
+      ? `整屏 ${shot.screen.w}×${shot.screen.h}`
+      : '整屏')
+  return (
+    `${GLANCE_FOLLOWUP_PREFIX}`
+    + `用户刚说「${userText.slice(0, 80)}」。`
+    + `我已抓到${where} → ${shot.width}×${shot.height}。`
+    + '请根据附图用一两句口语告诉用户屏幕上现在有什么，不要提你是插件。'
+  )
 }
 
 /**
@@ -78,6 +81,12 @@ export function createChatBridge(options) {
         body: { state: 'working', task: 'glance' },
       }).catch(() => {})
 
+      // 先用气泡报一声（无锁也可投；surface=any）
+      const notice = await broadcastToDshPet('好，我看一眼屏幕…', { pet, duration: 6_000 })
+      if (!notice.ok || notice.data?.ok === false) {
+        log(`chat-bridge 预告气泡失败：${notice.error || notice.data?.reason || notice.status}`)
+      }
+
       let shot
       try {
         const sidecar = typeof options.sidecar === 'function'
@@ -92,28 +101,47 @@ export function createChatBridge(options) {
       } catch (e) {
         const msg = `我去看屏幕了，但没看成：${e?.message ?? e}`
         log(`chat-bridge 抓屏失败：${msg}`)
-        await withLock(pet, async (lockId) => callDshPet(
-          `/broadcast?pet=${encodeURIComponent(pet)}&lock=${encodeURIComponent(lockId)}`,
-          { method: 'POST', body: { text: msg }, timeoutMs: 8_000 },
-        ))
+        await broadcastToDshPet(msg, { pet, duration: 12_000 })
         return
       }
 
-      const screen = shot.screen?.w && shot.screen?.h
-        ? `${shot.screen.w}×${shot.screen.h}`
-        : '未知尺寸'
-      const where = shot.window?.title
-        ? `窗口「${shot.window.title}」`
-        : `整屏 ${screen}`
-      const text =
-        `我看了一眼：${where} → ${shot.width}×${shot.height}（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
-        + '图已经在工具侧；你若要我描述细节，再说具体一点。'
+      if (!shot?.png || !Buffer.isBuffer(shot.png)) {
+        await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
+        return
+      }
 
-      await withLock(pet, async (lockId) => callDshPet(
-        `/broadcast?pet=${encodeURIComponent(pet)}&lock=${encodeURIComponent(lockId)}`,
-        { method: 'POST', body: { text }, timeoutMs: 8_000 },
-      ))
-      log(`chat-bridge 已把看屏结果广播给 dsh-pet（${userText.slice(0, 40)}）`)
+      const prompt = followUpPrompt(userText, shot)
+      const chat = await chatWithDshPet(prompt, {
+        pet,
+        attachment: {
+          mediaType: 'image/png',
+          data: shot.png.toString('base64'),
+        },
+        timeoutMs: 120_000,
+      })
+
+      if (!chat.ok || chat.data?.ok === false) {
+        const reason = chat.data?.reason || chat.error || `http-${chat.status}`
+        const msg = `图有了，但宠物没能开口（${reason}）。`
+        log(`chat-bridge 附图对话失败：${msg}`)
+        // 退路：至少把尺寸/窗口事实说出来
+        const screen = shot.screen?.w && shot.screen?.h
+          ? `${shot.screen.w}×${shot.screen.h}`
+          : '未知尺寸'
+        const where = shot.window?.title
+          ? `窗口「${shot.window.title}」`
+          : `整屏 ${screen}`
+        await broadcastToDshPet(
+          `我看了一眼：${where} → ${shot.width}×${shot.height}（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`,
+          { pet, duration: 14_000 },
+        )
+        return
+      }
+
+      // 对话成功时 dsh-pet 自己会写 say 气泡；再记下基线，避免下一拍把我们的 follow-up 当新意图
+      lastContent = prompt
+      lastTs = Date.now()
+      log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
     } finally {
       await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
       busy = false
@@ -126,7 +154,10 @@ export function createChatBridge(options) {
       method: 'GET',
       timeoutMs: 4_000,
     })
-    if (!res.ok) return
+    if (!res.ok) {
+      if (res.error) log(`chat-bridge 读 /chat 失败：${res.error}`)
+      return
+    }
     const user = lastUserMessage(res.data?.messages)
     if (!user) return
     if (user.ts === lastTs && user.content === lastContent) return

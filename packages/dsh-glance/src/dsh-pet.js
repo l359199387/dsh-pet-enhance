@@ -4,12 +4,60 @@
  * dsh-pet 动画/形象是 CC BY-NC-SA 4.0，禁止商用、禁止塞进本仓库。
  * 合法做法：用户自己装 dsh-pet，我们调 `/dsh-pet-7340/*` 让它开口/切状态。
  *
+ * Host 侧必须用绝对 origin（`webServer.getOrigin()` / `DSH_WEB_URL`）；
+ * Node 的 `fetch('/dsh-pet-7340/…')` 会直接 Failed to parse URL。
+ *
  * @module src/dsh-pet.js
  */
 
 export const DSH_PET_PREFIX = '/dsh-pet-7340'
 export const MENU_OWNER = 'dsh-glance'
 export const MENU_STOP = '小瞥急停'
+/** 动作类接口必填；any = 网页/桌面都能收到。 */
+export const PET_SURFACE = 'any'
+
+/** Host 装配期写入；浏览器半身可以继续走相对路径（base 为空）。 */
+let defaultBaseUrl = ''
+
+export function setDshPetBaseUrl(url) {
+  defaultBaseUrl = String(url ?? '').replace(/\/$/, '')
+  return defaultBaseUrl
+}
+
+export function getDshPetBaseUrl() {
+  return defaultBaseUrl
+}
+
+/**
+ * 从 webServer / 环境变量解析 DSH HTTP 源。
+ * @param {{ getOrigin?: () => string, port?: number } | null | undefined} webServer
+ */
+export function resolveDshOrigin(webServer) {
+  const fromEnv = String(process.env.DSH_WEB_URL || process.env.DSH_ORIGIN || '').trim()
+  if (fromEnv) return fromEnv.replace(/\/$/, '')
+
+  if (webServer && typeof webServer.getOrigin === 'function') {
+    try {
+      const origin = String(webServer.getOrigin() || '').replace(/\/$/, '')
+      if (origin) return origin
+    } catch {
+      // 带 zone 的 IPv6 等会抛，落到 port 兜底
+    }
+  }
+
+  const port = webServer?.port
+  if (typeof port === 'number' && port > 0) {
+    return `http://127.0.0.1:${port}`
+  }
+  return ''
+}
+
+function withSurface(path, surface = PET_SURFACE) {
+  const raw = String(path || '')
+  const join = raw.includes('?') ? '&' : '?'
+  if (/[?&]surface=/.test(raw)) return raw
+  return `${raw}${join}surface=${encodeURIComponent(surface)}`
+}
 
 /** 在 dsh-pet 右键「更多」里挂急停；对话请用它自带的 L，不要另开输入框。 */
 export async function registerGlanceMenu(options = {}) {
@@ -31,12 +79,48 @@ export async function clearGlanceMenu(options = {}) {
   })
 }
 
-/** 跟 dsh-pet 聊一句：走它自己的对话与气泡。 */
-export async function chatWithDshPet(text, { pet = 'main', ...options } = {}) {
-  return callDshPet(`/chat?pet=${encodeURIComponent(pet)}`, {
+/** 跟 dsh-pet 聊一句（可附图）：走它自己的对话与气泡。 */
+export async function chatWithDshPet(text, { pet = 'main', attachment, surface = PET_SURFACE, ...options } = {}) {
+  const body = { text: String(text ?? '') }
+  if (attachment) body.attachment = attachment
+  return callDshPet(withSurface(`/chat?pet=${encodeURIComponent(pet)}`, surface), {
     method: 'POST',
-    body: { text: String(text ?? '') },
+    body,
     timeoutMs: 120_000,
+    ...options,
+  })
+}
+
+/**
+ * 第三方投喂气泡。无锁时可直接投；有人占用时必须带 lock。
+ * @param {string} text
+ * @param {{ pet?: string, lockId?: string, duration?: number, surface?: string }} [opts]
+ */
+export async function broadcastToDshPet(text, { pet = 'main', lockId, duration = 12_000, surface = PET_SURFACE, ...options } = {}) {
+  let path = withSurface(`/broadcast?pet=${encodeURIComponent(pet)}`, surface)
+  if (lockId) path += `&lock=${encodeURIComponent(lockId)}`
+  return callDshPet(path, {
+    method: 'POST',
+    body: { text: String(text ?? ''), duration, anim: true },
+    timeoutMs: 8_000,
+    ...options,
+  })
+}
+
+export async function acquirePetLock(pet = 'main', { surface = PET_SURFACE, ...options } = {}) {
+  return callDshPet(withSurface(`/lock?pet=${encodeURIComponent(pet)}`, surface), {
+    method: 'POST',
+    body: {},
+    timeoutMs: 5_000,
+    ...options,
+  })
+}
+
+export async function releasePetLock(pet = 'main', lockId, options = {}) {
+  return callDshPet(`/lock/release?pet=${encodeURIComponent(pet)}`, {
+    method: 'POST',
+    body: { lockId },
+    timeoutMs: 3_000,
     ...options,
   })
 }
@@ -55,7 +139,7 @@ export async function probeDshPet(options = {}) {
     return { available: false, error: 'no-fetch' }
   }
 
-  const base = String(options.baseUrl || '').replace(/\/$/, '')
+  const base = String((options.baseUrl ?? defaultBaseUrl) || '').replace(/\/$/, '')
   const url = `${base}${DSH_PET_PREFIX}/state`
   const timeoutMs = options.timeoutMs ?? 1_500
   const ac = typeof AbortController === 'function' ? new AbortController() : null
@@ -79,17 +163,19 @@ export async function probeDshPet(options = {}) {
 }
 
 /**
- * 同源相对路径调用（浏览器 / 与 DSH 同端口的 Host 侧都可以用）。
+ * 同源相对路径（浏览器）或绝对 origin（Host）调用。
  */
-export async function callDshPet(path, { method = 'GET', body, fetchImpl, timeoutMs = 3_000 } = {}) {
+export async function callDshPet(path, { method = 'GET', body, fetchImpl, timeoutMs = 3_000, baseUrl } = {}) {
   const fetchFn = fetchImpl ?? globalThis.fetch
   if (typeof fetchFn !== 'function') {
     return { ok: false, error: 'no-fetch' }
   }
+  const base = String((baseUrl ?? defaultBaseUrl) || '').replace(/\/$/, '')
+  const url = `${base}${DSH_PET_PREFIX}${path}`
   const ac = typeof AbortController === 'function' ? new AbortController() : null
   const timer = setTimeout(() => { try { ac?.abort() } catch { /* ignore */ } }, timeoutMs)
   try {
-    const res = await fetchFn(`${DSH_PET_PREFIX}${path}`, {
+    const res = await fetchFn(url, {
       method,
       signal: ac?.signal,
       credentials: 'same-origin',
@@ -108,3 +194,5 @@ export async function callDshPet(path, { method = 'GET', body, fetchImpl, timeou
     clearTimeout(timer)
   }
 }
+
+export { withSurface }
