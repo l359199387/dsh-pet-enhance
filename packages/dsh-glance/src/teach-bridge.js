@@ -1,7 +1,7 @@
 /**
- * 教学模式：用户自己操作，小蓝鲸只记录；教完整理步骤并叫醒主会话执行目标。
+ * 教学模式：只记操作 → Host 短消化成 playbook → 不懂就问 → 脚本步本地跑，glance 步短叫醒。
  *
- * 敏感窗/密码类输入：只落本地 secrets，发给模型的计划里不出现原文。
+ * 敏感窗/密码类输入：只落本地 secrets，发给模型的提示里不出现原文。
  *
  * @module src/teach-bridge.js
  */
@@ -15,15 +15,21 @@ import {
 } from './intent.js'
 import {
   appendTeachEvent,
+  buildPlaybook,
   buildPublicPlan,
+  compactGlanceHints,
   createTeachSession,
+  detectTeachAmbiguities,
+  findPlaybookForQuery,
   narratePlan,
   newTeachSessionId,
+  readPlaybook,
   readTeachEvents,
   readTeachSecrets,
+  savePlaybook,
   updateTeachMeta,
 } from './teach-store.js'
-import { isActEnabled } from './settings.js'
+import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 
@@ -45,7 +51,7 @@ function clip(s, n = 160) {
   return t.length <= n ? t : `${t.slice(0, n - 1)}…`
 }
 
-/** @deprecated 旧「逐步坐标脚本」提示；现主路径用 buildTeachUnderstandPrompt。 */
+/** @deprecated 旧全量证据提示；现主路径用 buildTeachGlancePrompt。 */
 export function buildTeachExecutePrompt(goal, steps, sessionId) {
   const lines = steps.map((s, i) => {
     const n = i + 1
@@ -62,10 +68,7 @@ export function buildTeachExecutePrompt(goal, steps, sessionId) {
   )
 }
 
-/**
- * 把教学证据交给模型理解后自行 glance/act，而不是 Host 盲重放坐标。
- * 敏感内容只出现 secretRef，永不出现明文。
- */
+/** @deprecated 全量理解提示过长；保留兼容测试。 */
 export function buildTeachUnderstandPrompt(goal, steps, sessionId) {
   const evidence = steps.map((s, i) => {
     const n = i + 1
@@ -99,27 +102,45 @@ export function buildTeachUnderstandPrompt(goal, steps, sessionId) {
   )
 }
 
+/**
+ * 仅 glance 步的短提示（脚本步已由 Host 跑或不送）。
+ * @param {object} playbook
+ */
+export function buildTeachGlancePrompt(playbook) {
+  const hints = compactGlanceHints(playbook) || '(无)'
+  return (
+    `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
+    + `已学 playbook ${playbook.id}。目标：「${clip(playbook.goal, 80)}」。`
+    + `脚本步宿主已处理或可本地跑；只需你处理 glance 步：${hints}。`
+    + '先 glance 再 act；坐标是示意；敏感输入用 secretRef；一两句汇报。'
+    + `\n${glancePersonaBlock()}`
+  )
+}
+
 function stepToActArgs(step, sessionId) {
   if (step.secretRef) {
+    const ref = String(step.secretRef).includes('/')
+      ? step.secretRef
+      : `${sessionId}/${step.secretRef}`
     return {
       action: 'type',
-      secretRef: `${sessionId}/${step.secretRef}`,
-      reason: step.reason,
+      secretRef: ref,
+      reason: step.reason || 'teach-script',
       _teachReplay: true,
     }
   }
   if (step.action === 'type') {
-    return { action: 'type', text: step.text || '', reason: step.reason, _teachReplay: true }
+    return { action: 'type', text: step.text || '', reason: step.reason || 'teach-script', _teachReplay: true }
   }
   if (step.action === 'key') {
-    return { action: 'key', keys: step.keys, reason: step.reason, _teachReplay: true }
+    return { action: 'key', keys: step.keys, reason: step.reason || 'teach-script', _teachReplay: true }
   }
   return {
     action: step.action,
-    x: step.x,
-    y: step.y,
+    x: step.hint?.x ?? step.x,
+    y: step.hint?.y ?? step.y,
     button: step.button || 'left',
-    reason: step.reason,
+    reason: step.reason || 'teach-script',
     _teachReplay: true,
   }
 }
@@ -135,6 +156,8 @@ function stepToActArgs(step, sessionId) {
  *   getPreferredSessionId?: () => string | null,
  *   confirmGate?: { ask: Function },
  *   isActEnabled?: (home: string) => boolean,
+ *   isLiveWatchEnabled?: (home: string) => boolean,
+ *   ensureLiveWatch?: (on: boolean) => Promise<void>,
  *   runAct?: (args: object) => Promise<{ text?: string, meta?: object }>,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
@@ -147,6 +170,7 @@ export function createTeachBridge(options) {
   const log = options.log ?? (() => {})
   const intervalMs = options.intervalMs ?? 2_000
   const actOn = options.isActEnabled ?? isActEnabled
+  const liveOn = options.isLiveWatchEnabled ?? isLiveWatchEnabled
   const pollChat = options.pollChat !== false
   const wake = options.wake ?? wakeSession
   const waitReply = options.waitReply ?? waitAssistantReply
@@ -164,6 +188,8 @@ export function createTeachBridge(options) {
   let goal = ''
   let lastEventAt = 0
   let askedIdle = false
+  /** @type {string | null} 最近一次落盘的 playbook id，便于「再做一次」 */
+  let lastPlaybookId = null
 
   function sidecar() {
     return typeof options.sidecar === 'function' ? options.sidecar() : options.sidecar
@@ -177,9 +203,57 @@ export function createTeachBridge(options) {
     return sc.call('observe', { action, ...fields }, 5_000)
   }
 
+  /**
+   * 教学需要实时看屏幕，才能把界面变化消化得更深。
+   * 未开则提示主人；可确认后代开；拒绝则不开课。
+   * @returns {Promise<boolean>}
+   */
+  async function ensureLiveWatchForTeach() {
+    let on = false
+    try {
+      on = liveOn(options.home)
+    } catch {
+      const s = await loadSettings(options.home).catch(() => ({ liveWatch: false }))
+      on = Boolean(s.liveWatch)
+    }
+    if (on) return true
+
+    await broadcastToDshPet(
+      '学的时候要开「实时看屏幕」，我才能看得更清楚。请右键「更多」打开，或点头上确认让我帮你开。',
+      { pet, duration: 14_000 },
+    )
+
+    if (options.confirmGate?.ask) {
+      const verdict = await options.confirmGate.ask({
+        summary: '教学需要打开「实时看屏幕」，现在打开吗？',
+        tier: 'L2',
+        action: { teach: 'enable-live-watch' },
+      })
+      if (verdict.allow) {
+        if (typeof options.ensureLiveWatch === 'function') {
+          await options.ensureLiveWatch(true)
+        } else {
+          const { saveSettings } = await import('./settings.js')
+          await saveSettings(options.home, { liveWatch: true })
+        }
+        await broadcastToDshPet('好，实时看屏幕已开，开始学。', { pet, duration: 6_000 })
+        return true
+      }
+      await broadcastToDshPet(
+        '没开实时看屏幕我就学不深。你打开后再教我一遍吧。',
+        { pet, duration: 12_000 },
+      )
+      return false
+    }
+
+    // 无确认闸：只提示，不开课（避免默默学浅）
+    log('teach：实时看屏幕未开，已提示主人')
+    return false
+  }
+
   async function startTeaching(userText) {
     if (teaching) {
-      await broadcastToDshPet('已经在学啦。你继续操作，说「教完了」我就去做。', { pet, duration: 8_000 })
+      await broadcastToDshPet('已经在学啦。你继续操作；做完告诉我一声。', { pet, duration: 8_000 })
       return
     }
     const sc = sidecar()
@@ -187,7 +261,8 @@ export function createTeachBridge(options) {
       await broadcastToDshPet('录操作需要 Python sidecar，当前不可用。', { pet, duration: 10_000 })
       return
     }
-    // 从话里抽出目标：去掉常见教学措辞（兜底；主路径已由分流模型判定）
+    if (!(await ensureLiveWatchForTeach())) return
+
     goal = String(userText)
       .replace(/我?教你一下|教你一遍|学一下我的操作|跟我学一遍|看我做一遍|开始教学|进入教学/gi, '')
       .replace(/^[，,。.\s]+|[，,。.\s]+$/g, '')
@@ -211,7 +286,7 @@ export function createTeachBridge(options) {
       body: { state: 'working', task: 'teaching' },
     }).catch(() => {})
     await broadcastToDshPet(
-      `好，我看着学。目标：${clip(goal, 40)}。你自己操作；做完告诉我一声，我会理解证据再去做。密码类只记本地、不送模型。`,
+      `好，我看着学（实时看屏幕已开）。目标：${clip(goal, 40)}。你操作；做完告诉我。我会短消化成脚本，不懂就问你。密码只记本地。`,
       { pet, duration: 14_000 },
     )
     if (!observeTimer) {
@@ -233,35 +308,71 @@ export function createTeachBridge(options) {
         await broadcastToDshPet('嗯，敏感输入我只记在本地了。', { pet, duration: 5_000 })
       }
     }
-    // 长时间无操作：追问一次
     if (!askedIdle && stepIndex > 0 && Date.now() - lastEventAt > 25_000) {
       askedIdle = true
       await broadcastToDshPet(
-        '还在教吗？做完了告诉我一声；要继续就接着操作。',
+        '还在教吗？做完了告诉我一声；有哪步我没看懂也请直接说。',
         { pet, duration: 10_000 },
       )
     }
   }
 
+  /** 歧义追问：不懂就问清（confirm 气泡）。 */
+  async function clarifyAmbiguities(id, runGoal, steps) {
+    const questions = detectTeachAmbiguities(runGoal, steps)
+    if (!questions.length) return { ok: true }
+    if (!options.confirmGate?.ask) {
+      // 无确认闸时：目标不清则停，避免瞎跑
+      if (questions.some((q) => q.code === 'goal' || q.code === 'empty')) {
+        await broadcastToDshPet(
+          `我还不懂：${questions[0].summary}请再说清楚目标后再教一次。`,
+          { pet, duration: 14_000 },
+        )
+        return { ok: false, reason: 'need-clarify' }
+      }
+      return { ok: true }
+    }
+    for (const q of questions) {
+      await broadcastToDshPet(`有一点要问清：${q.summary}`, { pet, duration: 10_000 })
+      const verdict = await options.confirmGate.ask({
+        summary: q.summary,
+        tier: 'L2',
+        action: { teachSession: id, clarify: q.code },
+      })
+      if (!verdict.allow) {
+        await broadcastToDshPet('好，先停。想清楚了再教我。', { pet, duration: 8_000 })
+        await updateTeachMeta(options.home, id, { status: 'cancelled', clarify: q.code })
+        return { ok: false, reason: 'user-deny' }
+      }
+    }
+    return { ok: true }
+  }
+
   async function stopAndRun() {
     if (!teaching || !sessionId) {
-      await broadcastToDshPet('现在不在教学模式。想教我直接说就行。', { pet, duration: 8_000 })
+      // 不在录制中：尝试再次执行已学 playbook
+      const ran = await tryRunMatchingPlaybook('再做一次刚才教的')
+      if (ran) return
+      await broadcastToDshPet('现在不在教学模式。想教我直接说；要再跑已学会的也可以说。', {
+        pet,
+        duration: 10_000,
+      })
       return
     }
     if (observeTimer) {
       clearInterval(observeTimer)
       observeTimer = null
     }
-    // 先抽干最后一批事件，再关教学态（pollEvents 依赖 teaching=true）
     await pollEvents()
     await observe('stop')
     teaching = false
     try { options.onTeaching?.(false) } catch { /* ignore */ }
     await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
 
-    const events = await readTeachEvents(options.home, sessionId)
+    const id = sessionId
+    const events = await readTeachEvents(options.home, id)
     const steps = buildPublicPlan(events)
-    await updateTeachMeta(options.home, sessionId, {
+    await updateTeachMeta(options.home, id, {
       status: 'recorded',
       endedAt: new Date().toISOString(),
       stepCount: steps.length,
@@ -273,58 +384,109 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 步骤很少时确认一下目标
-    if (steps.length < 2 && options.confirmGate?.ask) {
-      const verdict = await options.confirmGate.ask({
-        summary: `只记到 ${steps.length} 步，按这个去做「${clip(goal, 30)}」吗？`,
-        tier: 'L2',
-        action: { teachSession: sessionId },
-      })
-      if (!verdict.allow) {
-        await broadcastToDshPet('好，先不跑。想再教直接说就行。', { pet, duration: 8_000 })
-        await updateTeachMeta(options.home, sessionId, { status: 'cancelled' })
-        sessionId = null
+    // Host 零模型短消化 → playbook
+    const playbook = buildPlaybook(goal, steps, id)
+    const clarified = await clarifyAmbiguities(id, goal, steps)
+    if (!clarified.ok) {
+      sessionId = null
+      return
+    }
+
+    await savePlaybook(options.home, playbook)
+    lastPlaybookId = id
+    await updateTeachMeta(options.home, id, {
+      status: 'playbook',
+      playbookStats: playbook.stats,
+    })
+
+    const narrative = narratePlan(steps)
+    await broadcastToDshPet(
+      `消化好了：脚本 ${playbook.stats.script} 步 / 需看屏 ${playbook.stats.glance} 步。\n`
+      + `${clip(narrative, 100)}\n下次同任务会少费口舌。`,
+      { pet, duration: 14_000 },
+    )
+
+    if (!actOn(options.home)) {
+      await broadcastToDshPet('要动手请先打开「允许动手」，然后再说去做。', { pet, duration: 12_000 })
+      await updateTeachMeta(options.home, id, { status: 'awaiting-act' })
+      sessionId = null
+      return
+    }
+
+    await runPlaybook(playbook)
+    sessionId = null
+  }
+
+  /**
+   * 脚本步本地 act；仅 glance 步短叫醒（省 token）。
+   * @param {object} playbook
+   */
+  async function runPlaybook(playbook) {
+    const id = playbook.id
+    await readTeachSecrets(options.home, id)
+    const runAct = options.runAct
+    const scriptSteps = (playbook.steps || []).filter((s) => s.mode === 'script')
+    const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
+
+    await broadcastToDshPet(
+      `开始做「${clip(playbook.goal, 36)}」（脚本 ${scriptSteps.length} / 看屏 ${glanceSteps.length}）…`,
+      { pet, duration: 6_000 },
+    )
+
+    if (typeof runAct === 'function' && scriptSteps.length) {
+      for (let i = 0; i < scriptSteps.length; i += 1) {
+        if (stopped) {
+          await broadcastToDshPet('已急停，教学执行中断。', { pet, duration: 8_000 })
+          await updateTeachMeta(options.home, id, { status: 'aborted' })
+          return
+        }
+        const r = await runAct(stepToActArgs(scriptSteps[i], id))
+        if (!r?.meta?.ok) {
+          await broadcastToDshPet(
+            `脚本第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`,
+            { pet, duration: 12_000 },
+          )
+          await updateTeachMeta(options.home, id, { status: 'script-failed' })
+          return
+        }
+      }
+      if (scriptSteps.length && !glanceSteps.length) {
+        await broadcastToDshPet(`做完了：${clip(playbook.goal, 40)}（全脚本，未叫醒大模型）`, {
+          pet,
+          duration: 12_000,
+        })
+        await updateTeachMeta(options.home, id, {
+          status: 'done',
+          via: 'script-only',
+          endedAt: new Date().toISOString(),
+        })
+        log(`teach：playbook 全脚本完成 ${id}`)
         return
       }
     }
 
-    const narrative = narratePlan(steps)
-    await broadcastToDshPet(`记下了 ${steps.length} 步：\n${clip(narrative, 120)}\n我去理解再做。`, {
-      pet,
-      duration: 12_000,
-    })
-
-    if (!actOn(options.home)) {
-      await broadcastToDshPet('要动手请先打开「允许动手」，然后再告诉我去做。', { pet, duration: 12_000 })
-      await updateTeachMeta(options.home, sessionId, { status: 'awaiting-act' })
+    if (!glanceSteps.length) {
+      await broadcastToDshPet(`记下了，但没有可执行步。`, { pet, duration: 8_000 })
       return
     }
 
-    await runUnderstand(sessionId, goal, steps)
-  }
-
-  /** 叫醒主会话：模型理解证据后 glance/act（非 Host 盲重放）。 */
-  async function runUnderstand(id, runGoal, steps) {
-    await readTeachSecrets(options.home, id)
+    // 仅 glance：短提示叫醒
     const preferred = options.getPreferredSessionId?.() ?? null
-    const prompt = buildTeachUnderstandPrompt(runGoal, steps, id)
-    await broadcastToDshPet(`开始理解并做「${clip(runGoal, 36)}」…`, { pet, duration: 6_000 })
-
+    const prompt = buildTeachGlancePrompt(playbook)
     const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
     if (!woken.ok) {
       const why = woken.reason || 'unknown'
       await broadcastToDshPet(
         why.includes('no-session')
-          ? '我找不到可叫醒的主会话。请先在 Harness 里打开一个对话，再告诉我去做。'
-          : `没叫醒主会话（${why}）。教学已记下，稍后再试。`,
+          ? '脚本步好了，但找不到主会话处理看屏步。请打开一个对话再说去做。'
+          : `脚本步好了；看屏步没叫醒主会话（${why}）。`,
         { pet, duration: 12_000 },
       )
-      await updateTeachMeta(options.home, id, { status: 'wake-failed', reason: why })
-      log(`teach：理解执行叫醒失败 ${why}`)
+      await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why })
       return
     }
 
-    log(`teach：已交主会话理解执行 ${woken.sessionId}`)
+    log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(playbook)}`)
     const reply = await waitReply(options.ctx, woken.sessionId, {
       timeoutMs: 180_000,
       isAborted: () => stopped,
@@ -333,13 +495,14 @@ export function createTeachBridge(options) {
       await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })
       await updateTeachMeta(options.home, id, {
         status: 'done',
+        via: 'script+glance',
         endedAt: new Date().toISOString(),
       })
     } else {
       await broadcastToDshPet(
         reply.reason === 'timeout'
-          ? '主会话还在忙或超时了。教学已记下，你可以去主会话看进度。'
-          : '主会话这轮没给出文字结果；去主会话里看看工具有没有跑完。',
+          ? '看屏步超时了。playbook 已保存，下次可少费口舌再跑。'
+          : '看屏步没文字结果；去主会话看看。playbook 已存。',
         { pet, duration: 12_000 },
       )
       await updateTeachMeta(options.home, id, {
@@ -347,50 +510,33 @@ export function createTeachBridge(options) {
         endedAt: new Date().toISOString(),
       })
     }
-    sessionId = null
   }
 
   /**
-   * 本地逐步 act（仅测试/显式兜底）。产品主路径是 runUnderstand。
-   * @deprecated
+   * 再次执行：匹配已学 playbook，省消化 token。
+   * @returns {Promise<boolean>} 是否已接手处理
    */
-  async function runPlanLocal(id, runGoal, steps) {
-    await readTeachSecrets(options.home, id)
-    const runAct = options.runAct
-    if (typeof runAct !== 'function') {
-      await broadcastToDshPet('回放通道没就绪。', { pet, duration: 10_000 })
-      await updateTeachMeta(options.home, id, { status: 'no-run-act' })
-      return
+  async function tryRunMatchingPlaybook(userText) {
+    if (!actOn(options.home)) return false
+    let playbook = await findPlaybookForQuery(options.home, userText)
+    if (!playbook && lastPlaybookId) {
+      playbook = await readPlaybook(options.home, lastPlaybookId)
     }
-    await broadcastToDshPet(`开始按教学做「${clip(runGoal, 36)}」…`, { pet, duration: 6_000 })
-    let ok = true
-    let failText = ''
-    for (let i = 0; i < steps.length; i += 1) {
-      if (stopped) {
-        ok = false
-        failText = '已急停，教学回放中断。'
-        break
-      }
-      const args = stepToActArgs(steps[i], id)
-      const r = await runAct(args)
-      if (!r?.meta?.ok) {
-        ok = false
-        failText = r?.text || `第 ${i + 1} 步失败`
-        log(`teach：步骤 ${i + 1} 失败：${failText}`)
-        break
-      }
-      await broadcastToDshPet(`第 ${i + 1}/${steps.length} 步好了`, { pet, duration: 3_000 })
-    }
+    if (!playbook?.steps?.length) return false
+
     await broadcastToDshPet(
-      ok ? `做完了：${clip(runGoal, 40)}` : `做到一半停了：${clip(failText, 80)}`,
-      { pet, duration: 14_000 },
+      `找到已学「${clip(playbook.goal, 36)}」，按脚本跑（少费口舌）…`,
+      { pet, duration: 8_000 },
     )
-    await updateTeachMeta(options.home, id, {
-      status: ok ? 'done' : 'failed',
-      endedAt: new Date().toISOString(),
-    })
-    log(`teach：本地回放结束 ${id} ok=${ok}`)
-    sessionId = null
+    await runPlaybook(playbook)
+    return true
+  }
+
+  /** @deprecated 本地逐步；现用 runPlaybook */
+  async function runPlanLocal(id, runGoal, steps) {
+    const playbook = buildPlaybook(runGoal, steps, id)
+    await savePlaybook(options.home, playbook)
+    await runPlaybook(playbook)
   }
 
   async function tick() {
@@ -451,8 +597,11 @@ export function createTeachBridge(options) {
     getSessionId: () => sessionId,
     startTeaching,
     stopAndRun,
+    tryRunMatchingPlaybook,
+    runPlaybook,
     runPlanLocal,
     buildTeachUnderstandPrompt,
+    buildTeachGlancePrompt,
     stepToActArgs,
   }
 }

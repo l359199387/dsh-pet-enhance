@@ -50,7 +50,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.2.1'
+export const VERSION = '0.2.2'
 
 const startedAt = Date.now()
 
@@ -447,6 +447,8 @@ function installDshPetBridge(ctx, log, state, disposers) {
       log,
       ...petHooks,
     })
+    // setLiveWatch 在下方定义；教学确保开实时看屏幕时经此回调，保持菜单/live 同步。
+    let setLiveWatchRef = async () => {}
     const teach = createTeachBridge({
       ctx,
       home,
@@ -455,6 +457,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       pollChat: false,
       confirmGate: state.confirmGate,
       getPreferredSessionId: () => state.lastSessionId,
+      ensureLiveWatch: async (on) => { await setLiveWatchRef(on) },
       runAct: (args) => {
         if (typeof state.runAct === 'function') return state.runAct(args)
         return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })
@@ -503,21 +506,24 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
     }
 
-    const setLiveWatch = async (next) => {
+    const setLiveWatch = async (next, { quiet = false } = {}) => {
       liveWatch = Boolean(next)
       await saveSettings(home, { liveWatch }).catch((e) => {
         log(`保存设置失败：${e?.message ?? e}`)
       })
       syncLive()
       await pushMenu()
-      await broadcastToDshPet(
-        liveWatch
-          ? '好，开始盯着屏幕；有变化我会吱一声。想细看再说「看一眼桌面」。'
-          : '好，不盯了。你随时可以说「看一眼桌面」。',
-        { duration: 10_000 },
-      )
+      if (!quiet) {
+        await broadcastToDshPet(
+          liveWatch
+            ? '好，开始盯着屏幕；有变化我会吱一声。想细看再说「看一眼桌面」。'
+            : '好，不盯了。你随时可以说「看一眼桌面」。',
+          { duration: 10_000 },
+        )
+      }
       log(`实时看屏幕 → ${liveWatch ? '开' : '关'}`)
     }
+    setLiveWatchRef = (on) => setLiveWatch(on, { quiet: true })
 
     const setActEnabled = async (next) => {
       actEnabled = Boolean(next)

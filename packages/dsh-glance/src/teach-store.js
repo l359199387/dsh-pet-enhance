@@ -20,6 +20,8 @@ export function sessionPaths(home, id) {
     events: join(dir, `${id}.jsonl`),
     secrets: join(dir, `${id}.secrets.json`),
     meta: join(dir, `${id}.meta.json`),
+    playbook: join(dir, `${id}.playbook.json`),
+    index: join(dir, 'index.json'),
   }
 }
 
@@ -215,4 +217,193 @@ export function narratePlan(steps) {
     if (s.action === 'key') return `${n}. 按键 ${s.keys}`
     return `${n}. ${s.action}`
   }).join('\n')
+}
+
+/**
+ * Host 侧零模型消化：能脚本化的标 script，点击类标 glance（下次少 token）。
+ * @param {string} goal
+ * @param {object[]} steps buildPublicPlan 结果
+ * @param {string} sessionId
+ */
+export function buildPlaybook(goal, steps, sessionId) {
+  const items = (steps || []).map((s, i) => {
+    if (s.action === 'key') {
+      return {
+        i,
+        mode: 'script',
+        action: 'key',
+        keys: s.keys,
+        window: s.window || null,
+      }
+    }
+    if (s.action === 'type' && s.secretRef) {
+      return {
+        i,
+        mode: 'script',
+        action: 'type',
+        secretRef: `${sessionId}/${s.secretRef}`,
+        window: s.window || null,
+      }
+    }
+    if (s.action === 'type') {
+      return {
+        i,
+        mode: 'script',
+        action: 'type',
+        text: String(s.text || '').slice(0, 500),
+        window: s.window || null,
+      }
+    }
+    return {
+      i,
+      mode: 'glance',
+      action: s.action,
+      button: s.button || 'left',
+      window: s.window || null,
+      hint: { x: s.x, y: s.y },
+    }
+  })
+  const script = items.filter((x) => x.mode === 'script').length
+  const glance = items.filter((x) => x.mode === 'glance').length
+  return {
+    v: 1,
+    id: sessionId,
+    goal: String(goal || '').slice(0, 200),
+    createdAt: new Date().toISOString(),
+    steps: items,
+    stats: { total: items.length, script, glance },
+  }
+}
+
+/**
+ * 学习中必须问清的歧义（不耗模型 token）。
+ * @returns {{ code: string, summary: string }[]}
+ */
+export function detectTeachAmbiguities(goal, steps) {
+  const qs = []
+  const g = String(goal || '').trim()
+  if (!g || g === '完成刚才教的流程' || g.length < 2) {
+    qs.push({
+      code: 'goal',
+      summary: '目标还不清楚。请确认：现在是要我学会并完成「刚才那套操作」吗？',
+    })
+  }
+  if (!steps?.length) {
+    qs.push({ code: 'empty', summary: '这轮没记到步骤，要重新教一遍吗？' })
+  } else if (steps.length < 2) {
+    qs.push({
+      code: 'short',
+      summary: `只记到 ${steps.length} 步，确定就按这个去做「${g.slice(0, 28)}」吗？`,
+    })
+  }
+  const bareClicks = (steps || []).filter(
+    (s) => (s.action === 'click' || s.action === 'double_click') && !s.window,
+  )
+  if (bareClicks.length > 0) {
+    qs.push({
+      code: 'window',
+      summary: `有 ${bareClicks.length} 次点击没记到窗口名，界面变了可能点错。还继续吗？`,
+    })
+  }
+  return qs
+}
+
+/** 给模型的极短证据行（仅 glance 步；脚本步不送）。 */
+export function compactGlanceHints(playbook) {
+  const steps = playbook?.steps || []
+  return steps
+    .filter((s) => s.mode === 'glance')
+    .map((s) => {
+      const win = s.window ? String(s.window).slice(0, 28) : '?'
+      const h = s.hint || {}
+      return `${s.i + 1}.${s.action}@${win}~(${h.x},${h.y})`
+    })
+    .join(';')
+}
+
+export async function savePlaybook(home, playbook) {
+  const id = playbook?.id
+  if (!id) throw new Error('playbook.id required')
+  const paths = sessionPaths(home, id)
+  await mkdir(paths.dir, { recursive: true })
+  await writeFile(paths.playbook, `${JSON.stringify(playbook, null, 2)}\n`, 'utf8')
+  await upsertPlaybookIndex(home, {
+    id,
+    goal: playbook.goal,
+    at: playbook.createdAt || new Date().toISOString(),
+    stats: playbook.stats || null,
+  })
+  return paths.playbook
+}
+
+export async function readPlaybook(home, id) {
+  const paths = sessionPaths(home, id)
+  try {
+    return JSON.parse(await readFile(paths.playbook, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+async function upsertPlaybookIndex(home, entry) {
+  const paths = sessionPaths(home, entry.id)
+  let list = []
+  try {
+    list = JSON.parse(await readFile(paths.index, 'utf8'))
+    if (!Array.isArray(list)) list = []
+  } catch { /* empty */ }
+  list = list.filter((x) => x?.id !== entry.id)
+  list.unshift({
+    id: entry.id,
+    goal: String(entry.goal || '').slice(0, 200),
+    at: entry.at,
+    stats: entry.stats || null,
+  })
+  list = list.slice(0, 50)
+  await writeFile(paths.index, `${JSON.stringify(list, null, 2)}\n`, 'utf8')
+}
+
+export async function listPlaybookIndex(home) {
+  const paths = sessionPaths(home, '_')
+  try {
+    const list = JSON.parse(await readFile(paths.index, 'utf8'))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 用用户话粗匹配最近 playbook（再次执行少 token）。
+ * @param {string} home
+ * @param {string} query
+ */
+export async function findPlaybookForQuery(home, query) {
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return null
+  const list = await listPlaybookIndex(home)
+  if (!list.length) return null
+
+  // 「刚才教的 / 再做一次」→ 最新一条
+  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍/.test(q)) {
+    return readPlaybook(home, list[0].id)
+  }
+
+  let best = null
+  let bestScore = 0
+  for (const row of list) {
+    const goal = String(row.goal || '').toLowerCase()
+    if (!goal) continue
+    let score = 0
+    if (q.includes(goal) || goal.includes(q)) score = Math.max(score, goal.length)
+    for (const token of goal.split(/[\s，,。、]+/).filter((t) => t.length >= 2)) {
+      if (q.includes(token)) score += token.length
+    }
+    if (score > bestScore) {
+      bestScore = score
+      best = row
+    }
+  }
+  if (!best || bestScore < 2) return null
+  return readPlaybook(home, best.id)
 }

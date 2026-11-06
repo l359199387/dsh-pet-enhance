@@ -32,6 +32,7 @@ function lastUserMessage(messages) {
  *     isTeaching: () => boolean,
  *     startTeaching: Function,
  *     stopAndRun: Function,
+ *     tryRunMatchingPlaybook?: (text: string) => Promise<boolean>,
  *   },
  *   classify?: typeof classifyUtterance,
  *   getPreferredSessionId?: () => string | null,
@@ -95,9 +96,13 @@ export function createPetRouter(options) {
       case 'teach_end':
         await options.teachBridge.stopAndRun()
         break
-      case 'task':
+      case 'task': {
+        // 已学 playbook 优先：再次执行少消化 token
+        const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
+        if (ran) break
         await options.agentBridge.handleTask(userText)
         break
+      }
       case 'chat':
       default:
         break

@@ -34,6 +34,20 @@ export function isActEnabled(home) {
   }
 }
 
+/** 同步判断「实时看屏幕」是否开启（教学入口用）。 */
+export function isLiveWatchEnabled(home) {
+  const env = String(process.env.DSH_GLANCE_LIVE || '').trim().toLowerCase()
+  if (env === '1' || env === 'true' || env === 'yes') return true
+  if (env === '0' || env === 'false' || env === 'no') return false
+  try {
+    const raw = readFileSync(settingsPath(home), 'utf8')
+    const data = JSON.parse(raw)
+    return Boolean(data?.liveWatch)
+  } catch {
+    return DEFAULT_SETTINGS.liveWatch
+  }
+}
+
 /**
  * @param {string} home
  * @returns {Promise<{ liveWatch: boolean, actEnabled: boolean }>}
