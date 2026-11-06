@@ -97,13 +97,17 @@ export function mergeTeachQuestions(base, mandatory) {
  * 执行时叫醒主会话的智能提示（优先快捷路径）。
  * @param {{ goal?: string, strategy?: { fastPlan?: string, summary?: string }, id?: string }} playbook
  */
-export function buildSmartRunPrompt(playbook) {
+export function buildSmartRunPrompt(playbook, extras = {}) {
   const goal = String(playbook?.goal || '').slice(0, 120)
   const fast = String(playbook?.strategy?.fastPlan || '').slice(0, 400)
   const summary = String(playbook?.strategy?.summary || playbook?.understanding?.summary || '').slice(0, 300)
+  const notes = String(extras.ownerNotes || playbook?.ownerNotes || '').trim().slice(0, 400)
+  const supp = String(extras.taskSupplement || playbook?.taskSupplement || '').trim().slice(0, 400)
   return (
     `【小蓝鲸交办】执行已学会的自动化「${goal}」。`
     + (summary ? `理解：${summary}。` : '')
+    + (notes ? `主人想法：${notes}。` : '')
+    + (supp ? `任务补充：${supp}。` : '')
     + (fast
       ? `优先按快捷路径做：${fast}。不要机械复刻教学时的每一次点击坐标；`
       : '请拆解目标，用电脑最快方式达成（网址/文件/快捷键优先于逐步点鼠标）；')

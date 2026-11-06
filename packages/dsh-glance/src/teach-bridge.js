@@ -34,7 +34,9 @@ import {
   createLearnedAutomationPair,
   findAutomationForQuery,
   readAutomationPlaybook,
+  readLearned,
 } from './learned-automation.js'
+import { patchLearnedScheduleMeta } from './learned-manage.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
 import {
   attachClickFramesToPlaybook,
@@ -653,6 +655,14 @@ export function createTeachBridge(options) {
       log,
     })
 
+    await patchLearnedScheduleMeta(options.home, id, {
+      scheduleId: harness.scheduleId || null,
+      scheduleSessionId: harness.sessionId || null,
+      scheduled: Boolean(harness.scheduled),
+      timingLabel: harness.timingLabel || null,
+      skillName: harness.skillName || null,
+    })
+
     await updateTeachMeta(options.home, id, {
       status: 'paired',
       learnedId: pair.learn.id,
@@ -715,7 +725,11 @@ export function createTeachBridge(options) {
 
     if (smart) {
       const preferred = options.getPreferredSessionId?.() ?? null
-      const prompt = buildSmartRunPrompt(playbook)
+      const learnMeta = await readLearned(options.home, id).catch(() => null)
+      const prompt = buildSmartRunPrompt(playbook, {
+        ownerNotes: learnMeta?.ownerNotes || playbook.ownerNotes,
+        taskSupplement: learnMeta?.taskSupplement || playbook.taskSupplement,
+      })
       await broadcastToDshPet(
         `按快捷思路做「${clip(playbook.goal, 28)}」${playbook.strategy?.fastPlan ? `：${clip(playbook.strategy.fastPlan, 36)}` : ''}…`,
         { pet, duration: 10_000 },

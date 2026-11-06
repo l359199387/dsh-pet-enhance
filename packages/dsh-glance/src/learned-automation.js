@@ -64,6 +64,9 @@ export async function createLearnedAutomationPair(home, spec) {
   await mkdir(learnPaths.dir, { recursive: true })
   await mkdir(autoPaths.dir, { recursive: true })
 
+  const ownerNotes = String(spec.ownerNotes || '').slice(0, 4000)
+  const taskSupplement = String(spec.taskSupplement || '').slice(0, 4000)
+
   const learn = {
     v: 1,
     id,
@@ -71,8 +74,17 @@ export async function createLearnedAutomationPair(home, spec) {
     goal,
     teachSessionId: spec.teachSessionId || id,
     automationId: id,
+    ownerNotes,
+    taskSupplement,
+    scheduleId: spec.scheduleId || null,
+    scheduleSessionId: spec.scheduleSessionId || null,
+    scheduled: Boolean(spec.scheduled),
+    timingLabel: spec.timingLabel || null,
+    skillName: spec.skillName || null,
     understanding: {
       summary: String(spec.understanding?.summary || '').slice(0, 800),
+      fastPlan: String(spec.understanding?.fastPlan || '').slice(0, 600),
+      approach: spec.understanding?.approach || null,
       stats: spec.understanding?.stats || null,
       clarified: Array.isArray(spec.understanding?.clarified)
         ? spec.understanding.clarified
@@ -85,6 +97,7 @@ export async function createLearnedAutomationPair(home, spec) {
       note: '仅辅助学会；自动化执行不要加载',
     },
     createdAt: now,
+    updatedAt: now,
   }
 
   const task = {
@@ -95,8 +108,16 @@ export async function createLearnedAutomationPair(home, spec) {
     learnedId: id,
     teachSessionId: spec.teachSessionId || id,
     status: 'ready',
+    ownerNotes,
+    taskSupplement,
+    scheduleId: spec.scheduleId || null,
+    scheduleSessionId: spec.scheduleSessionId || null,
+    scheduled: Boolean(spec.scheduled),
+    timingLabel: spec.timingLabel || null,
+    skillName: spec.skillName || null,
     stats: spec.playbook?.stats || null,
     createdAt: now,
+    updatedAt: now,
   }
 
   const playbook = {

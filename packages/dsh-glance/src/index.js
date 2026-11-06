@@ -44,6 +44,12 @@ import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { createConfirmGate } from './confirm.js'
+import {
+  deleteLearnedPair,
+  getLearnedDetail,
+  listLearnedDetails,
+  updateLearnedPair,
+} from './learned-manage.js'
 
 export const name = 'dsh-glance'
 
@@ -293,6 +299,70 @@ async function handle(req, res, connection, log, state) {
     return
   }
 
+  // —— 我学会的 ——
+  if (route === '/learned') {
+    if (method !== 'GET' && method !== 'HEAD') {
+      send(res, 405, { ok: false, rejected: ['只支持 GET'] })
+      return
+    }
+    const items = await listLearnedDetails(glanceHome())
+    send(res, 200, { ok: true, items })
+    return
+  }
+
+  const learnedMatch = route.match(/^\/learned\/([^/]+)$/)
+  if (learnedMatch) {
+    const id = decodeURIComponent(learnedMatch[1])
+    if (method === 'GET' || method === 'HEAD') {
+      const detail = await getLearnedDetail(glanceHome(), id)
+      if (!detail) {
+        send(res, 404, { ok: false, rejected: ['找不到这条学会记录'] })
+        return
+      }
+      send(res, 200, { ok: true, item: detail })
+      return
+    }
+    if (method === 'PATCH') {
+      let raw
+      try {
+        raw = await readBody(req)
+      } catch (e) {
+        send(res, e?.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { ok: false, rejected: [String(e?.message ?? e)] })
+        return
+      }
+      let body
+      try {
+        body = raw ? JSON.parse(raw) : {}
+      } catch {
+        send(res, 400, { ok: false, rejected: ['JSON 无法解析'] })
+        return
+      }
+      const patch = {}
+      if (body.goal != null) patch.goal = body.goal
+      if (body.ownerNotes != null) patch.ownerNotes = body.ownerNotes
+      if (body.taskSupplement != null) patch.taskSupplement = body.taskSupplement
+      const r = await updateLearnedPair(glanceHome(), id, patch, { ctx: state.hostCtx, log })
+      if (!r.ok) {
+        send(res, r.reason === 'not-found' ? 404 : 400, { ok: false, rejected: [r.reason || '更新失败'] })
+        return
+      }
+      send(res, 200, { ok: true, item: r.detail })
+      return
+    }
+    if (method === 'DELETE') {
+      const r = await deleteLearnedPair(glanceHome(), id, { ctx: state.hostCtx, log })
+      if (!r.ok) {
+        send(res, 404, { ok: false, rejected: [r.reason || '删除失败'] })
+        return
+      }
+      log(`已删除学会记录 ${id} scheduleDeleted=${r.scheduleDeleted}`)
+      send(res, 200, { ok: true, ...r })
+      return
+    }
+    send(res, 405, { ok: false, rejected: ['只支持 GET / PATCH / DELETE'] })
+    return
+  }
+
   send(res, 404, { ok: false, rejected: ['没有这条路由'] })
 }
 
@@ -301,6 +371,7 @@ function installRoutes(ctx, log, state) {
     log('宿主没有 ctx.inject，跳过 HTTP 接口')
     return
   }
+  state.hostCtx = ctx
   try {
     ctx.inject(['webServer'], (scoped) => {
       scoped.effect(

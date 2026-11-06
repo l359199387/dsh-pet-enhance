@@ -351,6 +351,104 @@ window.__ModuleLoader__.load({
   100% { opacity: 0; transform: translate(10px, -16px); }
 }
 .dg-zzz { animation: dg-zzz 2.4s ease-in-out infinite; fill: #93C5FD; font: 12px ui-sans-serif, system-ui, sans-serif; }
+
+/* —— 我学会的（侧栏主面板） —— */
+.dg-learn-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 20px 24px;
+  color: var(--dsw-alias-label-primary, #e8eaed);
+  background: var(--dsw-alias-bg-layer-1, transparent);
+  box-sizing: border-box;
+}
+.dg-learn-page h1 {
+  margin: 0 0 4px;
+  font: 600 18px/1.3 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+}
+.dg-learn-page .dg-learn-sub {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-list { flex: 1; overflow: auto; min-height: 0; }
+.dg-learn-empty {
+  padding: 24px 8px;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+  font-size: 13px;
+}
+.dg-learn-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.08));
+}
+.dg-learn-row-title { font-weight: 600; font-size: 14px; }
+.dg-learn-row-meta {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+.dg-learn-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.06));
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-badge.is-on {
+  color: var(--dsw-alias-brand-primary, #60a5fa);
+}
+.dg-learn-actions { display: flex; gap: 8px; align-items: start; }
+.dg-learn-actions button,
+.dg-learn-editor button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.08));
+  color: var(--dsw-alias-label-primary, #e8eaed);
+}
+.dg-learn-actions button.danger { color: #f87171; }
+.dg-learn-editor {
+  margin-top: 8px;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.04));
+}
+.dg-learn-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-editor input,
+.dg-learn-editor textarea {
+  border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.12));
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 13px/1.4 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+  color: var(--dsw-alias-label-primary, #e8eaed);
+  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.2));
+  resize: vertical;
+}
+.dg-learn-editor-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.dg-learn-editor button.primary {
+  background: var(--dsw-alias-brand-primary, #3b82f6);
+  color: #fff;
+}
 `
 
     function readPos() {
@@ -1011,6 +1109,181 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const LEARNED_PANEL_ID = 'glance-learned'
+
+    function LearnedIcon() {
+      return h('svg', {
+        width: 20,
+        height: 20,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.8,
+        'aria-hidden': true,
+      },
+        h('path', { d: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20' }),
+        h('path', { d: 'M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z' }),
+        h('path', { d: 'M8 7h8M8 11h6' }),
+      )
+    }
+
+    function LearnedPage() {
+      const [items, setItems] = useState([])
+      const [loading, setLoading] = useState(true)
+      const [error, setError] = useState('')
+      const [editingId, setEditingId] = useState(null)
+      const [draft, setDraft] = useState({ goal: '', ownerNotes: '', taskSupplement: '' })
+      const [busy, setBusy] = useState(false)
+
+      const reload = useCallback(async () => {
+        setLoading(true)
+        setError('')
+        try {
+          const res = await fetch(`${API}/learned`, { credentials: 'same-origin' })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || `http-${res.status}`)
+          setItems(Array.isArray(body.items) ? body.items : [])
+        } catch (e) {
+          setError(String(e?.message || e))
+          setItems([])
+        } finally {
+          setLoading(false)
+        }
+      }, [])
+
+      useEffect(() => { reload() }, [reload])
+
+      const startEdit = (item) => {
+        setEditingId(item.id)
+        setDraft({
+          goal: item.goal || '',
+          ownerNotes: item.ownerNotes || '',
+          taskSupplement: item.taskSupplement || '',
+        })
+      }
+
+      const saveEdit = async () => {
+        if (!editingId || busy) return
+        setBusy(true)
+        try {
+          const res = await fetch(`${API}/learned/${encodeURIComponent(editingId)}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(draft),
+          })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '保存失败')
+          setEditingId(null)
+          await reload()
+        } catch (e) {
+          setError(String(e?.message || e))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const removeItem = async (item) => {
+        if (busy) return
+        const ok = window.confirm(`删除「${item.goal || item.id}」？\n会同时删除本地学习文件，以及对应的自动化定时任务（如有）。`)
+        if (!ok) return
+        setBusy(true)
+        try {
+          const res = await fetch(`${API}/learned/${encodeURIComponent(item.id)}`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+          })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '删除失败')
+          if (editingId === item.id) setEditingId(null)
+          await reload()
+        } catch (e) {
+          setError(String(e?.message || e))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h('div', { className: 'dg-learn-page' },
+        h('h1', null, '我学会的'),
+        h('p', { className: 'dg-learn-sub' },
+          '小蓝鲸教完后落在本地的学习条目。可改目标、补充主人想法与任务说明；删除会清本地文件并去掉对应定时任务。',
+        ),
+        error ? h('p', { className: 'dg-learn-empty', style: { color: '#f87171' } }, error) : null,
+        loading ? h('p', { className: 'dg-learn-empty' }, '加载中…') : null,
+        !loading && !items.length
+          ? h('p', { className: 'dg-learn-empty' }, '还没有学会的条目。打开「实时看屏幕」教一遍，点「我教完了」就会出现在这里。')
+          : null,
+        h('div', { className: 'dg-learn-list' },
+          items.map((item) => h('div', { key: item.id, className: 'dg-learn-row' },
+            h('div', null,
+              h('div', { className: 'dg-learn-row-title' },
+                item.goal || item.id,
+                h('span', {
+                  className: `dg-learn-badge${item.scheduled ? ' is-on' : ''}`,
+                }, item.scheduled ? (item.timingLabel || '已定时') : '不定时'),
+              ),
+              h('div', { className: 'dg-learn-row-meta' },
+                [
+                  item.ownerNotes ? `想法：${String(item.ownerNotes).slice(0, 80)}` : '',
+                  item.taskSupplement ? `补充：${String(item.taskSupplement).slice(0, 80)}` : '',
+                  !item.ownerNotes && !item.taskSupplement ? '尚未补充主人想法 / 任务说明' : '',
+                ].filter(Boolean).join('\n'),
+              ),
+            ),
+            h('div', { className: 'dg-learn-actions' },
+              h('button', {
+                type: 'button',
+                disabled: busy,
+                onClick: () => startEdit(item),
+              }, editingId === item.id ? '编辑中' : '编辑/补充'),
+              h('button', {
+                type: 'button',
+                className: 'danger',
+                disabled: busy,
+                onClick: () => removeItem(item),
+              }, '删除'),
+            ),
+            editingId === item.id
+              ? h('div', { className: 'dg-learn-editor' },
+                h('label', null, '目标标题',
+                  h('input', {
+                    value: draft.goal,
+                    onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
+                  }),
+                ),
+                h('label', null, '主人想法',
+                  h('textarea', {
+                    rows: 3,
+                    placeholder: '你希望它怎么理解这件事、有哪些偏好…',
+                    value: draft.ownerNotes,
+                    onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
+                  }),
+                ),
+                h('label', null, '任务补充',
+                  h('textarea', {
+                    rows: 3,
+                    placeholder: '执行时额外注意什么、成功标准、例外情况…',
+                    value: draft.taskSupplement,
+                    onChange: (e) => setDraft((d) => ({ ...d, taskSupplement: e.target.value })),
+                  }),
+                ),
+                h('div', { className: 'dg-learn-editor-actions' },
+                  h('button', { type: 'button', disabled: busy, onClick: () => setEditingId(null) }, '取消'),
+                  h('button', {
+                    type: 'button',
+                    className: 'primary',
+                    disabled: busy || !String(draft.goal || '').trim(),
+                    onClick: saveEdit,
+                  }, busy ? '保存中…' : '保存'),
+                ),
+              )
+              : null,
+          )),
+        ),
+      )
+    }
+
     function apply(ctx) {
       ctx.effect(() => {
         const style = document.createElement('style')
@@ -1024,6 +1297,18 @@ window.__ModuleLoader__.load({
         name: 'shell.overlay',
         id: 'dsh-glance-pet',
       }, () => h(PetOverlay)))
+
+      ctx.slots.inject('main', () => ctx.slots.register({
+        name: 'main',
+        key: LEARNED_PANEL_ID,
+      }, () => h(LearnedPage)))
+
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+        name: 'sidebar.panellist',
+        id: LEARNED_PANEL_ID,
+        order: 11,
+        label: () => '我学会的',
+      }, () => h(LearnedIcon)))
     }
 
     exports.apply = apply
