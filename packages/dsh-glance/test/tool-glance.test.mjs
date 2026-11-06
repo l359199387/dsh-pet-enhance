@@ -16,7 +16,8 @@ test('parameters 是标准 JSON Schema（宿主原样信任，不再有 DSL 化�
   assert.deepEqual(Object.keys(parameters.properties).sort(), ['action', 'quality'])
   assert.equal(parameters.properties.action.type, 'string')
   assert.deepEqual(parameters.properties.quality.enum, ['low', 'standard', 'high'])
-  assert.ok(Array.isArray(parameters.required), 'required 是数组，不是属性上的 true')
+  // A1 两个参数都可省：不写 required 比写空数组更稳（宿主对空数组的宽容度没保证）。
+  assert.equal(parameters.required, undefined)
 })
 
 test('output 给的是完整 JSON Schema + render', () => {

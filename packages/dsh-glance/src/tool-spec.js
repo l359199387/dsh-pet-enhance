@@ -51,7 +51,6 @@ export function glanceToolSpec() {
           description: 'low（默认 798 宽）| standard（1050）| high（1260）。看不清细节就升档。',
         },
       },
-      required: [],
     },
     output: {
       schema: {
