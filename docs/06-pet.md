@@ -126,7 +126,7 @@
   - 网页：双击发裸 `L` / 备援钮 `Ctrl+Shift+L`。
   - 桌面独立窗：Host 启动时给已装 dsh-pet 的 Helper 打幂等 `dblclick → showChatFromMenu` 补丁，并 `POST /reload`；升级 dsh-pet 后重启宿主会再打一次。
 - Host 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` 极短分流（禁止工具、只回标签；失败才 regex 兜底），再分发：
+- **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` **本地分流（默认 0 token，不叫醒主会话）**；「学会了吗」对照 playbook 冒泡回答。禁止把分流提示 followup 进带工具会话（会误 click）。仅 `DSH_GLANCE_CLASSIFY=wake` 才允许旧危险路径。分发：
   - `glance` → `chat-bridge` 抓帧附图让宠物开口。
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。

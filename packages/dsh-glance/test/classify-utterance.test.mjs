@@ -4,6 +4,8 @@ import {
   buildClassifyPrompt,
   CLASSIFY_PREFIX,
   classifyUtterance,
+  isSkillStatusQuestion,
+  localClassify,
   parseClassifyLabel,
   regexClassifyFallback,
 } from '../src/classify-utterance.js'
@@ -23,14 +25,30 @@ test('parseClassifyLabel：抽标签', () => {
   assert.equal(parseClassifyLabel(''), null)
 })
 
-test('regexClassifyFallback：兜底粗筛', () => {
-  assert.equal(regexClassifyFallback('今天天气真好'), 'chat')
-  assert.equal(regexClassifyFallback('看一眼桌面'), 'glance')
-  assert.equal(regexClassifyFallback('我教你一下保存'), 'teach')
-  assert.equal(regexClassifyFallback('教完了'), 'teach_end')
-  assert.equal(regexClassifyFallback('把窗口最小化'), 'task')
-  assert.equal(regexClassifyFallback('随便说说', { teaching: true }), 'chat')
+test('localClassify：「学会了吗」是 chat，不是 task', () => {
+  assert.equal(localClassify('你学会记录心情了吗?'), 'chat')
+  assert.equal(localClassify('会不会保存文件'), 'chat')
+  assert.equal(isSkillStatusQuestion('你学会记录心情了吗?'), true)
+  assert.equal(localClassify('今天天气真好'), 'chat')
+  assert.equal(localClassify('看一眼桌面'), 'glance')
+  assert.equal(localClassify('我教你一下保存'), 'teach')
+  assert.equal(localClassify('教完了'), 'teach_end')
+  assert.equal(localClassify('把窗口最小化'), 'task')
   assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_end')
+})
+
+test('classifyUtterance：默认不 wake，走 local（即使用 ctx）', async () => {
+  let woke = 0
+  const r = await classifyUtterance({ fake: true }, '你学会记录心情了吗?', {
+    wake: async () => {
+      woke += 1
+      return { ok: true, sessionId: 's' }
+    },
+    waitReply: async () => ({ ok: true, text: 'task' }),
+  })
+  assert.equal(r.label, 'chat')
+  assert.equal(r.via, 'local')
+  assert.equal(woke, 0)
 })
 
 test('classifyUtterance：inject 路径优先', async () => {
@@ -39,17 +57,4 @@ test('classifyUtterance：inject 路径优先', async () => {
   })
   assert.equal(r.label, 'chat')
   assert.equal(r.via, 'inject')
-})
-
-test('classifyUtterance：无模型回落 regex', async () => {
-  const prev = process.env.DSH_GLANCE_CLASSIFY
-  process.env.DSH_GLANCE_CLASSIFY = '0'
-  try {
-    const r = await classifyUtterance(null, '看一眼我的屏幕')
-    assert.equal(r.label, 'glance')
-    assert.equal(r.via, 'regex')
-  } finally {
-    if (prev === undefined) delete process.env.DSH_GLANCE_CLASSIFY
-    else process.env.DSH_GLANCE_CLASSIFY = prev
-  }
 })

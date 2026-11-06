@@ -6,7 +6,12 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
-import { classifyUtterance, isClassifyEcho } from './classify-utterance.js'
+import {
+  classifyUtterance,
+  isClassifyEcho,
+  isSkillStatusQuestion,
+} from './classify-utterance.js'
+import { listPlaybookIndex } from './teach-store.js'
 
 function lastUserMessage(messages) {
   if (!Array.isArray(messages)) return null
@@ -65,6 +70,43 @@ export function createPetRouter(options) {
     }
   }
 
+  /** 「学会了吗」对照本地 playbook，不叫醒主会话。 */
+  async function answerSkillStatus(userText) {
+    if (!options.home || !isSkillStatusQuestion(userText)) return false
+    const list = await listPlaybookIndex(options.home)
+    const q = String(userText).toLowerCase()
+    if (!list.length) {
+      await broadcastToDshPet(
+        '还没学会呢。你教我一遍（先开「实时看屏幕」），做完告诉我一声，我就会记成脚本。',
+        { pet, duration: 14_000 },
+      )
+      return true
+    }
+    let hit = null
+    for (const row of list) {
+      const goal = String(row.goal || '').trim()
+      if (!goal) continue
+      const g = goal.toLowerCase()
+      if (q.includes(g) || g.split(/[\s，,。、]+/).filter((t) => t.length >= 2).some((t) => q.includes(t))) {
+        hit = row
+        break
+      }
+    }
+    if (hit) {
+      await broadcastToDshPet(
+        `学会了「${String(hit.goal).slice(0, 40)}」。要我按脚本再做一次吗？`,
+        { pet, duration: 12_000 },
+      )
+    } else {
+      const recent = list.slice(0, 3).map((r) => `「${String(r.goal || '?').slice(0, 24)}」`).join('、')
+      await broadcastToDshPet(
+        `这件事我还没学会。最近记下的有：${recent || '（空）'}。想教我直接说。`,
+        { pet, duration: 14_000 },
+      )
+    }
+    return true
+  }
+
   /**
    * @param {string} userText
    */
@@ -105,6 +147,7 @@ export function createPetRouter(options) {
       }
       case 'chat':
       default:
+        await answerSkillStatus(userText)
         break
     }
   }

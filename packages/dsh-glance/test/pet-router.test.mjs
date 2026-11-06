@@ -77,3 +77,39 @@ test('pet-router：教学中只关心 teach_end', async () => {
   await router.route('好了你可以去做了')
   assert.deepEqual(calls, ['stop'])
 })
+
+test('pet-router：学会了吗 → 未学会时冒泡，不叫醒 agent', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { setDshPetBaseUrl } = await import('../src/dsh-pet.js')
+  const home = mkdtempSync(join(tmpdir(), 'glance-router-skill-'))
+  setDshPetBaseUrl('http://127.0.0.1:9')
+  const bubbles = []
+  let tasked = 0
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/broadcast') && init?.method === 'POST') {
+      const body = JSON.parse(init.body)
+      bubbles.push(body.text || '')
+      return { ok: true, status: 200, async json() { return { ok: true } } }
+    }
+    return { ok: true, status: 200, async json() { return { ok: true } } }
+  }
+  const router = createPetRouter({
+    ctx: {},
+    home,
+    log() {},
+    classify: async () => ({ label: 'chat', via: 'local' }),
+    chatBridge: { handleIntent: async () => {} },
+    agentBridge: { handleTask: async () => { tasked += 1 } },
+    teachBridge: {
+      isTeaching: () => false,
+      startTeaching: async () => {},
+      stopAndRun: async () => {},
+    },
+  })
+  await router.route('你学会记录心情了吗?')
+  assert.equal(tasked, 0)
+  assert.ok(bubbles.some((t) => /还没学会|教我/.test(t)))
+  rmSync(home, { recursive: true, force: true })
+})
