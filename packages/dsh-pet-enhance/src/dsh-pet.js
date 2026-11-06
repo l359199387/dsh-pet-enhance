@@ -10,37 +10,41 @@
  * @module src/dsh-pet.js
  */
 
+import { DEFAULT_LOCALE, menuLabelsFor, t } from './i18n.js'
+
 export const DSH_PET_PREFIX = '/dsh-pet-7340'
 export const MENU_OWNER = 'dsh-pet-enhance'
-export const MENU_STOP = '小蓝鲸急停'
-export const MENU_LIVE_ON = '实时看屏幕 · 开'
-export const MENU_LIVE_OFF = '实时看屏幕 · 关'
-export const MENU_ACT_ON = '允许动手 · 开'
-export const MENU_ACT_OFF = '允许动手 · 关'
-export const MENU_CONFIRM_YES = '确认动作 · 好'
-export const MENU_CONFIRM_NO = '确认动作 · 不要'
+/** @deprecated 中文默认文案；事件轮询请用 menuLabelVariants */
+export const MENU_STOP = t('zh', 'menu.stop')
+export const MENU_LIVE_ON = t('zh', 'menu.liveOn')
+export const MENU_LIVE_OFF = t('zh', 'menu.liveOff')
+export const MENU_ACT_ON = t('zh', 'menu.actOn')
+export const MENU_ACT_OFF = t('zh', 'menu.actOff')
+export const MENU_CONFIRM_YES = t('zh', 'menu.confirmYes')
+export const MENU_CONFIRM_NO = t('zh', 'menu.confirmNo')
 /** 动作类接口必填；any = 网页/桌面都能收到。 */
 export const PET_SURFACE = 'any'
 
 /** 右键开关文案：开/关两态（dsh-pet 菜单没有原生勾选）。 */
-export function liveWatchMenuLabel(enabled) {
-  return enabled ? MENU_LIVE_ON : MENU_LIVE_OFF
+export function liveWatchMenuLabel(enabled, locale = DEFAULT_LOCALE) {
+  return t(locale, enabled ? 'menu.liveOn' : 'menu.liveOff')
 }
 
-export function actEnabledMenuLabel(enabled) {
-  return enabled ? MENU_ACT_ON : MENU_ACT_OFF
+export function actEnabledMenuLabel(enabled, locale = DEFAULT_LOCALE) {
+  return t(locale, enabled ? 'menu.actOn' : 'menu.actOff')
 }
 
-export function glanceMenuLabels(liveWatchEnabled, actEnabled = false, pendingConfirm = false) {
-  const labels = [
-    liveWatchMenuLabel(liveWatchEnabled),
-    actEnabledMenuLabel(actEnabled),
-    MENU_STOP,
-  ]
-  if (pendingConfirm) {
-    labels.push(MENU_CONFIRM_YES, MENU_CONFIRM_NO)
-  }
-  return labels
+export function glanceMenuLabels(
+  liveWatchEnabled,
+  actEnabled = false,
+  pendingConfirm = false,
+  locale = DEFAULT_LOCALE,
+) {
+  return menuLabelsFor(locale, {
+    liveWatch: liveWatchEnabled,
+    actEnabled,
+    pendingConfirm,
+  })
 }
 
 /** Host 装配期写入；浏览器半身可以继续走相对路径（base 为空）。 */
@@ -95,6 +99,7 @@ export async function registerGlanceMenu(options = {}) {
     liveWatch = false,
     actEnabled = false,
     pendingConfirm = false,
+    locale = DEFAULT_LOCALE,
     target = 'both',
     ...rest
   } = options
@@ -102,7 +107,7 @@ export async function registerGlanceMenu(options = {}) {
     method: 'POST',
     body: {
       owner: MENU_OWNER,
-      labels: glanceMenuLabels(liveWatch, actEnabled, pendingConfirm),
+      labels: glanceMenuLabels(liveWatch, actEnabled, pendingConfirm, locale),
       target,
     },
     ...rest,

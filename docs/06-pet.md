@@ -133,6 +133,7 @@
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/pet-enhance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
 - **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/pet-enhance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
 - **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 教学中头顶常驻可点 **「我教完了」**（`/api/pet-enhance/teach-end`）→ 点击/滑轮附近截图作证据 → 理解阶段要 **OK+FAST 快捷路径**（不鼓励机械复刻）并 **主动多问几句**（目的/变通/以达成目的为准）→ learned↔automations（`strategy.approach=smart`）。**未明说每周几/几点/每隔… → 不向 Harness `schedule.create`、不定时不开启**；只有明确时刻才登记运行时间。用户再说「去看看B站 / 继续刷…」时：匹配学习目标关键词、**每轮重置动作预算**、有学习理解则优先叫醒变通（不盲打 `bilibli1` 这类地址栏脏输入）；「再做一次」才回落最近一对。**学完关实时看屏幕**；教完不自动动手。
+- **语言**：`settings.locale` 默认 `zh`；侧栏「我学会的」可切中/英；菜单与常用气泡跟语言走（`GET/PATCH /api/pet-enhance/settings`、`GET /api/pet-enhance/i18n`）。
 - **侧栏「我学会的」**（`sidebar.panellist` + `main` key=`pet-enhance-learned`）：卡片格子 + 序号 + 标题模糊搜索；展示**学习理解**与**执行记录**（跑自动化时写入 `learned/<id>/runs.json`）。每条记录可评「好/一般/差」并写评语，`POST /api/pet-enhance/learned/:id/runs/:runId/rate` 叫醒模型改正理解。编辑弹窗可改目标 / 填**补充**（保存后并入理解并清空）；删除弹窗二次确认，联动清 `learned`+`automations`+skill，若有 `scheduleId` 则 `schedule.delete`。
 - 每次看屏追加 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/pet-enhance/settings.json`）：

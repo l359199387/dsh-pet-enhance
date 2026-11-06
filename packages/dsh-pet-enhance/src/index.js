@@ -22,12 +22,7 @@ import {
   broadcastToDshPet,
   clearGlanceMenu,
   callDshPet,
-  MENU_ACT_OFF,
-  MENU_ACT_ON,
-  MENU_LIVE_OFF,
-  MENU_LIVE_ON,
   MENU_OWNER,
-  MENU_STOP,
   probeDshPet,
   registerGlanceMenu,
   resolveDshOrigin,
@@ -38,7 +33,8 @@ import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { createTeachBridge } from './teach-bridge.js'
 import { createPetRouter } from './pet-router.js'
-import { isActEnabled, loadSettings, saveSettings } from './settings.js'
+import { getLocale, isActEnabled, loadSettings, saveSettings } from './settings.js'
+import { localeTables, menuLabelVariants, t } from './i18n.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
@@ -172,6 +168,56 @@ async function handle(req, res, connection, log, state) {
 
   const route = pathname.startsWith(ROUTE_PREFIX) ? pathname.slice(ROUTE_PREFIX.length) : pathname
   const method = String(req.method ?? 'GET').toUpperCase()
+
+  if (route === '/i18n') {
+    if (method !== 'GET' && method !== 'HEAD') {
+      send(res, 405, { ok: false, rejected: ['只支持 GET'] })
+      return
+    }
+    const locale = getLocale(enhanceHome())
+    send(res, 200, {
+      ok: true,
+      locale,
+      tables: localeTables(),
+    })
+    return
+  }
+
+  if (route === '/settings') {
+    if (method === 'GET' || method === 'HEAD') {
+      const settings = await loadSettings(enhanceHome())
+      send(res, 200, { ok: true, settings })
+      return
+    }
+    if (method === 'PATCH') {
+      let raw
+      try {
+        raw = await readBody(req)
+      } catch (e) {
+        send(res, e?.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { ok: false, rejected: [String(e?.message ?? e)] })
+        return
+      }
+      let body
+      try {
+        body = raw ? JSON.parse(raw) : {}
+      } catch {
+        send(res, 400, { ok: false, rejected: ['JSON 无法解析'] })
+        return
+      }
+      const patch = {}
+      if (body.locale != null) patch.locale = body.locale
+      if (body.liveWatch != null) patch.liveWatch = body.liveWatch
+      if (body.actEnabled != null) patch.actEnabled = body.actEnabled
+      const settings = await saveSettings(enhanceHome(), patch)
+      try {
+        state.onLocaleChange?.(settings.locale)
+      } catch { /* ignore */ }
+      send(res, 200, { ok: true, settings })
+      return
+    }
+    send(res, 405, { ok: false, rejected: ['只支持 GET / PATCH'] })
+    return
+  }
 
   if (route === '/status') {
     if (method !== 'GET' && method !== 'HEAD') {
@@ -664,8 +710,17 @@ function installDshPetBridge(ctx, log, state, disposers) {
       else live.stop()
     }
 
+    let locale = getLocale(home)
+
+    const menuHit = (ev, key) => menuLabelVariants(key).some((label) => Boolean(ev?.[label]))
+
     const pushMenu = async () => {
-      const r = await registerGlanceMenu({ liveWatch, actEnabled, pendingConfirm: false })
+      const r = await registerGlanceMenu({
+        liveWatch,
+        actEnabled,
+        pendingConfirm: false,
+        locale,
+      })
       if (r.ok) {
         registered = true
         return true
@@ -675,6 +730,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     state.onConfirmPending = null
+    state.onLocaleChange = async (nextLocale) => {
+      locale = String(nextLocale || locale)
+      await pushMenu()
+    }
 
     const ensureMenu = async () => {
       if (stopped) return
@@ -685,7 +744,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
       const was = registered
       if (await pushMenu() && !was) {
-        log(`已在 dsh-pet「更多」挂上「实时看屏幕 / 允许动手 / ${MENU_STOP}」`)
+        log(`已在 dsh-pet「更多」挂上菜单（locale=${locale}）`)
       }
     }
 
@@ -698,9 +757,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       await pushMenu()
       if (!quiet) {
         await broadcastToDshPet(
-          liveWatch
-            ? '好，开始盯着屏幕；有变化我会吱一声。想细看再说「看一眼桌面」。'
-            : '好，不盯了。你随时可以说「看一眼桌面」。',
+          t(locale, liveWatch ? 'bubble.liveOn' : 'bubble.liveOff'),
           { duration: 10_000 },
         )
       }
@@ -715,9 +772,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       })
       await pushMenu()
       await broadcastToDshPet(
-        actEnabled
-          ? '好，允许动手了。我会按你的话点鼠标、打字；甩到左上角或点急停可立刻停。'
-          : '好，收手了。act 已关闭，不会再动鼠标键盘。',
+        t(locale, actEnabled ? 'bubble.actOn' : 'bubble.actOff'),
         { duration: 10_000 },
       )
       log(`允许动手 → ${actEnabled ? '开' : '关'}`)
@@ -731,7 +786,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       )
       if (!r.ok || !r.data?.ok || !r.data.events) return
       const ev = r.data.events
-      if (ev[MENU_STOP]) {
+      if (menuHit(ev, 'menu.stop')) {
         state.confirmGate?.cancelAll('panic')
         state.budget?.reset()
         state.rememberedConfirms?.clear()
@@ -742,11 +797,11 @@ function installDshPetBridge(ctx, log, state, disposers) {
         log('dsh-pet 菜单触发小蓝鲸急停')
         await pushMenu()
       }
-      // 点当前文案即翻转；开/关两态都认，避免重注册竞态漏点。
-      if (ev[MENU_LIVE_ON] || ev[MENU_LIVE_OFF]) {
+      // 点当前文案即翻转；中英文开/关两态都认，避免重注册竞态漏点。
+      if (menuHit(ev, 'menu.liveOn') || menuHit(ev, 'menu.liveOff')) {
         await setLiveWatch(!liveWatch)
       }
-      if (ev[MENU_ACT_ON] || ev[MENU_ACT_OFF]) {
+      if (menuHit(ev, 'menu.actOn') || menuHit(ev, 'menu.actOff')) {
         await setActEnabled(!actEnabled)
       }
     }
@@ -755,6 +810,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (stopped) return
       liveWatch = Boolean(s.liveWatch)
       actEnabled = Boolean(s.actEnabled)
+      locale = s.locale || locale
       syncLive()
       pushMenu().catch(() => {})
     }).catch(() => {})

@@ -12,6 +12,8 @@ import {
   isSkillStatusQuestion,
 } from './classify-utterance.js'
 import { listLearnedIndex } from './learned-automation.js'
+import { getLocale } from './settings.js'
+import { t } from './i18n.js'
 
 function lastUserMessage(messages) {
   if (!Array.isArray(messages)) return null
@@ -61,7 +63,7 @@ export function createPetRouter(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：随便聊；想看屏幕、教我操作、或让我动手，直接说就行，我会先判断再行动。',
+      t(getLocale(options.home), 'bubble.greet'),
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {

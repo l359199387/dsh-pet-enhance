@@ -399,6 +399,26 @@ window.__ModuleLoader__.load({
   gap: 10px;
   margin-bottom: 14px;
 }
+.dg-learn-lang {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.12));
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dg-learn-lang button {
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+  font-size: 11px;
+  padding: 6px 10px;
+}
+.dg-learn-lang button.is-on {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #3b82f6) 22%, transparent);
+  color: var(--dsw-alias-label-primary, #e8eaed);
+  font-weight: 650;
+}
 .dg-learn-search {
   flex: 1;
   min-width: 0;
@@ -1368,6 +1388,14 @@ window.__ModuleLoader__.load({
 
     const LEARNED_PANEL_ID = 'pet-enhance-learned'
 
+    function fillMsg(template, vars = {}) {
+      let out = String(template ?? '')
+      for (const [k, v] of Object.entries(vars)) {
+        out = out.split(`{${k}}`).join(String(v))
+      }
+      return out
+    }
+
     function LearnedIcon() {
       return h('svg', {
         width: 20,
@@ -1409,12 +1437,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const RATING_UI = [
-      { key: 'good', label: '好' },
-      { key: 'ok', label: '一般' },
-      { key: 'bad', label: '差' },
-    ]
-
     function LearnedPage() {
       const [items, setItems] = useState([])
       const [loading, setLoading] = useState(true)
@@ -1427,6 +1449,44 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = useState('')
       const [runsOpen, setRunsOpen] = useState({})
       const [rateDraft, setRateDraft] = useState({})
+      const [locale, setLocale] = useState('zh')
+      const [tables, setTables] = useState({ zh: {}, en: {} })
+
+      const tt = useCallback((key, vars) => {
+        const table = tables[locale] || tables.zh || {}
+        return fillMsg(table[key] || tables.zh?.[key] || key, vars)
+      }, [locale, tables])
+
+      const reloadI18n = useCallback(async () => {
+        try {
+          const res = await fetch(`${API}/i18n`, { credentials: 'same-origin' })
+          const body = await res.json().catch(() => ({}))
+          if (res.ok && body.ok) {
+            setLocale(body.locale === 'en' ? 'en' : 'zh')
+            setTables(body.tables || { zh: {}, en: {} })
+          }
+        } catch { /* keep defaults */ }
+      }, [])
+
+      const setLang = async (next) => {
+        if (busy || next === locale) return
+        setBusy(true)
+        try {
+          const res = await fetch(`${API}/settings`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ locale: next }),
+          })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || 'locale')
+          setLocale(body.settings?.locale === 'en' ? 'en' : 'zh')
+        } catch (e) {
+          setError(String(e?.message || e))
+        } finally {
+          setBusy(false)
+        }
+      }
 
       const reload = useCallback(async () => {
         setLoading(true)
@@ -1444,6 +1504,7 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      useEffect(() => { reloadI18n() }, [reloadI18n])
       useEffect(() => { reload() }, [reload])
 
       const filtered = useMemo(() => {
@@ -1470,7 +1531,7 @@ window.__ModuleLoader__.load({
         if (!editItem || busy) return
         setBusy(true)
         setError('')
-        setStatus('保存中…有补充时会归纳进学习理解')
+        setStatus(tt('learned.saveBusy'))
         try {
           const res = await fetch(`${API}/learned/${encodeURIComponent(editItem.id)}`, {
             method: 'PATCH',
@@ -1483,10 +1544,12 @@ window.__ModuleLoader__.load({
             }),
           })
           const body = await res.json().catch(() => ({}))
-          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '保存失败')
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || 'save failed')
           setStatus(body.merged
-            ? '已保存：补充已并入学习理解，并已清空'
-            : (body.mergeReason ? `已保存（未更新理解：${body.mergeReason}）` : '已保存'))
+            ? tt('learned.savedMerged')
+            : (body.mergeReason
+              ? `${tt('learned.saved')} (${body.mergeReason})`
+              : tt('learned.saved')))
           setEditItem(null)
           await reload()
         } catch (e) {
@@ -1506,7 +1569,7 @@ window.__ModuleLoader__.load({
             credentials: 'same-origin',
           })
           const body = await res.json().catch(() => ({}))
-          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '删除失败')
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || 'delete failed')
           if (editItem?.id === deleteItem.id) setEditItem(null)
           setDeleteItem(null)
           await reload()
@@ -1522,12 +1585,12 @@ window.__ModuleLoader__.load({
         const draftRate = rateDraft[run.id] || {}
         const rating = draftRate.rating
         if (!rating) {
-          setError('请先选好 / 一般 / 差')
+          setError(tt('learned.pickRating'))
           return
         }
         setBusy(true)
         setError('')
-        setStatus('正在根据评价改正学习理解…')
+        setStatus(tt('learned.ratingBusy'))
         try {
           const res = await fetch(
             `${API}/learned/${encodeURIComponent(item.id)}/runs/${encodeURIComponent(run.id)}/rate`,
@@ -1542,10 +1605,12 @@ window.__ModuleLoader__.load({
             },
           )
           const body = await res.json().catch(() => ({}))
-          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '评价失败')
+          if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || 'rate failed')
           setStatus(body.merged
-            ? '已根据评价改正学习理解'
-            : (body.mergeReason ? `评价已记（未改理解：${body.mergeReason}）` : '评价已记'))
+            ? tt('learned.ratingDone')
+            : (body.mergeReason
+              ? `${tt('learned.ratingSaved')} (${body.mergeReason})`
+              : tt('learned.ratingSaved')))
           setRateDraft((d) => {
             const next = { ...d }
             delete next[run.id]
@@ -1562,40 +1627,63 @@ window.__ModuleLoader__.load({
 
       const understandingOf = (item) => item.understanding || item.summary || ''
       const editUnderstanding = editItem ? understandingOf(editItem) : ''
-      const ratingLabel = { good: '好', ok: '一般', bad: '差' }
+      const ratingLabel = {
+        good: tt('learned.rateGood'),
+        ok: tt('learned.rateOk'),
+        bad: tt('learned.rateBad'),
+      }
+      const RATING_UI_I18N = [
+        { key: 'good', label: tt('learned.rateGood') },
+        { key: 'ok', label: tt('learned.rateOk') },
+        { key: 'bad', label: tt('learned.rateBad') },
+      ]
 
       return h('div', { className: 'dg-learn-page' },
         h('div', { className: 'dg-learn-head' },
           h('div', null,
-            h('h1', null, '我学会的'),
-            h('p', { className: 'dg-learn-sub' },
-              '卡片查看学习理解与执行记录；可搜索标题，对执行评价后会改正理解。编辑里的「补充」保存后也会并入理解并清空。',
-            ),
+            h('h1', null, tt('learned.title')),
+            h('p', { className: 'dg-learn-sub' }, tt('learned.sub')),
           ),
           !loading ? h('div', { className: 'dg-learn-count' },
-            query.trim() ? `${filtered.length}/${items.length} 条` : `${items.length} 条`,
+            query.trim()
+              ? tt('learned.countFiltered', { shown: filtered.length, total: items.length })
+              : tt('learned.count', { n: items.length }),
           ) : null,
         ),
         h('div', { className: 'dg-learn-toolbar' },
           h('input', {
             className: 'dg-learn-search',
             type: 'search',
-            placeholder: '模糊搜索标题，例如：B站、心情…',
+            placeholder: tt('learned.searchPlaceholder'),
             value: query,
             onChange: (e) => setQuery(e.target.value),
           }),
+          h('div', { className: 'dg-learn-lang', role: 'group', 'aria-label': 'Language' },
+            h('button', {
+              type: 'button',
+              className: locale === 'zh' ? 'is-on' : '',
+              disabled: busy,
+              onClick: () => setLang('zh'),
+            }, tt('learned.langZh')),
+            h('button', {
+              type: 'button',
+              className: locale === 'en' ? 'is-on' : '',
+              disabled: busy,
+              onClick: () => setLang('en'),
+            }, tt('learned.langEn')),
+          ),
         ),
         error ? h('p', { className: 'dg-learn-err' }, error) : null,
         status && !editItem ? h('p', { className: 'dg-learn-sub' }, status) : null,
-        loading ? h('p', { className: 'dg-learn-empty' }, '加载中…') : null,
+        loading ? h('p', { className: 'dg-learn-empty' }, tt('learned.loading')) : null,
         !loading && !items.length
           ? h('p', { className: 'dg-learn-empty' },
-            '还没有学会的条目。',
+            tt('learned.empty'),
             h('br'),
-            '打开「实时看屏幕」教一遍，点「我教完了」就会出现在这里。')
+            tt('learned.emptyHint'))
           : null,
         !loading && items.length && !filtered.length
-          ? h('p', { className: 'dg-learn-empty' }, '没有匹配的标题，换个关键词试试。')
+          ? h('p', { className: 'dg-learn-empty' }, tt('learned.noMatch'))
           : null,
         h('div', { className: 'dg-learn-list' },
           filtered.map((item, idx) => {
@@ -1611,7 +1699,9 @@ window.__ModuleLoader__.load({
                     ' ',
                     h('span', {
                       className: `dg-learn-badge${item.scheduled ? ' is-on' : ''}`,
-                    }, item.scheduled ? (item.timingLabel || '已定时') : '不定时'),
+                    }, item.scheduled
+                      ? (item.timingLabel || tt('learned.scheduled'))
+                      : tt('learned.unscheduled')),
                   ),
                 ),
                 h('div', { className: 'dg-learn-actions' },
@@ -1619,30 +1709,30 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     disabled: busy,
                     onClick: () => openEdit(item),
-                  }, '编辑'),
+                  }, tt('learned.edit')),
                   h('button', {
                     type: 'button',
                     className: 'danger',
                     disabled: busy,
                     onClick: () => { setEditItem(null); setDeleteItem(item) },
-                  }, '删除'),
+                  }, tt('learned.delete')),
                 ),
               ),
               h('div', { className: `dg-learn-block${understanding ? '' : ' is-muted'}` },
-                h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解'),
+                h('div', { className: 'dg-learn-block-label' }, tt('learned.understanding')),
                 h('div', { className: 'dg-learn-block-body' },
-                  understanding || '（教完后会写在这里；点编辑用「补充」帮它完善）',
+                  understanding || tt('learned.understandingEmpty'),
                 ),
               ),
               h('div', { className: 'dg-learn-runs' },
                 h('div', { className: 'dg-learn-runs-head' },
                   h('div', { className: 'dg-learn-block-label', style: { margin: 0 } },
-                    `执行记录（${runs.length}）`,
+                    tt('learned.runs', { n: runs.length }),
                   ),
                   h('button', {
                     type: 'button',
                     onClick: () => setRunsOpen((s) => ({ ...s, [item.id]: !open })),
-                  }, open ? '收起' : '展开'),
+                  }, open ? tt('learned.runsCollapse') : tt('learned.runsExpand')),
                 ),
                 open
                   ? (runs.length
@@ -1654,19 +1744,21 @@ window.__ModuleLoader__.load({
                           h('span', null, run.via || 'unknown'),
                           h('span', {
                             className: run.ok ? 'dg-learn-run-ok' : 'dg-learn-run-fail',
-                          }, run.ok ? '成功' : '失败'),
+                          }, run.ok ? tt('learned.runOk') : tt('learned.runFail')),
                         ),
                         h('div', { className: 'dg-learn-run-body' },
-                          run.summary || '（无摘要）',
+                          run.summary || '—',
                         ),
                         run.rating
                           ? h('div', { className: 'dg-learn-rate-done' },
-                            `已评：${ratingLabel[run.rating] || run.rating}`,
+                            tt('learned.rated', {
+                              label: ratingLabel[run.rating] || run.rating,
+                            }),
                             run.comment ? ` · ${run.comment}` : '',
-                            run.refined ? ' · 已改正理解' : '',
+                            run.refined ? tt('learned.refined') : '',
                           )
                           : h('div', { className: 'dg-learn-rate' },
-                            ...RATING_UI.map((r) => h('button', {
+                            ...RATING_UI_I18N.map((r) => h('button', {
                               key: r.key,
                               type: 'button',
                               className: draftRate.rating === r.key ? 'is-on' : '',
@@ -1678,7 +1770,7 @@ window.__ModuleLoader__.load({
                             }, r.label)),
                             h('textarea', {
                               rows: 2,
-                              placeholder: '可选：写下哪里不对，例如应直接打开 bilibili.com…',
+                              placeholder: tt('learned.rateCommentPh'),
                               value: draftRate.comment || '',
                               disabled: busy,
                               onChange: (e) => setRateDraft((d) => ({
@@ -1691,12 +1783,12 @@ window.__ModuleLoader__.load({
                               className: 'submit',
                               disabled: busy || !draftRate.rating,
                               onClick: () => submitRate(item, run),
-                            }, busy ? '改正中…' : '提交评价并改正'),
+                            }, busy ? tt('learned.rateBusy') : tt('learned.rateSubmit')),
                           ),
                       )
                     })
                     : h('div', { className: 'dg-learn-block-body', style: { opacity: 0.7 } },
-                      '还没有执行记录。对小蓝鲸说「去看看… / 执行一下…」跑过后会出现在这里。',
+                      tt('learned.runsEmpty'),
                     ))
                   : null,
               ),
@@ -1713,45 +1805,41 @@ window.__ModuleLoader__.load({
               className: 'dg-learn-modal',
               role: 'dialog',
               'aria-modal': 'true',
-              'aria-label': '编辑学会条目',
+              'aria-label': tt('learned.editTitle'),
             },
-              h('h2', null, '编辑学会条目'),
-              h('p', { className: 'dg-learn-modal-sub' },
-                '「补充」只用来帮助小蓝鲸更新学习理解；理解完成后补充会自动清空。',
-              ),
-              h('label', null, '目标标题',
+              h('h2', null, tt('learned.editTitle')),
+              h('p', { className: 'dg-learn-modal-sub' }, tt('learned.editSub')),
+              h('label', null, tt('learned.goal'),
                 h('input', {
                   value: draft.goal,
                   onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
                 }),
               ),
               h('div', { className: `dg-learn-block${editUnderstanding ? '' : ' is-muted'}` },
-                h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解（只读）'),
+                h('div', { className: 'dg-learn-block-label' }, tt('learned.understandingReadonly')),
                 h('div', { className: 'dg-learn-block-body' },
-                  editUnderstanding || '尚无理解，填写补充并保存后会生成/更新。',
+                  editUnderstanding || tt('learned.understandingNone'),
                 ),
               ),
               h('label', null,
-                '补充',
-                h('span', { className: 'hint' },
-                  '写下你的偏好、约束或纠正；保存后会并入上方理解，并清空本栏。',
-                ),
+                tt('learned.notes'),
+                h('span', { className: 'hint' }, tt('learned.notesHint')),
                 h('textarea', {
                   rows: 5,
-                  placeholder: '例如：心情笔记写到桌面「每日心情」；语气轻松一点…',
+                  placeholder: tt('learned.notesPh'),
                   value: draft.ownerNotes,
                   onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
                 }),
               ),
               h('div', { className: 'dg-learn-modal-actions' },
                 status ? h('span', { className: 'status' }, status) : h('span', { className: 'status' }, ''),
-                h('button', { type: 'button', disabled: busy, onClick: closeEdit }, '取消'),
+                h('button', { type: 'button', disabled: busy, onClick: closeEdit }, tt('learned.cancel')),
                 h('button', {
                   type: 'button',
                   className: 'primary',
                   disabled: busy || !String(draft.goal || '').trim(),
                   onClick: saveEdit,
-                }, busy ? '归纳中…' : '保存'),
+                }, busy ? tt('learned.saving') : tt('learned.save')),
               ),
             ),
           )
@@ -1766,26 +1854,26 @@ window.__ModuleLoader__.load({
               className: 'dg-learn-modal',
               role: 'dialog',
               'aria-modal': 'true',
-              'aria-label': '确认删除',
+              'aria-label': tt('learned.deleteTitle'),
             },
-              h('h2', null, '确认删除？'),
+              h('h2', null, tt('learned.deleteTitle')),
               h('p', { className: 'dg-learn-modal-sub' },
-                `将删除「${deleteItem.goal || deleteItem.id}」。`,
+                tt('learned.deleteBody', { goal: deleteItem.goal || deleteItem.id }),
                 h('br'),
-                '本地学习文件、自动化记录会一并清除；若有对应定时任务也会删除。此操作不可撤销。',
+                tt('learned.deleteWarn'),
               ),
               h('div', { className: 'dg-learn-modal-actions' },
                 h('button', {
                   type: 'button',
                   disabled: busy,
                   onClick: () => setDeleteItem(null),
-                }, '取消'),
+                }, tt('learned.cancel')),
                 h('button', {
                   type: 'button',
                   className: 'danger',
                   disabled: busy,
                   onClick: confirmDelete,
-                }, busy ? '删除中…' : '确认删除'),
+                }, busy ? tt('learned.deleting') : tt('learned.confirmDelete')),
               ),
             ),
           )
@@ -1816,7 +1904,7 @@ window.__ModuleLoader__.load({
         name: 'sidebar.panellist',
         id: LEARNED_PANEL_ID,
         order: 11,
-        label: () => '我学会的',
+        label: () => '我学会的 / Learned',
       }, () => h(LearnedIcon)))
     }
 
