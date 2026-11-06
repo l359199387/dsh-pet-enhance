@@ -22,10 +22,12 @@ const tinyPng = Buffer.from(
   'hex',
 )
 
-test('parseTeachDigestReply：OK / NEED_MORE', () => {
+test('parseTeachDigestReply：OK / NEED_MORE / FAST', () => {
   assert.equal(parseTeachDigestReply('NEED_MORE').needMore, true)
   assert.equal(parseTeachDigestReply('OK: 在记事本写心情').summary.includes('心情'), true)
+  assert.match(parseTeachDigestReply('OK: 进B站\nFAST: 打开 bilibili.com').fastPlan, /bilibili/)
   assert.ok(buildTeachDigestPrompt('g', 'n', 3).startsWith(AGENT_WAKE_PREFIX))
+  assert.match(buildTeachDigestPrompt('g', 'n', 3), /FAST/)
   const withClick = buildTeachDigestPrompt('g', 'n', [{
     role: 'click',
     name: '00-click-step0.png',
@@ -36,7 +38,6 @@ test('parseTeachDigestReply：OK / NEED_MORE', () => {
     },
   }])
   assert.match(withClick, /图内坐标 \(200,200\)/)
-  assert.match(withClick, /勿用整屏坐标/)
 })
 
 test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不自动动手', async () => {

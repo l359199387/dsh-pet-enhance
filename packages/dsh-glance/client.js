@@ -557,6 +557,7 @@ window.__ModuleLoader__.load({
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
       const [pendingConfirm, setPendingConfirm] = useState(null)
+      const [teachEndOffer, setTeachEndOffer] = useState(false)
       const [confirmPos, setConfirmPos] = useState(null)
       const [hint, setHint] = useState(
         '双击宠物打开对话（同右键「对话」/ L）；单击仍是原来的互动。桌面独立窗同样（需重载过 Helper）。',
@@ -589,6 +590,7 @@ window.__ModuleLoader__.load({
             if (body.dshPet) setDshPetOk(Boolean(body.dshPet.available))
             const pending = body.guard?.pendingConfirm?.data
             setPendingConfirm(pending && pending.id ? pending : null)
+            setTeachEndOffer(Boolean(body.guard?.teachEndOffer?.data))
           } catch {
             // Host 暂时不可达就保持本地状态
           }
@@ -615,9 +617,9 @@ window.__ModuleLoader__.load({
         return bindDshPetClickToChat(() => openDshPetNativeChat('hover'))
       }, [proxy])
 
-      // 确认气泡锚在宠物头顶（内置根节点或页面里的 dsh-pet）
+      // 确认 /「我教完了」气泡锚在宠物头顶
       useEffect(() => {
-        if (!pendingConfirm) {
+        if (!pendingConfirm && !teachEndOffer) {
           setConfirmPos(null)
           return undefined
         }
@@ -647,7 +649,7 @@ window.__ModuleLoader__.load({
           alive = false
           window.clearInterval(timer)
         }
-      }, [pendingConfirm, proxy, pos])
+      }, [pendingConfirm, teachEndOffer, proxy, pos])
 
       useEffect(() => {
         if (proxy) return undefined
@@ -784,6 +786,26 @@ window.__ModuleLoader__.load({
         }
       }, [pendingConfirm])
 
+      const clickTeachEnd = useCallback(async () => {
+        try {
+          const res = await fetch(`${API}/teach-end`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          })
+          const body = await res.json().catch(() => ({}))
+          if (!res.ok) {
+            setHint(`结束教学失败：${body?.rejected?.[0] || res.status}`)
+            return
+          }
+          setTeachEndOffer(false)
+          setHint('已点「我教完了」，正在总结…')
+        } catch (e) {
+          setHint(`结束教学异常：${e?.message ?? e}`)
+        }
+      }, [])
+
       const sleepToggle = useCallback(async () => {
         const next = petState === 'sleeping' ? 'idle' : 'sleeping'
         setPetState(next)
@@ -914,7 +936,23 @@ window.__ModuleLoader__.load({
             }, '不要'),
           ),
         )
-        : null
+        : (teachEndOffer && confirmPos && !pendingConfirm
+          ? h('div', {
+            className: 'dg-confirm',
+            role: 'button',
+            'aria-label': '我教完了',
+            style: { left: `${confirmPos.left}px`, top: `${confirmPos.top}px` },
+          },
+            h('div', { className: 'dg-confirm-tier' }, '教学中'),
+            h('div', { className: 'dg-row' },
+              h('button', {
+                type: 'button',
+                className: 'dg-btn primary',
+                onClick: clickTeachEnd,
+              }, '我教完了'),
+            ),
+          )
+          : null)
 
       // 已装 dsh-pet：不抢形象；双击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
       if (proxy) {

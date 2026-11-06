@@ -243,6 +243,25 @@ async function handle(req, res, connection, log, state) {
     return
   }
 
+  if (route === '/teach-end') {
+    if (method !== 'POST') {
+      send(res, 405, { ok: false, rejected: ['只支持 POST'] })
+      return
+    }
+    if (!state.teachBridge?.isTeaching?.()) {
+      send(res, 409, { ok: false, rejected: ['现在不在教学模式'] })
+      return
+    }
+    state.glance.setTeachEndOffer(false)
+    log('教学结束：头顶「我教完了」被点击')
+    // 异步收束，立刻回 200，避免气泡端卡住
+    Promise.resolve()
+      .then(() => state.teachBridge.stopAndRun())
+      .catch((e) => log(`teach-end 失败：${e?.message ?? e}`))
+    send(res, 200, { ok: true, ending: true })
+    return
+  }
+
   if (route === '/pet') {
     if (method !== 'POST') {
       send(res, 405, { ok: false, rejected: ['只支持 POST'] })
@@ -466,8 +485,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
       },
       onTeaching: (on) => {
         state.glance.setPet(on ? 'looking' : 'idle')
+        state.glance.setTeachEndOffer(Boolean(on))
       },
     })
+    state.teachBridge = teach
     const router = createPetRouter({
       ctx,
       home,

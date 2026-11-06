@@ -45,12 +45,19 @@ import {
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
+import {
+  buildSmartRunPrompt,
+  buildTeachFollowupQuestions,
+  buildTeachSmartDigestPrompt,
+  mergeTeachQuestions,
+  parseTeachSmartReply,
+} from './teach-smart.js'
 
 /**
- * 教学理解提示：每张点击图带图内坐标，供模型理解点了哪里。
+ * 教学理解提示：附图证据 + 要求变通总结最快路径。
  * @param {string} goal
  * @param {string} narrative
- * @param {number|object[]} frameCountOrImages 张数，或带 click 元数据的附图列表
+ * @param {number|object[]} frameCountOrImages
  */
 export function buildTeachDigestPrompt(goal, narrative, frameCountOrImages) {
   const images = Array.isArray(frameCountOrImages) ? frameCountOrImages : null
@@ -59,29 +66,25 @@ export function buildTeachDigestPrompt(goal, narrative, frameCountOrImages) {
   const paths = images?.length
     ? images.map((img, i) => `图${i + 1}文件：${img.path || img.name || ''}`).filter((l) => !l.endsWith('：')).join('\n')
     : ''
+  const smart = buildTeachSmartDigestPrompt(goal, narrative, images || frameCount)
   return (
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
-    + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
-    + `本消息附带 ${frameCount} 张 PNG（鼠标附近小图；图内坐标已换算）。\n`
-    + (legend ? `附图与点击对应关系：\n${legend}\n` : '')
-    + (paths ? `本地路径（附件失败时可对照）：\n${paths}\n` : '')
-    + `步骤摘要：\n${String(narrative || '').slice(0, 700)}\n`
-    + '请结合附图看点击目标；只按「图内坐标」找，不要当成整屏坐标；'
-    + '「用户键入文字「…」」是亲手打的字，记进语义。'
-    + '用一两句话说明在教什么自动化。'
-    + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
-    + '禁止调用 act；不要执行操作。'
+    + smart
+    + (legend ? `\n附图与点击对应关系：\n${legend}\n` : '')
+    + (paths ? `本地路径：\n${paths}\n` : '')
+    + '「用户键入文字「…」」是亲手打的字，可进快捷路径语义。'
   )
 }
 
 export function parseTeachDigestReply(text) {
-  const raw = String(text || '').trim()
-  if (!raw) return { ok: false, needMore: true, summary: '' }
-  if (/NEED_MORE|看不清|不够|再给图/i.test(raw) && !/^OK\s*:/i.test(raw)) {
-    return { ok: false, needMore: true, summary: raw.slice(0, 200) }
+  const smart = parseTeachSmartReply(text)
+  if (smart.needMore) return { ok: false, needMore: true, summary: smart.summary, fastPlan: '' }
+  return {
+    ok: true,
+    needMore: false,
+    summary: smart.summary,
+    fastPlan: smart.fastPlan || '',
   }
-  const m = raw.match(/^OK\s*[:：]\s*([\s\S]+)/i)
-  return { ok: true, needMore: false, summary: (m ? m[1] : raw).trim().slice(0, 500) }
 }
 
 export const TEACH_POLL_MS = 350
@@ -349,8 +352,8 @@ export function createTeachBridge(options) {
     }).catch(() => {})
     await frames.snapStart()
     await broadcastToDshPet(
-      `好，眼睛开着，我跟着学（每次点击都会截一张图，只用于学会）。目标：${clip(goal, 36)}。`
-      + '你点、你输入；做完告诉我。不懂我会问，问清再建自动化。学完会关实时看屏幕。密码只记本地。',
+      `好，眼睛开着，我跟着学（每次点击截附近小图，只用于学会）。目标：${clip(goal, 36)}。`
+      + '你点、你输入；做完点头顶「我教完了」就行。学完我会多问几句、总结更快做法再建成自动化。密码只记本地。',
       { pet, duration: 14_000 },
     )
     if (!observeTimer) {
@@ -426,7 +429,7 @@ export function createTeachBridge(options) {
    */
   async function digestWithFrames(id, runGoal, narrative) {
     if (!frames) {
-      return { summary: narrative, usedFrames: 0, supplemented: false }
+      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
     }
     await frames.snapEnd()
     const loadDigest = async () => (
@@ -436,7 +439,7 @@ export function createTeachBridge(options) {
     )
     let imgs = await loadDigest()
     if (!imgs.length) {
-      return { summary: narrative, usedFrames: 0, supplemented: false }
+      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
     }
 
     const preferred = options.getPreferredSessionId?.() ?? null
@@ -452,7 +455,7 @@ export function createTeachBridge(options) {
       })
       if (!woken.ok) {
         log(`teach digest 叫醒失败：${woken.reason}`)
-        return { needMore: false, summary: narrative }
+        return { needMore: false, summary: narrative, fastPlan: '' }
       }
       log(`teach digest 附图成功 ${woken.imageCount ?? 0} 张（失败 ${woken.imageFailed ?? 0}）`)
       const reply = await waitReply(options.ctx, woken.sessionId, {
@@ -460,7 +463,7 @@ export function createTeachBridge(options) {
         isAborted: () => stopped,
       })
       if (!reply.ok || !reply.text) {
-        return { needMore: true, summary: narrative }
+        return { needMore: true, summary: narrative, fastPlan: '' }
       }
       return parseTeachDigestReply(reply.text)
     }
@@ -477,6 +480,7 @@ export function createTeachBridge(options) {
 
     return {
       summary: parsed.summary || narrative,
+      fastPlan: parsed.fastPlan || '',
       usedFrames: imgs.length,
       supplemented,
       frameDir: teachFramesDir(options.home, id),
@@ -488,10 +492,23 @@ export function createTeachBridge(options) {
    * 理解后追问；返回已澄清的 code 列表。不懂就停，不创建自动化。
    * @returns {Promise<{ ok: boolean, clarified: string[], reason?: string }>}
    */
-  async function clarifyAmbiguities(id, runGoal, steps) {
-    const questions = detectTeachAmbiguities(runGoal, steps)
+  /**
+   * @param {string} id
+   * @param {string} runGoal
+   * @param {object[]} steps
+   * @param {{ summary?: string, fastPlan?: string }} [smart]
+   */
+  async function clarifyAmbiguities(id, runGoal, steps, smart = {}) {
+    const mandatory = buildTeachFollowupQuestions(runGoal, steps, smart)
+    const questions = mergeTeachQuestions(detectTeachAmbiguities(runGoal, steps), mandatory)
     const clarified = []
     if (!questions.length) return { ok: true, clarified }
+
+    await broadcastToDshPet(
+      `学完了，我要连问 ${questions.length} 件小事（头顶点「好/不要」），问清再建成自动化。`,
+      { pet, duration: 10_000 },
+    )
+
     if (!options.confirmGate?.ask) {
       if (questions.some((q) => q.code === 'goal' || q.code === 'empty')) {
         await broadcastToDshPet(
@@ -500,10 +517,11 @@ export function createTeachBridge(options) {
         )
         return { ok: false, clarified, reason: 'need-clarify' }
       }
+      // 无确认闸时仍记下必问项（视为主人默许变通）
       return { ok: true, clarified: questions.map((q) => q.code) }
     }
     for (const q of questions) {
-      await broadcastToDshPet(`理解时卡住了，要问清：${q.summary}`, { pet, duration: 10_000 })
+      await broadcastToDshPet(`问：${clip(q.summary, 80)}`, { pet, duration: 8_000 })
       const verdict = await options.confirmGate.ask({
         summary: q.summary,
         tier: 'L2',
@@ -571,9 +589,18 @@ export function createTeachBridge(options) {
     })))
     await updateTeachMeta(options.home, id, { status: 'understanding' })
     const digested = await digestWithFrames(id, goal, narrative)
+    playbook.strategy = {
+      approach: 'smart',
+      summary: digested.summary || narrative,
+      fastPlan: digested.fastPlan || '',
+    }
+    playbook.approach = 'smart'
 
-    // 2) 不动就问，问清才继续
-    const clarified = await clarifyAmbiguities(id, goal, steps)
+    // 2) 主动多问几句，问清才继续
+    const clarified = await clarifyAmbiguities(id, goal, steps, {
+      summary: digested.summary,
+      fastPlan: digested.fastPlan,
+    })
     if (!clarified.ok) {
       await turnOffLiveWatchQuiet()
       frames = null
@@ -594,6 +621,8 @@ export function createTeachBridge(options) {
       teachSessionId: id,
       understanding: {
         summary: digested.summary || narrative,
+        fastPlan: digested.fastPlan || '',
+        approach: 'smart',
         stats: playbook.stats,
         clarified: clarified.clarified,
         framesUsed: digested.usedFrames,
@@ -650,7 +679,7 @@ export function createTeachBridge(options) {
   }
 
   /**
-   * 脚本步本地 act；仅 glance 步短叫醒（省 token）。
+   * 优先按 FAST 快捷路径叫醒主会话变通执行；否则再走脚本/看屏。
    * @param {object} playbook
    */
   async function runPlaybook(playbook) {
@@ -659,6 +688,41 @@ export function createTeachBridge(options) {
     const runAct = options.runAct
     const scriptSteps = (playbook.steps || []).filter((s) => s.mode === 'script')
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
+    const smart = playbook.approach === 'smart'
+      || playbook.strategy?.approach === 'smart'
+      || Boolean(playbook.strategy?.fastPlan)
+
+    if (smart) {
+      const preferred = options.getPreferredSessionId?.() ?? null
+      const prompt = buildSmartRunPrompt(playbook)
+      await broadcastToDshPet(
+        `按快捷思路做「${clip(playbook.goal, 28)}」${playbook.strategy?.fastPlan ? `：${clip(playbook.strategy.fastPlan, 36)}` : ''}…`,
+        { pet, duration: 10_000 },
+      )
+      const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
+      if (!woken.ok) {
+        await broadcastToDshPet(
+          `快捷路径没叫醒主会话（${woken.reason || 'unknown'}），我改按记录步骤试…`,
+          { pet, duration: 10_000 },
+        )
+      } else {
+        const reply = await waitReply(options.ctx, woken.sessionId, {
+          timeoutMs: 180_000,
+          isAborted: () => stopped,
+        })
+        if (reply.ok && reply.text) {
+          await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })
+          await updateTeachMeta(options.home, id, {
+            status: 'done',
+            via: 'smart',
+            endedAt: new Date().toISOString(),
+          })
+          log(`teach：smart 执行完成 ${id}`)
+          return
+        }
+        await broadcastToDshPet('快捷路径这轮没结果，我再按记录步骤补一下…', { pet, duration: 8_000 })
+      }
+    }
 
     await broadcastToDshPet(
       `开始做「${clip(playbook.goal, 36)}」（脚本 ${scriptSteps.length} / 看屏 ${glanceSteps.length}）…`,

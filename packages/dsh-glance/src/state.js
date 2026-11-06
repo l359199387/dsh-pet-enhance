@@ -24,6 +24,7 @@ export function createGlanceState() {
    *   capturing: boolean,
    *   armed: boolean,
    *   pendingConfirm: null | object,
+   *   teachEndOffer: boolean,
    * }} */
   const data = {
     pet: 'idle',
@@ -32,6 +33,7 @@ export function createGlanceState() {
     capturing: false,
     armed: true,
     pendingConfirm: null,
+    teachEndOffer: false,
   }
 
   function bump() {
@@ -75,7 +77,15 @@ export function createGlanceState() {
     setPendingConfirm(pending) {
       data.pendingConfirm = pending ?? null
       if (pending) data.pet = 'asking'
-      else if (data.pet === 'asking') data.pet = 'idle'
+      else if (data.pet === 'asking' && !data.teachEndOffer) data.pet = 'idle'
+      return bump()
+    },
+
+    /** 教学中头顶「我教完了」可点气泡。 */
+    setTeachEndOffer(on) {
+      const v = Boolean(on)
+      if (data.teachEndOffer === v) return counter
+      data.teachEndOffer = v
       return bump()
     },
 
@@ -84,6 +94,7 @@ export function createGlanceState() {
       data.pet = 'alarmed'
       data.armed = false
       data.pendingConfirm = null
+      data.teachEndOffer = false
       return bump()
     },
 
@@ -102,6 +113,7 @@ export function createGlanceState() {
         guard: {
           armed: { counter, data: data.armed },
           pendingConfirm: { counter, data: data.pendingConfirm },
+          teachEndOffer: { counter, data: data.teachEndOffer },
         },
       }
     },

@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { listDshPetRoots } from './patch-dsh-pet-click.js'
 
-export const CONFIRM_PATCH_MARK = 'dsh-glance:confirm-bubble'
+export const CONFIRM_PATCH_MARK = 'dsh-glance:confirm-bubble-v2'
 export const CONFIRM_SCRIPT_NAME = 'glance-confirm.js'
 
 const HTML_NEEDLE = '    <script src="./sprite/menu.js"></script>\n    <script src="./events.js"></script>'
@@ -54,7 +54,7 @@ const INPUT_REGIONS_NEEDLE =
   "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable'),"
 
 const INPUT_REGIONS_REPLACEMENT =
-  "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable, .dsh-glance-confirm'),"
+  "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable, .dsh-glance-confirm, .dsh-glance-teach-end'),"
 
 const RENDERER_NEEDLE = '    sprites = [new PetSprite(pet)];\n    window.__dshPetDebug.configOk = true;'
 const RENDERER_REPLACEMENT = [
@@ -80,6 +80,7 @@ export function buildGlanceConfirmScript(token) {
   var POLL_MS = 700;
   var timer = null;
   var lastId = null;
+  var teachEndOn = false;
 
   function api(path) {
     return String(ORIGIN || '') + '/api/glance' + path;
@@ -130,26 +131,83 @@ export function buildGlanceConfirmScript(token) {
         body: JSON.stringify({ id: id, allow: allow }),
         cache: 'no-store',
       }).catch(function () {});
-      hideAll();
+      hideConfirm();
     });
     sprite.el.appendChild(el);
     return el;
   }
 
-  function hideAll() {
+  function ensureTeachEnd(sprite) {
+    if (!sprite || !sprite.el) return null;
+    var el = sprite.el.querySelector('.dsh-glance-teach-end');
+    if (el) return el;
+    el = document.createElement('div');
+    el.className = 'dsh-glance-teach-end pet-bubble is-whisper is-clickable';
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', '我教完了');
+    el.style.cssText = [
+      'display:none',
+      'flex-direction:column',
+      'gap:6px',
+      'pointer-events:auto',
+      'z-index:39',
+      'max-width:min(240px, 90%)',
+      'padding:10px 12px',
+      'cursor:pointer',
+    ].join(';');
+    el.innerHTML =
+      '<div style="font-weight:600;font-size:12px">教学中</div>' +
+      '<button type="button" data-teach-end="1" style="cursor:pointer;padding:8px 10px;border-radius:8px;border:0;background:#16a34a;color:#fff;font:13px/1.2 sans-serif">我教完了</button>';
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      var btn = e.target && e.target.closest ? e.target.closest('[data-teach-end]') : null;
+      if (!btn && e.currentTarget !== el) return;
+      fetch(api('/teach-end'), {
+        method: 'POST',
+        headers: headers(),
+        body: '{}',
+        cache: 'no-store',
+      }).catch(function () {});
+      hideTeachEnd();
+    });
+    sprite.el.appendChild(el);
+    return el;
+  }
+
+  function setBusy(sprite, on) {
+    sprite._glanceConfirmOn = Boolean(on);
+    try {
+      if (typeof sprite.setInteractive === 'function') sprite.setInteractive(true);
+      if (typeof sprite.syncInputBusy === 'function') sprite.syncInputBusy();
+    } catch (e) { /* ignore */ }
+  }
+
+  function hideConfirm() {
     lastId = null;
     var sprites = window.__dshGlanceSprites || [];
     for (var i = 0; i < sprites.length; i++) {
       var s = sprites[i];
-      s._glanceConfirmOn = false;
       var el = s.el && s.el.querySelector('.dsh-glance-confirm');
       if (el) {
         el.style.display = 'none';
         el.classList.remove('is-on');
       }
-      try {
-        if (typeof s.syncInputBusy === 'function') s.syncInputBusy();
-      } catch (e) { /* ignore */ }
+      setBusy(s, Boolean(s.el && s.el.querySelector('.dsh-glance-teach-end.is-on')));
+    }
+  }
+
+  function hideTeachEnd() {
+    teachEndOn = false;
+    var sprites = window.__dshGlanceSprites || [];
+    for (var i = 0; i < sprites.length; i++) {
+      var s = sprites[i];
+      var el = s.el && s.el.querySelector('.dsh-glance-teach-end');
+      if (el) {
+        el.style.display = 'none';
+        el.classList.remove('is-on');
+      }
+      setBusy(s, Boolean(s.el && s.el.querySelector('.dsh-glance-confirm.is-on')));
     }
   }
 
@@ -170,11 +228,19 @@ export function buildGlanceConfirmScript(token) {
     if (text) text.textContent = pending.summary || '确认执行该动作？';
     el.style.display = 'flex';
     el.classList.add('is-on');
-    sprite._glanceConfirmOn = true;
-    try {
-      if (typeof sprite.setInteractive === 'function') sprite.setInteractive(true);
-      if (typeof sprite.syncInputBusy === 'function') sprite.syncInputBusy();
-    } catch (e) { /* ignore */ }
+    setBusy(sprite, true);
+  }
+
+  function showTeachEnd() {
+    var sprites = window.__dshGlanceSprites || [];
+    if (!sprites.length) return;
+    var sprite = sprites[0];
+    var el = ensureTeachEnd(sprite);
+    if (!el) return;
+    teachEndOn = true;
+    el.style.display = 'flex';
+    el.classList.add('is-on');
+    setBusy(sprite, true);
   }
 
   async function tick() {
@@ -186,10 +252,16 @@ export function buildGlanceConfirmScript(token) {
       if (!res.ok) return;
       var body = await res.json();
       var pending = body && body.guard && body.guard.pendingConfirm && body.guard.pendingConfirm.data;
+      var offer = body && body.guard && body.guard.teachEndOffer && body.guard.teachEndOffer.data;
       if (pending && pending.id) {
         if (pending.id !== lastId) show(pending);
       } else if (lastId) {
-        hideAll();
+        hideConfirm();
+      }
+      if (offer) {
+        if (!teachEndOn) showTeachEnd();
+      } else if (teachEndOn) {
+        hideTeachEnd();
       }
     } catch (e) {
       /* Host 未起或令牌未就绪：静默 */
