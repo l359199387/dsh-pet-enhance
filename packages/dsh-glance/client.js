@@ -540,7 +540,7 @@ window.__ModuleLoader__.load({
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
       const [hint, setHint] = useState(
-        '点宠物打开对话（同右键「对话」/ L）。桌面独立窗请右键「对话」，或显示位置含网页后再点。',
+        '点宠物打开对话（同右键「对话」/ L）。桌面独立窗同样单击即可（需重载过 Helper）。',
       )
 
       useEffect(() => {

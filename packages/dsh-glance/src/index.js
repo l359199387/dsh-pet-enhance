@@ -37,13 +37,14 @@ import { createChatBridge } from './chat-bridge.js'
 import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
+import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 
 export const name = 'dsh-glance'
 
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.7'
+export const VERSION = '0.0.8'
 
 const startedAt = Date.now()
 
@@ -312,6 +313,25 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
     setDshPetBaseUrl(origin)
     log(`dsh-pet bridge origin=${origin}`)
+
+    // 桌面独立窗：网页点不到 → 给 dsh-pet Helper 打「单击开对话」补丁，并请它重载。
+    try {
+      const patched = applyDshPetClickPatches()
+      const hit = patched.results.filter((r) => r.changed || r.reason === 'already-patched')
+      if (hit.length) {
+        log(`dsh-pet 桌面单击开对话：${hit.map((r) => `${r.reason}`).join(', ')}`)
+      }
+      if (patched.results.some((r) => r.changed)) {
+        callDshPet('/reload', { method: 'POST', timeoutMs: 5_000 })
+          .then((r) => {
+            if (r.ok) log('已请求重载 dsh-pet 桌面 Helper（单击开对话补丁生效）')
+            else log(`重载桌面 Helper 未成功：${r.error || r.status || JSON.stringify(r.data)}`)
+          })
+          .catch((e) => log(`重载桌面 Helper 异常：${e?.message ?? e}`))
+      }
+    } catch (e) {
+      log(`dsh-pet 单击开对话补丁失败：${e?.message ?? e}`)
+    }
 
     let stopped = false
     let registered = false
