@@ -1,7 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * C1 装配：看屏 + dsh-pet 桥 + act（默认关）+ input/failsafe/abort。
+ * C1 装配：看屏 + dsh-pet 桥 + L→主会话 Agent 干活 + act（默认关）。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -34,6 +34,7 @@ import {
   setDshPetBaseUrl,
 } from './dsh-pet.js'
 import { createChatBridge } from './chat-bridge.js'
+import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 
@@ -42,7 +43,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.5'
+export const VERSION = '0.0.6'
 
 const startedAt = Date.now()
 
@@ -146,6 +147,7 @@ async function handle(req, res, connection, log, state) {
       version: VERSION,
       stage: 'C1',
       actEnabled: isActEnabled(glanceHome()),
+      lastSessionId: state.lastSessionId,
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
       tools: state.tools.slice(),
@@ -330,6 +332,18 @@ function installDshPetBridge(ctx, log, state, disposers) {
       log,
       ...petHooks,
     })
+    const agent = createAgentBridge({
+      ctx,
+      home,
+      log,
+      getPreferredSessionId: () => state.lastSessionId,
+      onActing: () => state.glance.setPet('acting'),
+      onIdle: () => {
+        if (state.glance.snapshot().pet.state.data === 'acting') {
+          state.glance.setPet('idle')
+        }
+      },
+    })
     const live = createLiveWatch({
       home,
       sidecar: () => state.sidecar,
@@ -429,6 +443,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }).catch(() => {})
 
     bridge.start()
+    agent.start()
     ensureMenu().catch(() => {})
     const timer = setInterval(() => {
       ensureMenu().catch(() => {})
@@ -438,6 +453,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       stopped = true
       clearInterval(timer)
       bridge.stop()
+      agent.stop()
       live.stop()
       if (registered) clearGlanceMenu().catch(() => {})
     }
@@ -465,6 +481,24 @@ function installDshPetBridge(ctx, log, state, disposers) {
     return
   }
   disposers.push(run(resolveDshOrigin(ctx?.webServer)))
+}
+
+/** 跟踪最近有事件的会话，供 L→Agent 叫醒时使用。 */
+function installSessionTracker(ctx, log, state) {
+  if (typeof ctx?.on !== 'function') return
+  try {
+    const off = ctx.on('session/event', (session) => {
+      try {
+        const id = session?.header?.id ?? session?.id
+        if (id) state.lastSessionId = String(id)
+      } catch { /* ignore */ }
+    })
+    if (typeof ctx.effect === 'function' && typeof off === 'function') {
+      ctx.effect(() => () => { try { off() } catch { /* ignore */ } }, 'dsh-glance: session tracker')
+    }
+  } catch (e) {
+    log(`session/event 钩子失败：${e?.message ?? e}`)
+  }
 }
 
 function installSidecar(ctx, log, state, disposers) {
@@ -501,6 +535,7 @@ export async function apply(ctx) {
     tools: [],
     sidecar: null,
     glance: createGlanceState(),
+    lastSessionId: null,
     _windowAt: 0,
     _dshPetAt: 0,
     _dshPet: { available: false, pets: [] },
@@ -511,6 +546,7 @@ export async function apply(ctx) {
     mkdirSync(join(home, 'episodes'), { recursive: true })
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)
+    installSessionTracker(ctx, log, state)
     installDshPetBridge(ctx, log, state, disposers)
     installRoutes(ctx, log, state)
     installTools(ctx, log, state)

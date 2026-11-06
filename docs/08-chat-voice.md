@@ -9,7 +9,8 @@
 | 对话 UI | **dsh-pet** 自带（悬停 `L` / `Ctrl+Shift+L`），小蓝鲸不另开输入框 |
 | 会话记忆 | dsh-pet `memory.json`，近 **8** 轮 |
 | 看屏 | Host `chat-bridge` 侦测意图 → 抓帧 → `POST /chat` 附图 → 宠物开口 |
-| 人格 | 附图 follow-up 注入 `src/persona.js`；不改写用户 `whisperPrompt` |
+| 干活 | Host `agent-bridge` 粗筛干活话 → 叫醒主会话 Agent（`glance`/`act`）→ 回合结束回灌气泡 |
+| 人格 | 附图 / 交办 follow-up 注入 `src/persona.js`；不改写用户 `whisperPrompt` |
 | 长期看屏痕迹 | `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图字节） |
 
 未装 dsh-pet 时才考虑下面的独立会话方案。

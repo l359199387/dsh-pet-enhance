@@ -14,21 +14,17 @@ import {
 import { captureFrame } from './capture.js'
 import { appendEpisode, buildGlanceEpisode } from './episode.js'
 import { glancePersonaBlock } from './persona.js'
+import {
+  GLANCE_FOLLOWUP_PREFIX,
+  GLANCE_INTENT_RE,
+  isGlanceIntent,
+  shouldSkipGlanceBridge,
+} from './intent.js'
 
-/**
- * 用户要「真的看一下」时的说法。必须覆盖「桌面 / 屏幕」，
- * 否则 dsh-pet 只会嘴上聊，bridge 根本不抓屏。
- */
-export const GLANCE_INTENT_RE =
-  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance/i
-
-/** 我们二次投喂的提示词前缀——不得命中 GLANCE_INTENT_RE，避免死循环。 */
-export const GLANCE_FOLLOWUP_PREFIX = '【小蓝鲸已附上刚才的画面】'
-
-export function isGlanceIntent(text) {
-  const s = String(text ?? '').trim()
-  if (!s || s.startsWith(GLANCE_FOLLOWUP_PREFIX)) return false
-  return GLANCE_INTENT_RE.test(s)
+export {
+  GLANCE_FOLLOWUP_PREFIX,
+  GLANCE_INTENT_RE,
+  isGlanceIntent,
 }
 
 function lastUserMessage(messages) {
@@ -218,6 +214,7 @@ export function createChatBridge(options) {
     }
     lastTs = user.ts
     lastContent = user.content
+    if (shouldSkipGlanceBridge(user.content)) return
     if (!isGlanceIntent(user.content)) return
     await handleIntent(user.content)
   }
@@ -226,7 +223,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：跟我说「看一眼桌面」或「看一眼屏幕」，我会真的看一眼再回你。',
+      '小蓝鲸已接入：可以说「看一眼桌面」；要动手时先开「允许动手」，再说「帮我把…最小化」这类话，我会在主会话里理解后操作。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {

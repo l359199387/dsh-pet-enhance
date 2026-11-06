@@ -124,7 +124,9 @@
 
 - **隐藏**自绘 SVG，**不另开对话框**——对话用 dsh-pet 自带的（悬停宠物按 `L`，或 `Ctrl+Shift+L` 浮层）。
 - Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- 轮询 `GET /chat`（近 8 轮）：用户新话说到「看屏幕 / 桌面 / 截图」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**（注入小蓝鲸人格）→ 宠物开口；失败再 `/broadcast`。
+- 轮询 `GET /chat`（近 8 轮）：
+  - 「看屏幕 / 桌面 / 截图」→ `chat-bridge` 抓帧附图让宠物开口。
+  - 「帮我点 / 把…最小化 / 输入…」等 → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动「看一眼桌面」。
