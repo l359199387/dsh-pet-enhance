@@ -24,8 +24,6 @@ import {
   callDshPet,
   MENU_ACT_OFF,
   MENU_ACT_ON,
-  MENU_CONFIRM_NO,
-  MENU_CONFIRM_YES,
   MENU_LIVE_OFF,
   MENU_LIVE_ON,
   MENU_OWNER,
@@ -40,6 +38,8 @@ import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
+import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
+import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { createConfirmGate } from './confirm.js'
 
@@ -48,7 +48,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.1.0'
+export const VERSION = '0.1.1'
 
 const startedAt = Date.now()
 
@@ -122,7 +122,8 @@ async function refreshDshPet(state) {
 
 async function handle(req, res, connection, log, state) {
   const rejection = rejectionFor(req, connection)
-  if (rejection !== undefined) {
+  const desktopOk = tokenMatches(glanceHome(), req?.headers?.['x-glance-token'])
+  if (rejection !== undefined && !desktopOk) {
     log(`拒绝一个不受信任的请求：${rejection}`)
     send(res, rejection, { ok: false, rejected: ['请求不被信任'] })
     return
@@ -347,11 +348,8 @@ function installTools(ctx, log, state) {
           turnKey: () => state.lastSessionId || 'default',
           getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
           getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
-          onConfirmAsk: async (summary) => {
-            await broadcastToDshPet(
-              `${summary}\n请在小蓝鲸面板点「好 / 不要」，或右键「更多」里的确认项。`,
-              { duration: 55_000 },
-            )
+          onConfirmAsk: async () => {
+            // 确认气泡由网页 overlay / 桌面 Helper 头顶弹出；这里不再刷普通说话气泡抢注意力。
           },
         })))
         state.tools.push(ACT_TOOL_NAME)
@@ -376,23 +374,26 @@ function installDshPetBridge(ctx, log, state, disposers) {
     setDshPetBaseUrl(origin)
     log(`dsh-pet bridge origin=${origin}`)
 
-    // 桌面独立窗：网页点不到 → 给 dsh-pet Helper 打「双击开对话」补丁，并请它重载。
+    // 桌面独立窗：网页点不到 → 双击开对话 + 头顶确认气泡补丁，并请 Helper 重载。
     try {
-      const patched = applyDshPetClickPatches()
-      const hit = patched.results.filter((r) => r.changed || r.reason === 'already-patched')
+      const token = ensureDesktopToken(glanceHome())
+      const clickPatched = applyDshPetClickPatches()
+      const confirmPatched = applyDshPetConfirmPatches({ token })
+      const all = [...clickPatched.results, ...confirmPatched.results]
+      const hit = all.filter((r) => r.changed || r.reason === 'already-patched' || r.reason === 'unchanged')
       if (hit.length) {
-        log(`dsh-pet 桌面双击开对话：${hit.map((r) => `${r.reason}`).join(', ')}`)
+        log(`dsh-pet 桌面补丁：${hit.map((r) => r.reason).join(', ')}`)
       }
-      if (patched.results.some((r) => r.changed)) {
+      if (all.some((r) => r.changed)) {
         callDshPet('/reload', { method: 'POST', timeoutMs: 5_000 })
           .then((r) => {
-            if (r.ok) log('已请求重载 dsh-pet 桌面 Helper（双击开对话补丁生效）')
+            if (r.ok) log('已请求重载 dsh-pet 桌面 Helper（对话/确认补丁生效）')
             else log(`重载桌面 Helper 未成功：${r.error || r.status || JSON.stringify(r.data)}`)
           })
           .catch((e) => log(`重载桌面 Helper 异常：${e?.message ?? e}`))
       }
     } catch (e) {
-      log(`dsh-pet 双击开对话补丁失败：${e?.message ?? e}`)
+      log(`dsh-pet 桌面补丁失败：${e?.message ?? e}`)
     }
 
     let stopped = false
@@ -439,8 +440,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     const pushMenu = async () => {
-      const pending = Boolean(state.confirmGate?.getPending?.())
-      const r = await registerGlanceMenu({ liveWatch, actEnabled, pendingConfirm: pending })
+      const r = await registerGlanceMenu({ liveWatch, actEnabled, pendingConfirm: false })
       if (r.ok) {
         registered = true
         return true
@@ -449,9 +449,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       return false
     }
 
-    state.onConfirmPending = () => {
-      if (!stopped) pushMenu().catch(() => {})
-    }
+    state.onConfirmPending = null
 
     const ensureMenu = async () => {
       if (stopped) return
@@ -522,14 +520,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
       if (ev[MENU_ACT_ON] || ev[MENU_ACT_OFF]) {
         await setActEnabled(!actEnabled)
-      }
-      if (ev[MENU_CONFIRM_YES] || ev[MENU_CONFIRM_NO]) {
-        const pending = state.confirmGate?.getPending?.()
-        if (pending?.id) {
-          state.confirmGate.resolve(pending.id, Boolean(ev[MENU_CONFIRM_YES]))
-          log(`菜单确认：${ev[MENU_CONFIRM_YES] ? '好' : '不要'} id=${pending.id}`)
-        }
-        await pushMenu()
       }
     }
 
@@ -654,6 +644,7 @@ export async function apply(ctx) {
   try {
     const home = glanceHome()
     mkdirSync(join(home, 'episodes'), { recursive: true })
+    ensureDesktopToken(home)
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)
     installSessionTracker(ctx, log, state)

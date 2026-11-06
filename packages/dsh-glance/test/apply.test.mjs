@@ -8,7 +8,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
-import { apply, ROUTE_PREFIX } from '../src/index.js'
+import { apply, ROUTE_PREFIX, glanceHome } from '../src/index.js'
+import { readDesktopToken } from '../src/desktop-token.js'
 
 let home
 let registered
@@ -177,6 +178,13 @@ test('不受信任的请求在进入业务逻辑之前就被拒', async () => {
   const res = await call(`${ROUTE_PREFIX}/status`, { headers: { host: 'evil.example' } })
   assert.equal(res.status, 403)
   assert.equal(JSON.parse(res.body).ok, false)
+
+  const token = readDesktopToken(glanceHome())
+  assert.ok(token)
+  const ok = await call(`${ROUTE_PREFIX}/status`, {
+    headers: { host: 'evil.example', 'x-glance-token': token },
+  })
+  assert.equal(ok.status, 200)
 
   dispose()
 })

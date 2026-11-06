@@ -292,9 +292,7 @@ window.__ModuleLoader__.load({
 .dg-confirm {
   position: fixed;
   z-index: 2147483001;
-  right: 16px;
-  bottom: 16px;
-  width: min(320px, calc(100vw - 32px));
+  width: min(280px, calc(100vw - 24px));
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--dg-panel);
@@ -305,6 +303,20 @@ window.__ModuleLoader__.load({
   flex-direction: column;
   gap: 8px;
   font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+  transform: translate(-50%, calc(-100% - 10px));
+  pointer-events: auto;
+}
+.dg-confirm::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--dg-panel);
+  border-right: 1px solid var(--dg-border);
+  border-bottom: 1px solid var(--dg-border);
+  transform: translateX(-50%) rotate(45deg);
 }
 .dg-confirm .dg-confirm-tier {
   font: 600 11px/1.2 ui-sans-serif, system-ui, sans-serif;
@@ -545,6 +557,7 @@ window.__ModuleLoader__.load({
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
       const [pendingConfirm, setPendingConfirm] = useState(null)
+      const [confirmPos, setConfirmPos] = useState(null)
       const [hint, setHint] = useState(
         '双击宠物打开对话（同右键「对话」/ L）；单击仍是原来的互动。桌面独立窗同样（需重载过 Helper）。',
       )
@@ -601,6 +614,40 @@ window.__ModuleLoader__.load({
         if (!proxy) return undefined
         return bindDshPetClickToChat(() => openDshPetNativeChat('hover'))
       }, [proxy])
+
+      // 确认气泡锚在宠物头顶（内置根节点或页面里的 dsh-pet）
+      useEffect(() => {
+        if (!pendingConfirm) {
+          setConfirmPos(null)
+          return undefined
+        }
+        let alive = true
+        const place = () => {
+          if (!alive) return
+          let rect = null
+          if (!proxy && rootRef.current) {
+            rect = rootRef.current.getBoundingClientRect()
+          } else {
+            const hit = document.querySelector('.dsh-pet-hit, .dsh-pet-stage, .dsh-pet-root')
+            if (hit) rect = hit.getBoundingClientRect()
+          }
+          if (rect && rect.width > 0) {
+            setConfirmPos({
+              left: rect.left + rect.width / 2,
+              top: Math.max(12, rect.top),
+            })
+          } else {
+            const dock = clampDockPos()
+            setConfirmPos({ left: dock.x + 40, top: Math.max(12, dock.y) })
+          }
+        }
+        place()
+        const timer = window.setInterval(place, 120)
+        return () => {
+          alive = false
+          window.clearInterval(timer)
+        }
+      }, [pendingConfirm, proxy, pos])
 
       useEffect(() => {
         if (proxy) return undefined
@@ -842,8 +889,13 @@ window.__ModuleLoader__.load({
         )
         : null
 
-      const confirmCard = pendingConfirm
-        ? h('div', { className: 'dg-confirm', role: 'dialog', 'aria-label': '动作确认' },
+      const confirmCard = pendingConfirm && confirmPos
+        ? h('div', {
+          className: 'dg-confirm',
+          role: 'dialog',
+          'aria-label': '动作确认',
+          style: { left: `${confirmPos.left}px`, top: `${confirmPos.top}px` },
+        },
           h('div', {
             className: 'dg-confirm-tier',
             'data-tier': pendingConfirm.tier || 'L2',
