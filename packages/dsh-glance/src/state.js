@@ -72,6 +72,13 @@ export function createGlanceState() {
       return bump()
     },
 
+    setPendingConfirm(pending) {
+      data.pendingConfirm = pending ?? null
+      if (pending) data.pet = 'asking'
+      else if (data.pet === 'asking') data.pet = 'idle'
+      return bump()
+    },
+
     /** 急停：宠物 alarmed，armed 暂时 false（C 阶段真正打断动作）。 */
     panic() {
       data.pet = 'alarmed'

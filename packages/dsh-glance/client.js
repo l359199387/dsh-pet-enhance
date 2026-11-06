@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const {
       createElement: h,
+      Fragment,
       useCallback,
       useEffect,
       useRef,
@@ -288,6 +289,29 @@ window.__ModuleLoader__.load({
   min-width: 40px;
 }
 .dg-hint { font: 11px/1.35 ui-sans-serif, system-ui, sans-serif; color: var(--dg-muted); }
+.dg-confirm {
+  position: fixed;
+  z-index: 2147483001;
+  right: 16px;
+  bottom: 16px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--dg-panel);
+  color: var(--dg-text);
+  border: 1px solid var(--dg-border);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+.dg-confirm .dg-confirm-tier {
+  font: 600 11px/1.2 ui-sans-serif, system-ui, sans-serif;
+  color: var(--dg-accent);
+  letter-spacing: 0.02em;
+}
+.dg-confirm .dg-confirm-tier[data-tier="L3"] { color: var(--dg-danger); }
 @keyframes dg-breathe {
   0%, 100% { transform: scaleY(1); }
   50% { transform: scaleY(0.97); }
@@ -520,6 +544,7 @@ window.__ModuleLoader__.load({
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
+      const [pendingConfirm, setPendingConfirm] = useState(null)
       const [hint, setHint] = useState(
         '双击宠物打开对话（同右键「对话」/ L）；单击仍是原来的互动。桌面独立窗同样（需重载过 Helper）。',
       )
@@ -549,6 +574,8 @@ window.__ModuleLoader__.load({
             const win = body.side?.window?.data
             setWindowTitle(win?.title ? String(win.title) : '')
             if (body.dshPet) setDshPetOk(Boolean(body.dshPet.available))
+            const pending = body.guard?.pendingConfirm?.data
+            setPendingConfirm(pending && pending.id ? pending : null)
           } catch {
             // Host 暂时不可达就保持本地状态
           }
@@ -674,6 +701,7 @@ window.__ModuleLoader__.load({
 
       const stop = useCallback(async () => {
         setPetState('alarmed')
+        setPendingConfirm(null)
         setHint('已急停。')
         try {
           await fetch(`${API}/stop`, {
@@ -686,6 +714,28 @@ window.__ModuleLoader__.load({
           setHint('急停信号没送到 Host，本地已进入炸毛。')
         }
       }, [])
+
+      const answerConfirm = useCallback(async (allow) => {
+        const id = pendingConfirm?.id
+        if (!id) return
+        try {
+          const res = await fetch(`${API}/confirm`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id, allow: Boolean(allow) }),
+          })
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            setHint(`确认失败：${body?.rejected?.[0] || res.status}`)
+            return
+          }
+          setPendingConfirm(null)
+          setHint(allow ? '已确认，继续做。' : '已拒绝，不再试。')
+        } catch (e) {
+          setHint(`确认异常：${e?.message ?? e}`)
+        }
+      }, [pendingConfirm])
 
       const sleepToggle = useCallback(async () => {
         const next = petState === 'sleeping' ? 'idle' : 'sleeping'
@@ -792,50 +842,82 @@ window.__ModuleLoader__.load({
         )
         : null
 
+      const confirmCard = pendingConfirm
+        ? h('div', { className: 'dg-confirm', role: 'dialog', 'aria-label': '动作确认' },
+          h('div', {
+            className: 'dg-confirm-tier',
+            'data-tier': pendingConfirm.tier || 'L2',
+          }, pendingConfirm.tier === 'L3' ? '危险操作 · 逐次确认' : '需要你点一下'),
+          h('div', null, pendingConfirm.summary || '确认执行该动作？'),
+          h('div', { className: 'dg-row' },
+            h('button', {
+              type: 'button',
+              className: 'dg-btn primary',
+              onClick: () => answerConfirm(true),
+            }, '好'),
+            h('button', {
+              type: 'button',
+              className: 'dg-btn danger',
+              onClick: () => answerConfirm(false),
+            }, '不要'),
+          ),
+        )
+        : null
+
       // 已装 dsh-pet：不抢形象；双击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
       if (proxy) {
         const dock = clampDockPos()
         return h(
-          'div',
-          {
-            ref: rootRef,
-            className: 'dg-root',
-            'data-mode': 'dock',
-            style: { left: `${dock.x}px`, top: `${dock.y}px` },
-          },
-          h('button', {
-            type: 'button',
-            className: 'dg-dock',
-            title: '打开 dsh-pet 对话（同 Ctrl+Shift+L / 右键「对话」）',
-            'aria-label': '打开桌宠对话',
-            onClick: () => openDshPetNativeChat('global'),
-          }, '对话'),
+          Fragment,
+          null,
+          h(
+            'div',
+            {
+              ref: rootRef,
+              className: 'dg-root',
+              'data-mode': 'dock',
+              style: { left: `${dock.x}px`, top: `${dock.y}px` },
+            },
+            h('button', {
+              type: 'button',
+              className: 'dg-dock',
+              title: '打开 dsh-pet 对话（同 Ctrl+Shift+L / 右键「对话」）',
+              'aria-label': '打开桌宠对话',
+              onClick: () => openDshPetNativeChat('global'),
+            }, '对话'),
+          ),
+          confirmCard,
         )
       }
 
       return h(
-        'div',
-        {
-          ref: rootRef,
-          className: 'dg-root',
-          'data-state': petState,
-          'data-mode': 'self',
-          'data-open': open ? '1' : '0',
-          style: { left: `${pos.x}px`, top: `${pos.y}px` },
-          onPointerDown,
-          onPointerMove,
-          onPointerUp,
-          onPointerCancel: onPointerUp,
-        },
-        h('div', { className: 'dg-status', title: statusText },
-          h('strong', null, '小蓝鲸'),
-          h('span', { className: 'dg-muted' }, ` · ${stateLabel(petState)}`),
-          windowTitle ? h('div', { className: 'dg-muted' }, windowTitle) : null,
+        Fragment,
+        null,
+        h(
+          'div',
+          {
+            ref: rootRef,
+            className: 'dg-root',
+            'data-state': petState,
+            'data-mode': 'self',
+            'data-open': open ? '1' : '0',
+            style: { left: `${pos.x}px`, top: `${pos.y}px` },
+            onPointerDown,
+            onPointerMove,
+            onPointerUp,
+            onPointerCancel: onPointerUp,
+          },
+          h('div', { className: 'dg-status', title: statusText },
+            h('strong', null, '小蓝鲸'),
+            h('span', { className: 'dg-muted' }, ` · ${stateLabel(petState)}`),
+            windowTitle ? h('div', { className: 'dg-muted' }, windowTitle) : null,
+          ),
+          chatPanel,
+          h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小蓝鲸，${stateLabel(petState)}` },
+            h(PetSvg, { state: petState, pupil, blinking }),
+          ),
         ),
-        chatPanel,
-        h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小蓝鲸，${stateLabel(petState)}` },
-          h(PetSvg, { state: petState, pupil, blinking }),
-        ),
+        confirmCard,
       )
     }
 

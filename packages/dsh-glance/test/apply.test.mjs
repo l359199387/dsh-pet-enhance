@@ -95,7 +95,7 @@ async function call(url, { method = 'GET', headers = { host: '127.0.0.1:50521' }
   return res
 }
 
-test('apply 注册路由与工具，status 到 C1', async () => {
+test('apply 注册路由与工具，status 到 C2', async () => {
   const ctx = fakeCtx()
   const dispose = await apply(ctx)
   await flush()
@@ -110,17 +110,33 @@ test('apply 注册路由与工具，status 到 C1', async () => {
   assert.equal(res.status, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.ok, true)
-  assert.equal(body.stage, 'C1')
+  assert.equal(body.stage, 'C2')
   assert.ok(body.tools.includes('glance'))
   assert.ok(body.tools.includes('act'))
   assert.equal(body.home, home)
   assert.deepEqual(body.tools, ['glance', 'act'])
   assert.equal(body.pet, 'idle')
+  assert.equal(body.budget.max, 20)
 
   dispose()
   for (const off of ctx._disposers) off()
   assert.equal(registered, undefined)
   assert.equal(ctx._tools.length, 0)
+})
+
+test('/confirm 需要有效挂起 id', async () => {
+  const ctx = fakeCtx()
+  const dispose = await apply(ctx)
+  await flush()
+
+  const miss = await call(`${ROUTE_PREFIX}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ id: 'nope', allow: true }),
+  })
+  assert.equal(miss.status, 409)
+
+  dispose()
+  for (const off of ctx._disposers) off()
 })
 
 test('/state 与 /stop 驱动宠物叶子', async () => {

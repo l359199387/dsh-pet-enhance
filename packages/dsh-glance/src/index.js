@@ -1,7 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * C1 装配：看屏 + dsh-pet 桥 + L→主会话 Agent 干活 + act（默认关）。
+ * C2 装配：看屏 + dsh-pet 桥 + L→主会话干活 + act（策略/确认/审计/急停）。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -24,6 +24,8 @@ import {
   callDshPet,
   MENU_ACT_OFF,
   MENU_ACT_ON,
+  MENU_CONFIRM_NO,
+  MENU_CONFIRM_YES,
   MENU_LIVE_OFF,
   MENU_LIVE_ON,
   MENU_OWNER,
@@ -38,13 +40,15 @@ import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
+import { createActionBudget } from './policy.js'
+import { createConfirmGate } from './confirm.js'
 
 export const name = 'dsh-glance'
 
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.9'
+export const VERSION = '0.1.0'
 
 const startedAt = Date.now()
 
@@ -146,12 +150,17 @@ async function handle(req, res, connection, log, state) {
       ok: true,
       name,
       version: VERSION,
-      stage: 'C1',
+      stage: 'C2',
       actEnabled: isActEnabled(glanceHome()),
       lastSessionId: state.lastSessionId,
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
       tools: state.tools.slice(),
+      budget: {
+        count: state.budget?.count ?? 0,
+        max: state.budget?.max ?? 20,
+      },
+      pendingConfirm: state.glance.snapshot().guard.pendingConfirm.data,
       sidecar: {
         alive: Boolean(sidecar?.isAlive?.()),
         pid: sidecar?.getPid?.() ?? null,
@@ -179,6 +188,9 @@ async function handle(req, res, connection, log, state) {
       send(res, 405, { ok: false, rejected: ['只支持 POST'] })
       return
     }
+    state.confirmGate?.cancelAll('panic')
+    state.budget?.reset()
+    state.rememberedConfirms?.clear()
     state.glance.panic()
     try {
       await state.sidecar?.abort?.()
@@ -186,7 +198,45 @@ async function handle(req, res, connection, log, state) {
       log(`急停 abort 失败：${e?.message ?? e}`)
     }
     log('用户急停')
-    send(res, 200, { ok: true, pet: 'alarmed', armed: false })
+    send(res, 200, { ok: true, pet: 'alarmed', armed: false, aborted: true })
+    return
+  }
+
+  if (route === '/confirm') {
+    if (method !== 'POST') {
+      send(res, 405, { ok: false, rejected: ['只支持 POST'] })
+      return
+    }
+    let raw
+    try {
+      raw = await readBody(req)
+    } catch (e) {
+      send(res, e?.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { ok: false, rejected: [String(e?.message ?? e)] })
+      return
+    }
+    let body
+    try {
+      body = raw ? JSON.parse(raw) : {}
+    } catch {
+      send(res, 400, { ok: false, rejected: ['JSON 无法解析'] })
+      return
+    }
+    const id = body?.id != null ? String(body.id) : ''
+    if (!id) {
+      send(res, 400, { ok: false, rejected: ['缺少 id'] })
+      return
+    }
+    if (typeof body.allow !== 'boolean') {
+      send(res, 400, { ok: false, rejected: ['allow 必须是 boolean'] })
+      return
+    }
+    const ok = Boolean(state.confirmGate?.resolve(id, body.allow))
+    if (!ok) {
+      send(res, 409, { ok: false, rejected: ['没有这条待确认，或已过期'] })
+      return
+    }
+    log(`确认回执 id=${id} allow=${body.allow}`)
+    send(res, 200, { ok: true, id, allow: body.allow })
     return
   }
 
@@ -291,9 +341,21 @@ function installTools(ctx, log, state) {
           isArmed: () => state.glance.snapshot().guard.armed.data,
           onActing: petHooks.onActing,
           onIdle: petHooks.onIdle,
+          budget: state.budget,
+          confirmGate: state.confirmGate,
+          rememberedConfirms: state.rememberedConfirms,
+          turnKey: () => state.lastSessionId || 'default',
+          getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
+          getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
+          onConfirmAsk: async (summary) => {
+            await broadcastToDshPet(
+              `${summary}\n请在小蓝鲸面板点「好 / 不要」，或右键「更多」里的确认项。`,
+              { duration: 55_000 },
+            )
+          },
         })))
         state.tools.push(ACT_TOOL_NAME)
-        log(`工具已注册：${ACT_TOOL_NAME}（默认关闭，见 settings.actEnabled / DSH_GLANCE_ACT）`)
+        log(`工具已注册：${ACT_TOOL_NAME}（C2：策略/确认/审计；默认关闭）`)
       } catch (e) {
         writeError(e, 'glance-tools')
         log(`工具没挂上：${e?.message ?? e}`)
@@ -377,13 +439,18 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     const pushMenu = async () => {
-      const r = await registerGlanceMenu({ liveWatch, actEnabled })
+      const pending = Boolean(state.confirmGate?.getPending?.())
+      const r = await registerGlanceMenu({ liveWatch, actEnabled, pendingConfirm: pending })
       if (r.ok) {
         registered = true
         return true
       }
       log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
       return false
+    }
+
+    state.onConfirmPending = () => {
+      if (!stopped) pushMenu().catch(() => {})
     }
 
     const ensureMenu = async () => {
@@ -439,11 +506,15 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (!r.ok || !r.data?.ok || !r.data.events) return
       const ev = r.data.events
       if (ev[MENU_STOP]) {
+        state.confirmGate?.cancelAll('panic')
+        state.budget?.reset()
+        state.rememberedConfirms?.clear()
         state.glance.panic()
         try {
           await state.sidecar?.abort?.()
         } catch { /* ignore */ }
         log('dsh-pet 菜单触发小蓝鲸急停')
+        await pushMenu()
       }
       // 点当前文案即翻转；开/关两态都认，避免重注册竞态漏点。
       if (ev[MENU_LIVE_ON] || ev[MENU_LIVE_OFF]) {
@@ -451,6 +522,14 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
       if (ev[MENU_ACT_ON] || ev[MENU_ACT_OFF]) {
         await setActEnabled(!actEnabled)
+      }
+      if (ev[MENU_CONFIRM_YES] || ev[MENU_CONFIRM_NO]) {
+        const pending = state.confirmGate?.getPending?.()
+        if (pending?.id) {
+          state.confirmGate.resolve(pending.id, Boolean(ev[MENU_CONFIRM_YES]))
+          log(`菜单确认：${ev[MENU_CONFIRM_YES] ? '好' : '不要'} id=${pending.id}`)
+        }
+        await pushMenu()
       }
     }
 
@@ -556,10 +635,21 @@ export async function apply(ctx) {
     sidecar: null,
     glance: createGlanceState(),
     lastSessionId: null,
+    budget: createActionBudget(),
+    rememberedConfirms: new Set(),
+    confirmGate: null,
+    onConfirmPending: null,
     _windowAt: 0,
     _dshPetAt: 0,
     _dshPet: { available: false, pets: [] },
   }
+  state.confirmGate = createConfirmGate({
+    log,
+    onPending: (pending) => {
+      state.glance.setPendingConfirm(pending)
+      try { state.onConfirmPending?.(pending) } catch { /* ignore */ }
+    },
+  })
 
   try {
     const home = glanceHome()

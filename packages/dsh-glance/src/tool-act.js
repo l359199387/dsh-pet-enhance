@@ -1,14 +1,21 @@
 /**
- * `act` 工具：让 sidecar 执行一次输入动作。
- *
- * C1：只做开关检查 + armed + sidecar；分级/确认/审计是 C2。
- * 默认关闭（settings.actEnabled 或 DSH_GLANCE_ACT=1）。
+ * `act` 工具：策略 →（确认）→ sidecar 输入 → 本地验证 → 审计。
  *
  * @module src/tool-act.js
  */
 
 import { actToolSpec, ACT_TOOL_NAME } from './tool-spec-act.js'
 import { isActEnabled } from './settings.js'
+import { appendAction } from './audit.js'
+import {
+  evaluateActPolicy,
+  summarizeActForConfirm,
+} from './policy.js'
+import {
+  captureScreenFingerprint,
+  compareFingerprints,
+  shouldVerifyAction,
+} from './verify-act.js'
 
 function buildActions(args) {
   const action = String(args?.action ?? '').trim().toLowerCase()
@@ -32,6 +39,19 @@ function buildActions(args) {
   return [base]
 }
 
+function auditArgs(args) {
+  const out = { action: args?.action }
+  for (const k of ['x', 'y', 'x2', 'y2', 'button', 'keys', 'window', 'ms', 'delta']) {
+    if (args?.[k] != null) out[k] = args[k]
+  }
+  if (args?.text != null) {
+    const t = String(args.text)
+    out.text = t.length > 80 ? `${t.slice(0, 80)}…` : t
+  }
+  if (args?.reason != null) out.reason = String(args.reason).slice(0, 200)
+  return out
+}
+
 /**
  * @param {{
  *   home: string,
@@ -40,98 +60,258 @@ function buildActions(args) {
  *   isArmed?: () => boolean,
  *   onActing?: () => void,
  *   onIdle?: () => void,
+ *   getWindowTitle?: () => string | null,
+ *   getScreen?: () => { w?: number, h?: number } | null,
+ *   budget?: object,
+ *   confirmGate?: { ask: Function },
+ *   rememberedConfirms?: Set<string>,
+ *   turnKey?: () => string,
+ *   denyTitles?: string[],
+ *   onConfirmAsk?: (summary: string) => void | Promise<void>,
  * }} options
  */
 export function createActTool(options = {}) {
   const log = options.log ?? (() => {})
+  const remembered = options.rememberedConfirms ?? new Set()
+
   return {
     ...actToolSpec(),
     async execute(args, exec) {
-      if (!isActEnabled(options.home)) {
-        return {
-          text: 'act 未启用。在 ~/.dsh/glance/settings.json 设 "actEnabled": true，或设环境变量 DSH_GLANCE_ACT=1 后重启。',
-          meta: { ok: false, code: 'ACT_DISABLED' },
+      const t0 = Date.now()
+      let tier = null
+      let confirmed = null
+      let beforeHash = null
+      let afterHash = null
+      let maybeNoop = false
+      let windowTitle = null
+      let screen = null
+
+      const finishAudit = async (result) => {
+        try {
+          await appendAction(options.home, {
+            action: args?.action,
+            args: auditArgs(args),
+            tier,
+            confirmed,
+            ok: Boolean(result?.meta?.ok),
+            code: result?.meta?.code ?? null,
+            ms: Date.now() - t0,
+            screen,
+            window: windowTitle,
+            before: beforeHash,
+            after: afterHash,
+            maybeNoop,
+            reason: args?.reason ? String(args.reason).slice(0, 200) : undefined,
+          })
+        } catch (e) {
+          log(`审计写入失败：${e?.message ?? e}`)
         }
+        return result
+      }
+
+      if (!isActEnabled(options.home)) {
+        return finishAudit({
+          text: 'act 未启用。在右键「更多」打开「允许动手」，或设 settings.actEnabled / DSH_GLANCE_ACT=1。',
+          meta: { ok: false, code: 'ACT_DISABLED' },
+        })
       }
       if (options.isArmed && !options.isArmed()) {
-        return {
-          text: '已急停（armed=false）。把宠物设回 idle 或重启后再试；不要自动重试。',
+        return finishAudit({
+          text: '用户叫停了本次操作（armed=false）。不要重试。',
           meta: { ok: false, code: 'DISARMED', aborted: true },
-        }
+        })
       }
       const sidecar = options.sidecar
       if (!sidecar?.isAlive?.() || typeof sidecar.call !== 'function') {
-        return {
+        return finishAudit({
           text: '输入需要 Python sidecar，当前不可用。',
           meta: { ok: false, code: 'SIDECAR_DOWN' },
-        }
+        })
       }
 
       let actions
       try {
         actions = buildActions(args)
       } catch (e) {
-        return { text: `参数不对：${e?.message ?? e}`, meta: { ok: false, code: 'BAD_REQUEST' } }
+        return finishAudit({
+          text: `参数不对：${e?.message ?? e}`,
+          meta: { ok: false, code: 'BAD_REQUEST' },
+        })
+      }
+      if (actions.length !== 1) {
+        return finishAudit({
+          text: '一次 act 只允许一个动作。',
+          meta: { ok: false, code: 'BAD_REQUEST' },
+        })
       }
 
-      // 硬约束 11：一次 act 只带一个动作（不排队多坐标串）。
-      if (actions.length !== 1) {
-        return { text: '一次 act 只允许一个动作。', meta: { ok: false, code: 'BAD_REQUEST' } }
+      windowTitle = options.getWindowTitle?.() ?? null
+      screen = options.getScreen?.() ?? sidecar.getHello?.()?.screen ?? null
+
+      // 尽量用当前前台窗标题（stats 失败则沿用缓存）
+      try {
+        const stats = await sidecar.call('stats', {}, 2_000)
+        if (stats?.ok) {
+          if (stats.active?.title) windowTitle = String(stats.active.title)
+          if (stats.screen?.w && stats.screen?.h) {
+            screen = { w: stats.screen.w, h: stats.screen.h }
+          }
+        }
+      } catch { /* 策略仍可用缓存 */ }
+
+      const decision = evaluateActPolicy({
+        args,
+        windowTitle,
+        screen,
+        denyTitles: options.denyTitles,
+        budget: options.budget,
+        turnKey: options.turnKey?.() ?? 'default',
+        remembered,
+      })
+      tier = decision.tier
+
+      if (!decision.ok) {
+        return finishAudit({
+          text: decision.reason || '策略拒绝',
+          meta: {
+            ok: false,
+            code: decision.code,
+            tier,
+            budget: decision.budget,
+          },
+        })
+      }
+
+      if (decision.needsConfirm) {
+        if (!options.confirmGate?.ask) {
+          return finishAudit({
+            text: '该动作需要确认，但确认闸门未就绪。',
+            meta: { ok: false, code: 'CONFIRM_UNAVAILABLE', tier },
+          })
+        }
+        const summary = summarizeActForConfirm(args, tier)
+        try { await options.onConfirmAsk?.(summary) } catch { /* ignore */ }
+        const verdict = await options.confirmGate.ask({
+          summary,
+          tier,
+          action: auditArgs(args),
+        })
+        confirmed = Boolean(verdict.allow)
+        if (!verdict.allow) {
+          return finishAudit({
+            text: verdict.via === 'timeout'
+              ? '确认超时，视为拒绝。不要换方式再试。'
+              : '用户点了「不要」。任务到此结束，不要换方式再试。',
+            meta: {
+              ok: false,
+              code: verdict.via === 'timeout' ? 'CONFIRM_TIMEOUT' : 'CONFIRM_DENIED',
+              tier,
+              confirmed: false,
+              aborted: true,
+            },
+          })
+        }
+        if (tier === 'L2' && decision.confirmSig) {
+          remembered.add(decision.confirmSig)
+        }
+      } else if (tier === 'L2' || tier === 'L3') {
+        confirmed = true // 本任务内已记住
       }
 
       try { options.onActing?.() } catch { /* ignore */ }
 
-      const t0 = Date.now()
       try {
-        if (exec?.signal?.aborted) {
-          return { text: '用户取消了本次操作。', meta: { ok: false, aborted: true, code: 'ABORTED' } }
+        if (exec?.signal?.aborted || (options.isArmed && !options.isArmed())) {
+          return finishAudit({
+            text: '用户叫停了本次操作。不要重试。',
+            meta: { ok: false, aborted: true, code: 'ABORTED', tier, confirmed },
+          })
         }
+
+        const kind = actions[0].kind
+        if (shouldVerifyAction(kind)) {
+          beforeHash = await captureScreenFingerprint(sidecar)
+        }
+
         const resp = await sidecar.call('input', { actions }, 120_000)
         if (resp?.aborted || resp?.error?.code === 'FAILSAFE' || resp?.cause === 'failsafe') {
-          return {
+          return finishAudit({
             text: '用户把光标甩到左上角，已急停。不要重试。',
             meta: {
               ok: false,
               aborted: true,
               code: 'FAILSAFE',
+              tier,
+              confirmed,
               done: resp?.done ?? [],
               cursor: resp?.cursor,
               ms: Date.now() - t0,
             },
-          }
+          })
         }
         if (resp?.aborted || resp?.error?.code === 'ABORTED') {
-          return {
+          return finishAudit({
             text: '用户叫停了本次操作。不要重试。',
-            meta: { ok: false, aborted: true, code: 'ABORTED', done: resp?.done ?? [], ms: Date.now() - t0 },
-          }
+            meta: {
+              ok: false,
+              aborted: true,
+              code: 'ABORTED',
+              tier,
+              confirmed,
+              done: resp?.done ?? [],
+              ms: Date.now() - t0,
+            },
+          })
         }
         if (!resp?.ok) {
           const msg = resp?.error?.message || '输入失败'
           log(`act 失败：${resp?.error?.code || ''} ${msg}`)
-          return {
+          return finishAudit({
             text: msg,
-            meta: { ok: false, code: resp?.error?.code || 'INPUT_FAILED', ms: Date.now() - t0 },
-          }
+            meta: {
+              ok: false,
+              code: resp?.error?.code || 'INPUT_FAILED',
+              tier,
+              confirmed,
+              ms: Date.now() - t0,
+            },
+          })
         }
 
-        const kind = actions[0].kind
+        if (shouldVerifyAction(kind)) {
+          afterHash = await captureScreenFingerprint(sidecar)
+          const cmp = compareFingerprints(beforeHash, afterHash)
+          maybeNoop = cmp.maybeNoop
+          beforeHash = cmp.before
+          afterHash = cmp.after
+        }
+
         const cur = resp.cursor ? `${resp.cursor.x},${resp.cursor.y}` : '?'
-        return {
-          text: `已执行 ${kind}（${Date.now() - t0}ms），光标现在 (${cur})。`,
+        const warn = maybeNoop ? ' 画面几乎没变，可能没生效——请先 glance 再决定是否重试一次。' : ''
+        return finishAudit({
+          text: `已执行 ${kind}（${Date.now() - t0}ms），光标现在 (${cur})。${warn}`,
           meta: {
             ok: true,
             action: kind,
+            tier,
+            confirmed,
             done: resp.done,
             cursor: resp.cursor,
             dryRun: Boolean(resp.dryRun),
             ms: Date.now() - t0,
+            maybeNoop,
+            before: beforeHash,
+            after: afterHash,
+            budget: decision.budget,
             reason: args?.reason ? String(args.reason).slice(0, 200) : undefined,
           },
-        }
+        })
       } catch (e) {
         log(`act 异常：${e?.message ?? e}`)
-        return { text: `输入异常：${e?.message ?? e}`, meta: { ok: false, code: e?.code || 'INPUT_FAILED' } }
+        return finishAudit({
+          text: `输入异常：${e?.message ?? e}`,
+          meta: { ok: false, code: e?.code || 'INPUT_FAILED', tier, confirmed },
+        })
       } finally {
         try { options.onIdle?.() } catch { /* ignore */ }
       }

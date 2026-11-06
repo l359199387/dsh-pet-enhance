@@ -33,4 +33,5 @@ test('saveSettings 可读写 liveWatch 与 actEnabled', async () => {
 test('菜单文案：看屏 / 动手 / 急停', () => {
   assert.deepEqual(glanceMenuLabels(false, false), [MENU_LIVE_OFF, MENU_ACT_OFF, MENU_STOP])
   assert.deepEqual(glanceMenuLabels(true, true), [MENU_LIVE_ON, MENU_ACT_ON, MENU_STOP])
+  assert.equal(glanceMenuLabels(false, false, true).length, 5)
 })

@@ -17,6 +17,8 @@ export const MENU_LIVE_ON = '实时看屏幕 · 开'
 export const MENU_LIVE_OFF = '实时看屏幕 · 关'
 export const MENU_ACT_ON = '允许动手 · 开'
 export const MENU_ACT_OFF = '允许动手 · 关'
+export const MENU_CONFIRM_YES = '确认动作 · 好'
+export const MENU_CONFIRM_NO = '确认动作 · 不要'
 /** 动作类接口必填；any = 网页/桌面都能收到。 */
 export const PET_SURFACE = 'any'
 
@@ -29,12 +31,16 @@ export function actEnabledMenuLabel(enabled) {
   return enabled ? MENU_ACT_ON : MENU_ACT_OFF
 }
 
-export function glanceMenuLabels(liveWatchEnabled, actEnabled = false) {
-  return [
+export function glanceMenuLabels(liveWatchEnabled, actEnabled = false, pendingConfirm = false) {
+  const labels = [
     liveWatchMenuLabel(liveWatchEnabled),
     actEnabledMenuLabel(actEnabled),
     MENU_STOP,
   ]
+  if (pendingConfirm) {
+    labels.push(MENU_CONFIRM_YES, MENU_CONFIRM_NO)
+  }
+  return labels
 }
 
 /** Host 装配期写入；浏览器半身可以继续走相对路径（base 为空）。 */
@@ -85,12 +91,18 @@ function withSurface(path, surface = PET_SURFACE) {
  * @param {{ liveWatch?: boolean, actEnabled?: boolean, target?: string } & object} [options]
  */
 export async function registerGlanceMenu(options = {}) {
-  const { liveWatch = false, actEnabled = false, target = 'both', ...rest } = options
+  const {
+    liveWatch = false,
+    actEnabled = false,
+    pendingConfirm = false,
+    target = 'both',
+    ...rest
+  } = options
   return callDshPet('/menu/item', {
     method: 'POST',
     body: {
       owner: MENU_OWNER,
-      labels: glanceMenuLabels(liveWatch, actEnabled),
+      labels: glanceMenuLabels(liveWatch, actEnabled, pendingConfirm),
       target,
     },
     ...rest,

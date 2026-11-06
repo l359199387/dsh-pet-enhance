@@ -129,8 +129,9 @@
 - 轮询 `GET /chat`（近 8 轮）：
   - 「看屏幕 / 桌面 / 截图」→ `chat-bridge` 抓帧附图让宠物开口。
   - 「帮我点 / 把…最小化 / 输入…」等 → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
+- **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（面板「好/不要」或右键确认项，60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
-- 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
+- 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`；有待确认时再挂「确认动作 · 好/不要」）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动「看一眼桌面」。
   - **允许动手 · 开/关**：对应 `actEnabled`；关则 `act` 拒绝真动手。
   - **小蓝鲸急停**。
