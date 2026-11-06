@@ -48,7 +48,7 @@ function loadClientTestApi() {
 test('client 纯函数：clampPos / stateLabel', () => {
   const api = loadClientTestApi()
   assert.equal(api.stateLabel('alarmed'), '急停')
-  assert.equal(api.PET_SIZE, 96)
+  assert.equal(api.PET_SIZE, 128)
 
   // jsdom 没有，给一个假 inner*
   const prev = globalThis.window

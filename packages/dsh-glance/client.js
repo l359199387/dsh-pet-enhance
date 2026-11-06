@@ -1,10 +1,10 @@
 /**
  * dsh-glance —— 浏览器半身（B1：宠物出现）。
  *
- * 挂在 `shell.overlay`：右下角一只可拖的小鲸鱼，呼吸/眨眼/随光标看；
+ * 挂在 `shell.overlay`：右下角一只可拖的原创蓝发鲸鱼娘（Q 版），呼吸/眨眼/随光标看；
  * 点击弹出输入框（聊天是 B2）；⏹ 急停先只改 UI / 打 Host `/stop`。
  *
- * 手写 ModuleLoader 包，无构建步骤；除 shell 已提供的 react 外无依赖。
+ * 形象是插件原创，不是社区同人「蓝色大肥鱼」的复制件（见 assets/NOTICE.md）。
  *
  * @module client.js
  */
@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const API = '/api/glance'
     const STORAGE_POS = 'dsh-glance.pos'
     const STORAGE_SIZE = 'dsh-glance.size'
-    const PET_SIZE = 96
+    const PET_SIZE = 128
     const inject = ['slots']
 
     const CSS = `
@@ -37,15 +37,12 @@ window.__ModuleLoader__.load({
   height: ${PET_SIZE}px;
   user-select: none;
   touch-action: none;
-  --dg-body: var(--dsw-alias-brand-primary, #3b6fd9);
-  --dg-eye: var(--dsw-alias-bg-layer-1, #fff);
-  --dg-pupil: var(--dsw-alias-label-primary, #1a1a1a);
   --dg-panel: var(--dsw-alias-bg-overlay, rgba(20, 24, 32, 0.92));
   --dg-text: var(--dsw-alias-label-primary, #f2f4f8);
   --dg-muted: var(--dsw-alias-label-secondary, #9aa3b2);
   --dg-border: var(--dsw-alias-stroke-subtle, rgba(255,255,255,0.12));
   --dg-danger: var(--dsw-alias-status-danger, #e25555);
-  --dg-blush: #ff8a9b;
+  --dg-accent: var(--dsw-alias-brand-primary, #3b82f6);
 }
 .dg-root * { box-sizing: border-box; }
 .dg-pet {
@@ -53,34 +50,36 @@ window.__ModuleLoader__.load({
   width: 100%;
   height: 100%;
   cursor: grab;
-  filter: drop-shadow(0 6px 12px rgba(0,0,0,0.28));
+  filter: drop-shadow(0 10px 18px rgba(15, 40, 90, 0.35));
 }
 .dg-pet:active { cursor: grabbing; }
 .dg-pet svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .dg-body {
-  transform-origin: 48px 58px;
+  transform-origin: 64px 96px;
   animation: dg-breathe 3.2s ease-in-out infinite;
 }
 .dg-root[data-state="sleeping"] .dg-body { animation-duration: 4.8s; }
 .dg-root[data-state="alarmed"] .dg-pet {
   animation: dg-startle 0.45s ease-in-out 0s 2;
 }
-.dg-root[data-state="alarmed"] .dg-outline {
+.dg-root[data-state="alarmed"] .dg-ring {
   stroke: var(--dg-danger);
-  stroke-width: 3;
+  stroke-opacity: 0.9;
 }
-.dg-eye-pair { transform-origin: 48px 44px; }
+.dg-eye-pair { transform-origin: 64px 52px; }
 .dg-blink .dg-eye-pair { animation: dg-blink 120ms ease-in-out; }
-.dg-pupil { transition: transform 80ms linear; }
-.dg-arm-l, .dg-arm-r { transform-origin: center; }
+.dg-gaze { transition: transform 80ms linear; }
+.dg-arm-l, .dg-arm-r { transform-box: fill-box; transform-origin: center; }
 .dg-root[data-state="acting"] .dg-arm-l,
 .dg-root[data-state="acting"] .dg-arm-r {
   animation: dg-work 0.35s ease-in-out infinite alternate;
 }
 .dg-root[data-state="asking"] .dg-arm-l,
 .dg-root[data-state="asking"] .dg-arm-r {
-  transform: translateY(-6px);
+  transform: translateY(-7px);
 }
+.dg-tail { transform-origin: 92px 112px; animation: dg-tail 2.8s ease-in-out infinite; }
+.dg-root[data-state="alarmed"] .dg-tail { animation-duration: 0.35s; }
 .dg-fx { pointer-events: none; }
 .dg-status {
   position: absolute;
@@ -132,7 +131,7 @@ window.__ModuleLoader__.load({
   padding: 6px 8px;
   font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
 }
-.dg-panel textarea:focus { outline: 2px solid color-mix(in srgb, var(--dg-body) 55%, transparent); outline-offset: 1px; }
+.dg-panel textarea:focus { outline: 2px solid color-mix(in srgb, var(--dg-accent) 55%, transparent); outline-offset: 1px; }
 .dg-row { display: flex; gap: 6px; align-items: center; }
 .dg-btn {
   flex: 1;
@@ -146,7 +145,7 @@ window.__ModuleLoader__.load({
 }
 .dg-btn:hover { filter: brightness(1.08); }
 .dg-btn.primary {
-  background: var(--dg-body);
+  background: var(--dg-accent);
   color: var(--dsw-alias-label-on-brand, #fff);
   border-color: transparent;
 }
@@ -174,12 +173,16 @@ window.__ModuleLoader__.load({
   from { transform: rotate(-12deg) translateY(0); }
   to { transform: rotate(12deg) translateY(-3px); }
 }
+@keyframes dg-tail {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(6deg); }
+}
 @keyframes dg-zzz {
   0% { opacity: 0; transform: translate(0, 0); }
   30% { opacity: 1; }
   100% { opacity: 0; transform: translate(10px, -16px); }
 }
-.dg-zzz { animation: dg-zzz 2.4s ease-in-out infinite; fill: var(--dg-muted); font: 10px ui-sans-serif, system-ui, sans-serif; }
+.dg-zzz { animation: dg-zzz 2.4s ease-in-out infinite; fill: #93C5FD; font: 12px ui-sans-serif, system-ui, sans-serif; }
 `
 
     function readPos() {
@@ -226,95 +229,109 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function WhaleSvg({ state, pupil, blinking }) {
+    function PetSvg({ state, pupil, blinking }) {
       const sleeping = state === 'sleeping'
       const mouth = state === 'alarmed'
-        ? 'M38 62 Q48 56 58 62'
+        ? 'M58 66 Q64 62 70 66'
         : state === 'asking'
-          ? 'M42 60 Q48 68 54 60'
-          : 'M40 61 Q48 67 56 61'
-      const eyeY = sleeping ? 44 : 42
+          ? 'M60 65 Q64 72 68 65'
+          : 'M60 66 Q64 70 68 66'
+      const gaze = { transform: `translate(${pupil.x}px, ${pupil.y}px)` }
       return h(
         'svg',
-        { viewBox: '0 0 96 96', 'aria-hidden': true },
+        { viewBox: '0 0 128 128', 'aria-hidden': true },
+        h('defs', null,
+          h('linearGradient', { id: 'dgHair', x1: '28', y1: '8', x2: '100', y2: '72', gradientUnits: 'userSpaceOnUse' },
+            h('stop', { stopColor: '#7EC8FF' }),
+            h('stop', { offset: '0.45', stopColor: '#3B82F6' }),
+            h('stop', { offset: '1', stopColor: '#1D4ED8' }),
+          ),
+          h('linearGradient', { id: 'dgHoodie', x1: '40', y1: '72', x2: '88', y2: '118', gradientUnits: 'userSpaceOnUse' },
+            h('stop', { stopColor: '#1E3A8A' }),
+            h('stop', { offset: '1', stopColor: '#172554' }),
+          ),
+          h('linearGradient', { id: 'dgSkin', x1: '48', y1: '36', x2: '80', y2: '70', gradientUnits: 'userSpaceOnUse' },
+            h('stop', { stopColor: '#FFE8D6' }),
+            h('stop', { offset: '1', stopColor: '#FFD0B5' }),
+          ),
+          h('radialGradient', { id: 'dgIris', cx: '50%', cy: '40%', r: '60%' },
+            h('stop', { stopColor: '#93C5FD' }),
+            h('stop', { offset: '1', stopColor: '#1D4ED8' }),
+          ),
+        ),
         h(
           'g',
           { className: `dg-body${blinking ? ' dg-blink' : ''}` },
-          h('ellipse', {
-            className: 'dg-outline',
-            cx: 48,
-            cy: 54,
-            rx: 30,
-            ry: 26,
-            fill: 'var(--dg-body)',
-            stroke: 'transparent',
-          }),
-          h('ellipse', { cx: 48, cy: 78, rx: 10, ry: 6, fill: 'var(--dg-body)', opacity: 0.85 }),
-          h('ellipse', { cx: 36, cy: 58, rx: 5, ry: 3.5, fill: 'var(--dg-blush)', opacity: 0.55 }),
-          h('ellipse', { cx: 60, cy: 58, rx: 5, ry: 3.5, fill: 'var(--dg-blush)', opacity: 0.55 }),
-          h(
-            'g',
-            { className: 'dg-arm-l' },
-            h('ellipse', { cx: 22, cy: 58, rx: 7, ry: 4, fill: 'var(--dg-body)', transform: 'rotate(-25 22 58)' }),
+          h('circle', { className: 'dg-ring', cx: 64, cy: 64, r: 60, fill: 'none', stroke: 'transparent', strokeWidth: 3 }),
+          h('g', { className: 'dg-tail' },
+            h('path', { d: 'M86 96 C104 88 118 98 120 112 C108 108 98 112 92 118 C94 108 90 100 86 96Z', fill: 'url(#dgHair)' }),
+            h('path', { d: 'M92 118 C96 122 102 124 108 122 C100 118 96 114 92 118Z', fill: '#60A5FA' }),
           ),
-          h(
-            'g',
-            { className: 'dg-arm-r' },
-            h('ellipse', { cx: 74, cy: 58, rx: 7, ry: 4, fill: 'var(--dg-body)', transform: 'rotate(25 74 58)' }),
+          h('path', { d: 'M46 78 C42 92 40 108 44 118 L84 118 C88 108 86 92 82 78 C72 74 56 74 46 78Z', fill: 'url(#dgHoodie)' }),
+          h('path', { d: 'M48 78 C58 84 70 84 80 78 L78 88 C68 92 58 92 50 88Z', fill: '#312E81', opacity: 0.55 }),
+          h('circle', { cx: 64, cy: 96, r: 7, fill: '#EFF6FF', opacity: 0.92 }),
+          h('path', { d: 'M58 96 C60 93 68 93 70 96', stroke: '#93C5FD', strokeWidth: 1.6, strokeLinecap: 'round', fill: 'none' }),
+          h('g', { className: 'dg-arm-l' },
+            h('ellipse', { cx: 42, cy: 98, rx: 8, ry: 5.5, fill: 'url(#dgHoodie)', transform: 'rotate(-28 42 98)' }),
+            h('ellipse', { cx: 36, cy: 100, rx: 4.2, ry: 3.4, fill: 'url(#dgSkin)', transform: 'rotate(-20 36 100)' }),
           ),
+          h('g', { className: 'dg-arm-r' },
+            h('ellipse', { cx: 86, cy: 98, rx: 8, ry: 5.5, fill: 'url(#dgHoodie)', transform: 'rotate(28 86 98)' }),
+            h('ellipse', { cx: 92, cy: 100, rx: 4.2, ry: 3.4, fill: 'url(#dgSkin)', transform: 'rotate(20 92 100)' }),
+          ),
+          h('ellipse', { cx: 64, cy: 52, rx: 28, ry: 30, fill: 'url(#dgSkin)' }),
+          h('path', { d: 'M36 48 C34 22 52 10 64 10 C76 10 94 22 92 48 C90 34 78 26 64 26 C50 26 38 34 36 48Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M36 46 C28 58 30 78 38 86 C34 68 34 56 38 48Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M92 46 C100 58 98 78 90 86 C94 68 94 56 90 48Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M40 42 C46 28 58 24 64 24 C70 24 82 28 88 42 C80 34 72 32 64 32 C56 32 48 34 40 42Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M34 34 C22 28 18 14 28 10 C32 18 34 26 38 32Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M94 34 C106 28 110 14 100 10 C96 18 94 26 90 32Z', fill: 'url(#dgHair)' }),
+          h('path', { d: 'M64 12 C66 2 76 0 78 8 C72 6 68 10 66 16', stroke: 'url(#dgHair)', strokeWidth: 4, strokeLinecap: 'round', fill: 'none' }),
+          h('ellipse', { cx: 48, cy: 62, rx: 6, ry: 3.2, fill: '#FF8FAB', opacity: 0.45 }),
+          h('ellipse', { cx: 80, cy: 62, rx: 6, ry: 3.2, fill: '#FF8FAB', opacity: 0.45 }),
           h(
             'g',
             { className: 'dg-eye-pair' },
             sleeping
               ? [
-                h('path', { key: 'l', d: 'M30 44 H42', stroke: 'var(--dg-pupil)', strokeWidth: 2, strokeLinecap: 'round', fill: 'none' }),
-                h('path', { key: 'r', d: 'M54 44 H66', stroke: 'var(--dg-pupil)', strokeWidth: 2, strokeLinecap: 'round', fill: 'none' }),
+                h('path', { key: 'l', d: 'M44 52 H60', stroke: '#1E3A8A', strokeWidth: 2.4, strokeLinecap: 'round', fill: 'none' }),
+                h('path', { key: 'r', d: 'M68 52 H84', stroke: '#1E3A8A', strokeWidth: 2.4, strokeLinecap: 'round', fill: 'none' }),
               ]
               : [
-                h('circle', { key: 'lw', cx: 36, cy: eyeY, r: 7, fill: 'var(--dg-eye)' }),
-                h('circle', { key: 'rw', cx: 60, cy: eyeY, r: 7, fill: 'var(--dg-eye)' }),
-                h('circle', {
-                  key: 'lp',
-                  className: 'dg-pupil',
-                  cx: 36,
-                  cy: eyeY,
-                  r: 3.2,
-                  fill: 'var(--dg-pupil)',
-                  style: { transform: `translate(${pupil.x}px, ${pupil.y}px)` },
-                }),
-                h('circle', {
-                  key: 'rp',
-                  className: 'dg-pupil',
-                  cx: 60,
-                  cy: eyeY,
-                  r: 3.2,
-                  fill: 'var(--dg-pupil)',
-                  style: { transform: `translate(${pupil.x}px, ${pupil.y}px)` },
-                }),
+                h('ellipse', { key: 'lw', cx: 52, cy: 52, rx: 8.5, ry: 9.5, fill: '#fff' }),
+                h('ellipse', { key: 'rw', cx: 76, cy: 52, rx: 8.5, ry: 9.5, fill: '#fff' }),
+                h('g', { key: 'lg', className: 'dg-gaze', style: gaze },
+                  h('ellipse', { cx: 52.5, cy: 53, rx: 5.2, ry: 6, fill: 'url(#dgIris)' }),
+                  h('circle', { cx: 52.5, cy: 53.5, r: 2.6, fill: '#0F172A' }),
+                  h('circle', { cx: 50.2, cy: 50.2, r: 1.7, fill: '#fff' }),
+                  h('circle', { cx: 54.8, cy: 55.5, r: 0.9, fill: '#fff', opacity: 0.85 }),
+                ),
+                h('g', { key: 'rg', className: 'dg-gaze', style: gaze },
+                  h('ellipse', { cx: 76.5, cy: 53, rx: 5.2, ry: 6, fill: 'url(#dgIris)' }),
+                  h('circle', { cx: 76.5, cy: 53.5, r: 2.6, fill: '#0F172A' }),
+                  h('circle', { cx: 74.2, cy: 50.2, r: 1.7, fill: '#fff' }),
+                  h('circle', { cx: 78.8, cy: 55.5, r: 0.9, fill: '#fff', opacity: 0.85 }),
+                ),
               ],
           ),
-          h('path', { d: mouth, stroke: 'var(--dg-pupil)', strokeWidth: 2, strokeLinecap: 'round', fill: 'none', opacity: 0.75 }),
+          h('path', { d: 'M44 42 C48 40 52 40 56 42', stroke: '#1E3A8A', strokeWidth: 1.6, strokeLinecap: 'round', fill: 'none', opacity: 0.55 }),
+          h('path', { d: 'M72 42 C76 40 80 40 84 42', stroke: '#1E3A8A', strokeWidth: 1.6, strokeLinecap: 'round', fill: 'none', opacity: 0.55 }),
+          h('path', { d: mouth, stroke: '#E11D48', strokeWidth: 2, strokeLinecap: 'round', fill: 'none' }),
           state === 'thinking'
-            ? h(
-              'g',
-              { className: 'dg-fx' },
-              h('circle', { cx: 72, cy: 22, r: 2.2, fill: 'var(--dg-muted)' }),
-              h('circle', { cx: 78, cy: 16, r: 2.8, fill: 'var(--dg-muted)' }),
-              h('circle', { cx: 85, cy: 12, r: 3.2, fill: 'var(--dg-muted)' }),
+            ? h('g', { className: 'dg-fx' },
+              h('circle', { cx: 100, cy: 28, r: 2.4, fill: '#93C5FD' }),
+              h('circle', { cx: 108, cy: 20, r: 3.1, fill: '#60A5FA' }),
+              h('circle', { cx: 118, cy: 14, r: 3.6, fill: '#3B82F6' }),
             )
             : null,
           state === 'alarmed'
-            ? h(
-              'g',
-              { className: 'dg-fx', stroke: 'var(--dg-danger)', strokeWidth: 2, strokeLinecap: 'round' },
-              h('path', { d: 'M20 18 L16 10' }),
-              h('path', { d: 'M28 14 L28 6' }),
-              h('path', { d: 'M36 18 L40 10' }),
+            ? h('g', { className: 'dg-fx', stroke: '#E25555', strokeWidth: 2.2, strokeLinecap: 'round' },
+              h('path', { d: 'M30 22 L24 12' }),
+              h('path', { d: 'M40 16 L40 6' }),
+              h('path', { d: 'M50 22 L56 12' }),
             )
             : null,
-          sleeping
-            ? h('text', { className: 'dg-zzz', x: 70, y: 24 }, 'z')
-            : null,
+          sleeping ? h('text', { className: 'dg-zzz', x: 96, y: 28 }, 'z') : null,
         ),
       )
     }
@@ -413,10 +430,10 @@ window.__ModuleLoader__.load({
           const dx = e.clientX - cx
           const dy = e.clientY - cy
           const len = Math.hypot(dx, dy) || 1
-          const max = 2.4
+          const max = 2.8
           setPupil({
-            x: (dx / len) * Math.min(max, len / 80),
-            y: (dy / len) * Math.min(max, len / 80),
+            x: (dx / len) * Math.min(max, len / 70),
+            y: (dy / len) * Math.min(max, len / 70),
           })
         }
         window.addEventListener('pointermove', onMove, { passive: true })
@@ -546,7 +563,7 @@ window.__ModuleLoader__.load({
           )
           : null,
         h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小瞥，${stateLabel(petState)}` },
-          h(WhaleSvg, { state: petState, pupil, blinking }),
+          h(PetSvg, { state: petState, pupil, blinking }),
         ),
       )
     }

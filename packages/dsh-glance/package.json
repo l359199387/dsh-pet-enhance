@@ -11,6 +11,7 @@
   "files": [
     "src",
     "sidecar",
+    "assets",
     "client.js",
     "cordis.patch.yml",
     "dsh.plugin.json",
