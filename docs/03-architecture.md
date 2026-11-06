@@ -4,21 +4,21 @@
 
 ```
 ┌──────────────────────── 浏览器（DSH 页面同源） ────────────────────────┐
-│  Client 半  dsh-glance/client.js                                      │
+│  Client 半  dsh-pet-enhance/client.js                                      │
 │   ├─ shell.overlay：宠物（SVG）+ 气泡 + 输入框 + ⏹急停                │
 │   ├─ settings.section：档位 / 宠物大小 / 动作开关 / 隐私规则           │
-│   └─ fetch('/api/glance/…')  ← 同源 + 一次性令牌                       │
+│   └─ fetch('/api/pet-enhance/…')  ← 同源 + 一次性令牌                       │
 └──────────────────────────────┬────────────────────────────────────────┘
                                │ loopback HTTP
 ┌──────────────────────────────▼────────────────────────────────────────┐
-│  Host 半  dsh-glance/index.js                                         │
+│  Host 半  dsh-pet-enhance/index.js                                         │
 │   ├─ ctx.tools.register(glance)  看                                    │
 │   ├─ ctx.tools.register(act)     动（重权限，默认关闭）                │
 │   ├─ ctx.tools.register(pet)     演 / 问                               │
 │   ├─ ctx.tools.register(remember/recall)  记 / 想（见 09）             │
 │   ├─ 策略引擎 policy.js：分级、白名单、两步确认、急停、审计            │
 │   ├─ memory/：profile + episodes + skills 索引（见 09）                │
-│   ├─ ctx.webServer.register(…)   /api/glance/*                         │
+│   ├─ ctx.webServer.register(…)   /api/pet-enhance/*                         │
 │   ├─ ctx.attachments.saveImage   PNG → ImageBlock                      │
 │   └─ 子进程管理：sidecar 生命周期、重启退避、退出清理                  │
 └──────────────────────────────┬────────────────────────────────────────┘
@@ -231,7 +231,7 @@ recall 调用
 
 ## 6. HTTP 路由
 
-前缀 `/api/glance`，全部要令牌（`x-glance-token`），`Origin` 必须是同源或空。
+前缀 `/api/pet-enhance`，全部要令牌（`x-pet-enhance-token`），`Origin` 必须是同源或空。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -288,7 +288,7 @@ recall 调用
 ```
 firstwork/
 ├── docs/
-├── packages/dsh-glance/
+├── packages/dsh-pet-enhance/
 │   ├── package.json
 │   ├── cordis.patch.yml
 │   ├── index.js               # Host 半
@@ -321,7 +321,7 @@ firstwork/
 **记忆相关的文件不在插件目录里**（它们是用户数据，不是代码）：
 
 ```
-~/.dsh/glance/
+~/.dsh/pet-enhance/
 ├── profile.md            # 事实与偏好，≤2 KB，进宠物系统提示
 ├── episodes/2026-11.jsonl
 ├── index.sqlite          # 派生索引，可删
@@ -334,7 +334,7 @@ firstwork/
 
 ```json
 {
-  "name": "dsh-glance",
+  "name": "dsh-pet-enhance",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -393,8 +393,8 @@ agent.followup({
 
 ```js
 const token = globalThis.__DSH_GLANCE_TOKEN__ ?? ''
-const res = await fetch('/api/glance/thumb?w=320', {
-  headers: token ? { 'x-glance-token': token } : {},
+const res = await fetch('/api/pet-enhance/thumb?w=320', {
+  headers: token ? { 'x-pet-enhance-token': token } : {},
   cache: 'no-store',
 })
 ```

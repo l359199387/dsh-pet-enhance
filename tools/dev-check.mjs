@@ -23,7 +23,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const PKG = join(ROOT, 'packages', 'dsh-glance')
+const PKG = join(ROOT, 'packages', 'dsh-pet-enhance')
 const QUIET = process.argv.includes('--quiet')
 
 const PYTHON = process.env.DSH_PYTHON

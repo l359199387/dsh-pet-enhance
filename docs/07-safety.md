@@ -70,7 +70,7 @@
 
 | 通道 | 实现 | 谁触发 |
 |---|---|---|
-| 宠物上的「⏹」 | `POST /api/glance/stop` | 用户 |
+| 宠物上的「⏹」 | `POST /api/pet-enhance/stop` | 用户 |
 | 光标甩到左上角 `(0,0)` | sidecar 每次动作前检查 | 用户（PyAutoGUI failsafe 思路） |
 | 会话取消（停止按钮 / Esc） | `exec.signal` 被 abort | 用户 |
 
@@ -149,7 +149,7 @@
 
 ## 12. 审计
 
-`~/.dsh/glance/actions.jsonl`，一行一条：
+`~/.dsh/pet-enhance/actions.jsonl`，一行一条：
 
 ```json
 {"at":"2026-11-06T20:41:12.331+08:00","tool":"act","action":"click",

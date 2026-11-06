@@ -82,7 +82,7 @@
 人格参与两处：
 
 1. **`pet` 工具的 `say`**：告诉模型「用这个口吻说话」。
-2. **聊天（`/api/glance/chat`）**：拼进系统提示。
+2. **聊天（`/api/pet-enhance/chat`）**：拼进系统提示。
 
 **人格不能覆盖安全规则**（`docs/07-safety.md`）。人格是「怎么说」，安全是「能不能做」，后者永远优先。
 
@@ -126,19 +126,19 @@
   - 网页：双击发裸 `L` / 备援钮 `Ctrl+Shift+L`。
   - 桌面独立窗：Host 启动时给已装 dsh-pet 的 Helper 打幂等 `dblclick → showChatFromMenu` 补丁，并 `POST /reload`；升级 dsh-pet 后重启宿主会再打一次。
 - Host 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` **本地分流（默认 0 token，不叫醒主会话）**；「学会了吗」对照 playbook 冒泡回答。禁止把分流提示 followup 进带工具会话（会误 click）。仅 `DSH_GLANCE_CLASSIFY=wake` 才允许旧危险路径。分发：
+- **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` **本地分流（默认 0 token，不叫醒主会话）**；「学会了吗」对照 playbook 冒泡回答。禁止把分流提示 followup 进带工具会话（会误 click）。仅 `DSH_PET_ENHANCE_CLASSIFY=wake` 才允许旧危险路径。分发：
   - `glance` → `chat-bridge` 抓帧附图让宠物开口。
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
-- **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/glance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
-- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 教学中头顶常驻可点 **「我教完了」**（`/api/glance/teach-end`）→ 点击/滑轮附近截图作证据 → 理解阶段要 **OK+FAST 快捷路径**（不鼓励机械复刻）并 **主动多问几句**（目的/变通/以达成目的为准）→ learned↔automations（`strategy.approach=smart`）。**未明说每周几/几点/每隔… → 不向 Harness `schedule.create`、不定时不开启**；只有明确时刻才登记运行时间。用户再说「去看看B站 / 继续刷…」时：匹配学习目标关键词、**每轮重置动作预算**、有学习理解则优先叫醒变通（不盲打 `bilibli1` 这类地址栏脏输入）；「再做一次」才回落最近一对。**学完关实时看屏幕**；教完不自动动手。
-- **侧栏「我学会的」**（`sidebar.panellist` + `main` key=`glance-learned`）：卡片格子 + 序号 + 标题模糊搜索；展示**学习理解**与**执行记录**（跑自动化时写入 `learned/<id>/runs.json`）。每条记录可评「好/一般/差」并写评语，`POST /api/glance/learned/:id/runs/:runId/rate` 叫醒模型改正理解。编辑弹窗可改目标 / 填**补充**（保存后并入理解并清空）；删除弹窗二次确认，联动清 `learned`+`automations`+skill，若有 `scheduleId` 则 `schedule.delete`。
-- 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
-- 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
+- **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/pet-enhance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
+- **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/pet-enhance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
+- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 教学中头顶常驻可点 **「我教完了」**（`/api/pet-enhance/teach-end`）→ 点击/滑轮附近截图作证据 → 理解阶段要 **OK+FAST 快捷路径**（不鼓励机械复刻）并 **主动多问几句**（目的/变通/以达成目的为准）→ learned↔automations（`strategy.approach=smart`）。**未明说每周几/几点/每隔… → 不向 Harness `schedule.create`、不定时不开启**；只有明确时刻才登记运行时间。用户再说「去看看B站 / 继续刷…」时：匹配学习目标关键词、**每轮重置动作预算**、有学习理解则优先叫醒变通（不盲打 `bilibli1` 这类地址栏脏输入）；「再做一次」才回落最近一对。**学完关实时看屏幕**；教完不自动动手。
+- **侧栏「我学会的」**（`sidebar.panellist` + `main` key=`pet-enhance-learned`）：卡片格子 + 序号 + 标题模糊搜索；展示**学习理解**与**执行记录**（跑自动化时写入 `learned/<id>/runs.json`）。每条记录可评「好/一般/差」并写评语，`POST /api/pet-enhance/learned/:id/runs/:runId/rate` 叫醒模型改正理解。编辑弹窗可改目标 / 填**补充**（保存后并入理解并清空）；删除弹窗二次确认，联动清 `learned`+`automations`+skill，若有 `scheduleId` 则 `schedule.delete`。
+- 每次看屏追加 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
+- 右键「更多」挂三项（状态写入 `~/.dsh/pet-enhance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。
   - **允许动手 · 开/关**：对应 `actEnabled`；关则 `act` 拒绝真动手。
   - **小蓝鲸急停**。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
-我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。
+我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `petEnhance`（尚未挂）。

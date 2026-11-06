@@ -11,7 +11,7 @@
 | 看屏 | Host `chat-bridge` 侦测意图 → 抓帧 → `POST /chat` 附图 → 宠物开口 |
 | 干活 | Host `agent-bridge` 粗筛干活话 → 叫醒主会话 Agent（`glance`/`act`）→ 回合结束回灌气泡 |
 | 人格 | 附图 / 交办 follow-up 注入 `src/persona.js`；不改写用户 `whisperPrompt` |
-| 长期看屏痕迹 | `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图字节） |
+| 长期看屏痕迹 | `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无图字节） |
 
 未装 dsh-pet 时才考虑下面的独立会话方案。
 
@@ -34,7 +34,7 @@
 
 ```
 用户在宠物输入框打字
-   │ POST /api/glance/chat {text, attachment?}
+   │ POST /api/pet-enhance/chat {text, attachment?}
    ▼
 Host：附件落 attachments（若是图片）
    ▼
@@ -59,7 +59,7 @@ Client 轮询 /state，气泡更新
 
 | | 会话记忆（本节） | 长期记忆（09） |
 |---|---|---|
-| 存哪 | 会话日志 | `~/.dsh/glance/` 与 `~/.dsh/skills/` |
+| 存哪 | 会话日志 | `~/.dsh/pet-enhance/` 与 `~/.dsh/skills/` |
 | 活多久 | 会话结束就进历史，不再自动带上 | 永久，直到用户删 |
 | 带什么 | 最近 8 轮的原文 | 提炼后的事实、轨迹、技能 |
 | 怎么进上下文 | 自动 | 事实常驻 / 技能按需加载 / 轨迹检索 |
@@ -121,7 +121,7 @@ Client 轮询 /state，气泡更新
 
 ```
 按住麦克风 → MediaRecorder 录 webm/opus
-   → POST /api/glance/voice/hear (base64)
+   → POST /api/pet-enhance/voice/hear (base64)
    → Host: ctx.get('speechToText')?.transcribe(...)
    → 文字填入输入框（不自动发送）
 ```
@@ -140,12 +140,12 @@ Client 轮询 /state，气泡更新
 
 ## 3. 对外接口（给其他插件用）
 
-Host 侧服务名 `glancePet`（**不叫** `petApi7340`，避免和 dsh-pet 冲突）：
+Host 侧服务名 `petEnhance`（**不叫** `petApi7340`，避免和 dsh-pet 冲突）：
 
 ```js
-ctx.get('glancePet')?.say({ text, anim? })
-ctx.get('glancePet')?.ask({ question, options })   // Promise<boolean>
-ctx.get('glancePet')?.state()
+ctx.get('petEnhance')?.say({ text, anim? })
+ctx.get('petEnhance')?.ask({ question, options })   // Promise<boolean>
+ctx.get('petEnhance')?.state()
 ```
 
 - 只暴露「说 / 问 / 读状态」，**不暴露「动」**。别的插件不能借宠物之手点鼠标。

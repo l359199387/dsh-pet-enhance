@@ -1,0 +1,38 @@
+{
+  "name": "dsh-pet-enhance",
+  "version": "0.3.0",
+  "description": "dsh-pet-enhance：给 dsh-pet 增强看屏、教学与授权动手能力（小蓝鲸）。",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "src",
+    "sidecar",
+    "assets",
+    "client.js",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node ../../tools/dev-check.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
+    }
+  },
+  "license": "Apache-2.0",
+  "private": true
+}

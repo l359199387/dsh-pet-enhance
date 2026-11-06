@@ -59,7 +59,7 @@
 
 - Host `chat-bridge`：轮询 `GET /chat`（近 8 轮）→ 看屏意图 → 抓帧 → `POST /chat?surface=any` 附图 → 宠物开口
 - 附图 follow-up 注入小蓝鲸人格（身份 / 口吻 / 安全）；**不改写**用户的 `whisperPrompt`
-- 看屏情景写入 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无截图字节；敏感窗标题整条跳过）
+- 看屏情景写入 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无截图字节；敏感窗标题整条跳过）
 - 未装 dsh-pet 时仍可用内置 SVG 面板作降级（真 Agent 会话留到后续）
 
 **验收**
@@ -90,9 +90,9 @@
 ### C2 · 策略、两步确认、审计
 
 - `policy.js`：L0–L3 分级、窗口黑名单、每轮动作预算、坐标校验
-- 两步确认：`pet` 气泡按钮（`/api/glance/confirm`），60s 超时视为拒绝
-- `audit.js`：`~/.dsh/glance/actions.jsonl`（参数、结果、耗时、截图哈希）
-- `POST /api/glance/stop`：abort + 取消当前 turn
+- 两步确认：`pet` 气泡按钮（`/api/pet-enhance/confirm`），60s 超时视为拒绝
+- `audit.js`：`~/.dsh/pet-enhance/actions.jsonl`（参数、结果、耗时、截图哈希）
+- `POST /api/pet-enhance/stop`：abort + 取消当前 turn
 - 动作后**本地验证**：画面变化分低于阈值 → 结果里标「可能没生效」
 
 **验收**
@@ -139,7 +139,7 @@
 ## 阶段 E · 语音、桌面壳与打包
 
 - 语音合成：`speechSynthesis`（浏览器内置，零依赖），可替换
-- 语音识别：`MediaRecorder` → `POST /api/glance/voice/hear` → 宿主 `speechToText`（可选服务，缺失则隐藏麦克风）
+- 语音识别：`MediaRecorder` → `POST /api/pet-enhance/voice/hear` → 宿主 `speechToText`（可选服务，缺失则隐藏麦克风）
 - 桌面壳（可选）：Electron 透明置顶窗，让宠物浮在 DSH 之外
 - 宠物包格式（webp/webm）
 - 打包、locale 中英、M5 式热插拔验收

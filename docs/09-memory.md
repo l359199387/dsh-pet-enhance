@@ -89,7 +89,7 @@ episode 是**只追加的日志**：一天几十到几百条，永不修改。
 ## 5. 目录布局
 
 ```
-~/.dsh/glance/                  ← 宠物自己的数据，DSH 不扫描
+~/.dsh/pet-enhance/                  ← 宠物自己的数据，DSH 不扫描
 ├── profile.md                 L1 · 事实与偏好（人可读，≤2 KB，直接进系统提示）
 ├── episodes/
 │   ├── 2026-11.jsonl          L2 · 按月分片的执行轨迹（append-only）
@@ -97,7 +97,7 @@ episode 是**只追加的日志**：一天几十到几百条，永不修改。
 ├── index.sqlite               派生索引（可删，自动重建）
 ├── actions.jsonl              已有：动作审计（07 §12），与记忆**不混用**
 ├── memory.jsonl               记忆审计：谁在什么时候写了/删了什么
-└── 写失败落 ~/.dsh/glance-error.log（硬约束 6；行首带 `[memory]`）
+└── 写失败落 ~/.dsh/pet-enhance-error.log（硬约束 6；行首带 `[memory]`）
 
 ~/.dsh/skills/                 ← DSH 的扫描根（rank 400），热重载
 ├── note-to-desktop/
@@ -110,7 +110,7 @@ episode 是**只追加的日志**：一天几十到几百条，永不修改。
 
 三条布局纪律：
 
-1. **技能落在 `~/.dsh/skills/`，不是 `~/.dsh/glance/skills/`。** 只有前者是 DSH 的扫描根；放后者等于自己实现一遍发现与监视。
+1. **技能落在 `~/.dsh/skills/`，不是 `~/.dsh/pet-enhance/skills/`。** 只有前者是 DSH 的扫描根；放后者等于自己实现一遍发现与监视。
 2. **`actions.jsonl` 与 `episodes/` 分开。** 前者是给用户看的动作流水（含坐标），后者是给模型看的任务轨迹（不含坐标细节）。
 3. **`profile.md` 与 `AGENTS.md` 分开。** 不往用户的全局 `AGENTS.md` 里写东西——它会进所有编码会话，宠物不该污染那里。
 
@@ -335,7 +335,7 @@ function bigrams(text) {
 | 写 / 改 toolpack 脚本 | **L3** | 逐次确认 + 展示脚本全文 + 说明它会执行什么 |
 | 删除任何记忆 | **L3** | 逐次确认，且默认移到 `.trash/` 而不是删 |
 
-**L2 的「提交」标记怎么落**：确认界面是 Host 渲染的宠物气泡（复用 `pet({ask})` 的按钮通道），点「好」→ Host 收到 `/api/glance/confirm` → **Host 自己**写入。模型只收到「已写入」的结果，全程接触不到「把确认改成 true」的开关。
+**L2 的「提交」标记怎么落**：确认界面是 Host 渲染的宠物气泡（复用 `pet({ask})` 的按钮通道），点「好」→ Host 收到 `/api/pet-enhance/confirm` → **Host 自己**写入。模型只收到「已写入」的结果，全程接触不到「把确认改成 true」的开关。
 
 **模型不能自证已确认**（硬约束 9 的同一条）。
 

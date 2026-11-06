@@ -2,6 +2,14 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
+## 0.3.0 · 未发布
+
+### 插件改名 dsh-pet-enhance
+
+- 包名 / 插件 id / API 前缀改为 `dsh-pet-enhance`（`/api/pet-enhance`）。
+- 数据目录改为 `~/.dsh/pet-enhance/`；若仅有旧 `~/.dsh/glance` 会尝试一次性迁移。
+- 旧环境变量 `DSH_GLANCE_*` 仍作兼容别名。看屏工具名仍为 `glance`。
+
 ## 0.0.8 · 未发布
 
 ### 桌面独立窗单击开对话
@@ -35,7 +43,7 @@
 - sidecar `input`：move / click / double_click / right_click / drag / scroll / type / key / focus / wait / screen；`hello.input=true`。
 - 中文 `type` 走剪贴板粘贴并尽量恢复；组合键 `key`（如 `ctrl+s`）。
 - failsafe：动作前光标在左上角 ≤2px → `FAILSAFE`，不重试；`abort` op 可打断进行中的 input。
-- 工具 `act` 已注册，**默认关闭**（`settings.actEnabled` 或 `DSH_GLANCE_ACT=1`）；急停会 `panic` + `sidecar.abort()`。
+- 工具 `act` 已注册，**默认关闭**（`settings.actEnabled` 或 `DSH_PET_ENHANCE_ACT=1`）；急停会 `panic` + `sidecar.abort()`。
 - dsh-pet「更多」增加 **允许动手 · 开/关**（与 settings 同步，点一下翻转）。
 - `/status` 的 `stage` 为 `C1`；版本 `0.0.5`。
 
@@ -53,7 +61,7 @@
 ### B2 · 接到 dsh-pet 的聊天与看屏记忆
 
 - 看屏闭环：L 对话意图 → 抓屏附图 → dsh-pet 开口；失败气泡说明原因。
-- 会话记忆继续用 dsh-pet（近 8 轮）；小蓝鲸只把看屏情景追加到 `~/.dsh/glance/episodes/YYYY-MM.jsonl`。
+- 会话记忆继续用 dsh-pet（近 8 轮）；小蓝鲸只把看屏情景追加到 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`。
 - 附图对话注入小蓝鲸人格片段（不改写 dsh-pet 的 `whisperPrompt`）；启动时冒泡一次接入提示。
 - `/status` 的 `stage` 改为 `B2`；版本 `0.0.4`。
 
@@ -76,8 +84,8 @@
 ### 宠物出现（B1）
 
 - 浏览器半 `client.js`：挂到 `shell.overlay`，右下角出现可拖的 SVG 小鲸鱼（呼吸 / 眨眼 / 眼珠随光标）。
-- 位置写入 `localStorage`（`dsh-glance.pos`），刷新后还在；颜色走 `--dsw-alias-*`，深色模式不用硬编码底。
-- 点击弹出输入框 + ⏹ 急停（打 `POST /api/glance/stop`，宠物进 `alarmed` 三秒）；真聊天仍是 B2。
+- 位置写入 `localStorage`（`dsh-pet-enhance.pos`），刷新后还在；颜色走 `--dsw-alias-*`，深色模式不用硬编码底。
+- 点击弹出输入框 + ⏹ 急停（打 `POST /api/pet-enhance/stop`，宠物进 `alarmed` 三秒）；真聊天仍是 B2。
 - Host 新增 `GET /state`（活动窗口 + 宠物叶子）、`POST /pet`（idle/sleeping/alarmed）；`glance` 抓屏时宠物进 `looking`。
 - `/status` 的 `stage` 改为 `B1`。
 
@@ -89,7 +97,7 @@
 - 新增常驻 Python sidecar（`sidecar/glance.py`）：`hello` / `capture` / `windows` / `thumb` / `quit` / `stats`；JSON Lines + UTF-8；抓屏与后续输入共享同一 DPI 进程。
 - Host 侧 `src/sidecar.js`：握手 5s、退出后指数退避重建（1→30s）、连续 5 次失败停手；卸载时 `quit` + 硬杀，不留孤儿进程。
 - 整屏在 sidecar 不可用时仍退回 PowerShell（A1 路径）；单窗口 / 区域没有这条退路，会明确报 sidecar 不可用。
-- `/api/glance/status` 的 `stage` 改为 `A2`，并带上 `sidecar.alive/pid/hello`。
+- `/api/pet-enhance/status` 的 `stage` 改为 `A2`，并带上 `sidecar.alive/pid/hello`。
 - `input` 在 A2 直接 `INPUT_BLOCKED`（动手是 C1）。
 
 ## 0.0.1 · 未发布
@@ -105,8 +113,8 @@
 
 ### 骨架与开发流程
 
-- `GET /api/glance/status` 返回 `{ok, name, version, stage, home, uptimeMs, tools}`；装没装、工具挂没挂，一条请求就能看出来。
+- `GET /api/pet-enhance/status` 返回 `{ok, name, version, stage, home, uptimeMs, tools}`；装没装、工具挂没挂，一条请求就能看出来。
 - 插件卸载后路由与工具都会被摘掉；`/status` 里 `tools` 随之清空。
 - 新增 `tools/dev-check.mjs`：一条命令跑完「文件齐全 / 清单一致 / `node --check` / Python 编译 / 单测 / 无 `console.log` / 不 import 宿主包」。
-- `/api/glance/status` 需要宿主签发的 cookie：外部浏览器直接打开会得到 401，这是正常的（`/api` 前缀有鉴权门），验证要走应用内或新会话。
+- `/api/pet-enhance/status` 需要宿主签发的 cookie：外部浏览器直接打开会得到 401，这是正常的（`/api` 前缀有鉴权门），验证要走应用内或新会话。
 - 新增 `docs/10-dev-process.md`：一个切片的八步循环、A1–F4 阶段闸门、故障排查顺序、回滚清单。

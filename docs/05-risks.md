@@ -4,7 +4,7 @@
 
 | # | 风险 | 触发条件 | 影响 | 应对 |
 |---|---|---|---|---|
-| R1 | **桌面宿主拦截同源路由** | 实测 `/api/glance/thumb` 返回 403 | 卡片拿不到缩略图 | 降级：sidecar 自监听 `127.0.0.1:<random>`，卡片直连该端口 + 令牌（照 tts-bridge 的 `local-gate`）；令牌经 `tapIndex` 下发 |
+| R1 | **桌面宿主拦截同源路由** | 实测 `/api/pet-enhance/thumb` 返回 403 | 卡片拿不到缩略图 | 降级：sidecar 自监听 `127.0.0.1:<random>`，卡片直连该端口 + 令牌（照 tts-bridge 的 `local-gate`）；令牌经 `tapIndex` 下发 |
 | R2 | Python 运行时缺失或被升级移除 | 用户重装 DSH / 换机器 | 抓屏失效 | 三级降级：Pillow → 自带 Python 的 ctypes → PowerShell；每级结果里明说「已降级」 |
 | R3 | `PrintWindow` 对某些窗口返回黑图 | 硬件加速渲染的窗口（部分游戏、WPF） | 单窗口抓到全黑 | 检测：缩略图灰度极差 < 8 且全图近黑时，判「抓不到该窗口」，退整屏并说明；不静默返回黑图 |
 | R4 | DPI 缩放导致坐标偏移 | 系统缩放 ≠ 100% | 框选位置错 | 强制 `SetProcessDPIAware()`；画布坐标用 `DWMWA_EXTENDED_FRAME_BOUNDS`；框选换算用 sidecar 报告的实际屏幕尺寸 |
@@ -21,7 +21,7 @@
 | R15 | **急停失效** | sidecar 卡在阻塞调用；动作队列已排空但仍在执行 | 用户叫停无效 | 三个独立通道（HTTP stop / 光标 (0,0) / signal abort）；sidecar 每步之间必查 abort 标志；动作之间有上限等待（07 §5） |
 | R16 | 宠物会话成本失控 | 宠物一边看一边操作，截图堆在独立会话 | 费用高 | 独立会话 + 图片≤2/轮 + 工具调用≤12/轮 + 记忆 8 轮；卡片显示累计出图数（08 §1.6） |
 | R17 | 宠物权限过宽 | 沿用编码会话的完整工具集 | 借宠物绕开审批 | 宠物 Agent 用 `ctx.tools.restrict` 收窄：`subagent`/`workflow` 禁用，命令走宿主沙箱（07 §11） |
-| R18 | 与 dsh-pet 冲突 | 两只宠物同时说话、HTTP 前缀撞车 | 抢状态、互相覆盖 | 不注册 `petApi7340`；自己的服务名 `glancePet`；设置里选「谁说话」；检测到 dsh-pet 时默认让位（08 §3） |
+| R18 | 与 dsh-pet 冲突 | 两只宠物同时说话、HTTP 前缀撞车 | 抢状态、互相覆盖 | 不注册 `petApi7340`；自己的服务名 `petEnhance`；设置里选「谁说话」；检测到 dsh-pet 时默认让位（08 §3） |
 | R19 | 语音误识别触发动作 | ASR 把「保存」听成「删除」 | 不可逆动作 | 语音只填输入框不自动发送（08 §2.3）；语音与文字同等过安全层 |
 | R20 | 审计文件成隐私负担 | 长期记录动作参数 | 泄露操作习惯 | 只记参数/结果/坐标，不记画面；最近 100 条可查、可一键清空；默认开启但可在设置关闭（07 §12） |
 | R21 | 浮层挡住 DSH 交互 | 宠物卡片压住输入框/按钮 | 用户点不到 | 卡片默认可拖、可收起；`pointer-events` 只在实际元素上；不覆盖输入框区域（02 §2） |
@@ -93,12 +93,12 @@
 | 交给模型的图 | 宿主 `attachments` 存储（与用户上传图片同等待遇） | 随会话历史 |
 | 缩略图（JPEG） | 仅内存，经 HTTP 给页面 | 一帧 |
 | 窗口标题列表 | 仅内存 + `status` 输出 | 一次调用 |
-| 配置 `glance.json` | `~/.dsh/glance.json` | 持久（不含任何图像） |
-| 动作审计 `actions.jsonl` | `~/.dsh/glance/actions.jsonl` | 最近 100 条，可清空；**不含图像** |
-| 记忆 `profile.md` | `~/.dsh/glance/profile.md` | 持久；用户可读可改，设置页可一键清空 |
-| 任务轨迹 `episodes/*.jsonl` | `~/.dsh/glance/episodes/` | 持久；**不含截图、不含剪贴板正文、不含文件内容**；黑名单窗口的任务整条不记 |
+| 配置 `glance.json` | `~/.dsh/pet-enhance.json` | 持久（不含任何图像） |
+| 动作审计 `actions.jsonl` | `~/.dsh/pet-enhance/actions.jsonl` | 最近 100 条，可清空；**不含图像** |
+| 记忆 `profile.md` | `~/.dsh/pet-enhance/profile.md` | 持久；用户可读可改，设置页可一键清空 |
+| 任务轨迹 `episodes/*.jsonl` | `~/.dsh/pet-enhance/episodes/` | 持久；**不含截图、不含剪贴板正文、不含文件内容**；黑名单窗口的任务整条不记 |
 | 技能 `SKILL.md` | `~/.dsh/skills/<name>/` | 持久；人可读可 diff 可 git；旧版在 `.history/` |
-| 索引 `index.sqlite` | `~/.dsh/glance/index.sqlite` | 派生品，可随时删；内容与 episode/技能同源 |
+| 索引 `index.sqlite` | `~/.dsh/pet-enhance/index.sqlite` | 派生品，可随时删；内容与 episode/技能同源 |
 | 语音 | 仅内存（base64 → 识别 → 丢弃） | 一次请求 |
 | 宠物会话记录 | 与其他 DSH 会话同一处 | 随会话历史（可删除） |
 
@@ -128,7 +128,7 @@
 | 悬浮窗进程 | **不采用**，改用页面内 slot |
 | ffmpeg 抓屏 | **不采用**，用 Pillow / GDI |
 | 宠物素材（大肥鱼） | **不采用**（CC BY-NC-SA，禁商用），自绘 SVG |
-| `petApi7340` 路由与服务名 | **不采用**，改 `glancePet`，避免与 dsh-pet 冲突 |
+| `petApi7340` 路由与服务名 | **不采用**，改 `petEnhance`，避免与 dsh-pet 冲突 |
 | 长轮询 `?since=&timeout=` 状态协议 | 采用**思路**（叶子 + counter），代码自写 |
 
 tts-bridge 的「本机小门」只在 R1 触发时作为降级方案参考其**安全模型**（loopback + 一次性令牌 + 来源校验 + 定长比较），不复制代码。
