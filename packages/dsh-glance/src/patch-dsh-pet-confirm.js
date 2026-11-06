@@ -325,6 +325,13 @@ export function applyDshPetConfirmPatches(options = {}) {
       let raw = readFileSync(html, 'utf8')
       if (raw.includes(CONFIRM_PATCH_MARK) && raw.includes(CONFIRM_SCRIPT_NAME)) {
         results.push({ path: html, reason: 'already-patched', changed: false })
+      } else if (raw.includes('dsh-glance:confirm-bubble') && raw.includes(CONFIRM_SCRIPT_NAME)) {
+        writeFileSync(
+          html,
+          raw.replace(/dsh-glance:confirm-bubble(?!-v\d)/g, CONFIRM_PATCH_MARK),
+          'utf8',
+        )
+        results.push({ path: html, reason: 'upgraded-v2', changed: true })
       } else if (raw.includes(HTML_NEEDLE)) {
         writeFileSync(html, raw.replace(HTML_NEEDLE, HTML_REPLACEMENT), 'utf8')
         results.push({ path: html, reason: 'patched', changed: true })
