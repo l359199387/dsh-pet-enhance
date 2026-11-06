@@ -1,8 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * B1 装配：status / state / stop / pet 路由 + glance 工具 + sidecar + 宠物叶子状态
- * + dsh-pet chat-bridge（L 对话触发看屏广播）。
+ * B2 装配：A2/B1 + dsh-pet L 对话看屏闭环 + episode 落盘 + 附图人格。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -35,7 +34,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.0.3'
+export const VERSION = '0.0.4'
 
 const startedAt = Date.now()
 
@@ -137,7 +136,7 @@ async function handle(req, res, connection, log, state) {
       ok: true,
       name,
       version: VERSION,
-      stage: 'B1',
+      stage: 'B2',
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
       tools: state.tools.slice(),
@@ -288,6 +287,12 @@ function installDshPetBridge(ctx, log, state, disposers) {
       home: glanceHome(),
       sidecar: () => state.sidecar,
       log,
+      onLooking: () => state.glance.setPet('looking'),
+      onIdle: () => {
+        if (state.glance.snapshot().pet.state.data === 'looking') {
+          state.glance.setPet('idle')
+        }
+      },
     })
 
     const ensureMenu = async () => {

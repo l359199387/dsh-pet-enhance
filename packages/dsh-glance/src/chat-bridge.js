@@ -1,9 +1,7 @@
 /**
  * 把小瞥能力接到 dsh-pet 自带对话上（悬停按 L / Ctrl+Shift+L）。
  *
- * 不另开输入框：用户继续用 dsh-pet 聊；我们轮询 `/chat` 记忆，
- * 一旦用户提到看屏，就抓一帧，再 `POST /chat` 附图让宠物自己开口描述。
- * 失败时用 `/broadcast` 把原因吐到气泡。
+ * B2：会话记忆与气泡归 dsh-pet；我们只做看屏闭环 + episode 落盘 + 附图时注入人格。
  *
  * @module src/chat-bridge.js
  */
@@ -14,6 +12,8 @@ import {
   chatWithDshPet,
 } from './dsh-pet.js'
 import { captureFrame } from './capture.js'
+import { appendEpisode, buildGlanceEpisode } from './episode.js'
+import { glancePersonaBlock } from './persona.js'
 
 /**
  * 用户要「真的看一下」时的说法。必须覆盖「桌面 / 屏幕」，
@@ -42,7 +42,7 @@ function lastUserMessage(messages) {
   return null
 }
 
-function followUpPrompt(userText, shot) {
+export function followUpPrompt(userText, shot) {
   const where = shot.window?.title
     ? `当前焦点窗口「${shot.window.title}」`
     : (shot.screen?.w && shot.screen?.h
@@ -50,9 +50,10 @@ function followUpPrompt(userText, shot) {
       : '整屏')
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
-    + `用户刚说「${userText.slice(0, 80)}」。`
+    + `用户刚说「${String(userText).slice(0, 80)}」。`
     + `我已抓到${where} → ${shot.width}×${shot.height}。`
-    + '请根据附图用一两句口语告诉用户桌面/屏幕上现在有什么，说具体内容，不要提你是插件。'
+    + '请根据附图用一两句口语告诉用户桌面/屏幕上现在有什么，说具体内容。'
+    + `\n\n${glancePersonaBlock()}`
   )
 }
 
@@ -64,6 +65,9 @@ function followUpPrompt(userText, shot) {
  *   petId?: string,
  *   intervalMs?: number,
  *   capture?: typeof captureFrame,
+ *   onLooking?: () => void,
+ *   onIdle?: () => void,
+ *   recordEpisode?: boolean,
  * }} options
  */
 export function createChatBridge(options) {
@@ -71,21 +75,34 @@ export function createChatBridge(options) {
   const log = options.log ?? (() => {})
   const intervalMs = options.intervalMs ?? 2_000
   const capture = options.capture ?? captureFrame
+  const recordEpisode = options.recordEpisode !== false
   let timer = null
+  let greetTimer = null
   let stopped = false
   let lastTs = 0
   let lastContent = ''
   let busy = false
+  let greeted = false
+
+  async function remember(episodeInput) {
+    if (!recordEpisode || !options.home) return
+    const episode = buildGlanceEpisode(episodeInput)
+    const r = await appendEpisode(options.home, episode)
+    if (!r.ok) log(`chat-bridge episode 落盘失败：${r.error}`)
+    else if (r.skipped) log('chat-bridge episode 跳过（敏感窗口）')
+  }
 
   async function handleIntent(userText) {
     busy = true
+    const t0 = Date.now()
     try {
+      try { options.onLooking?.() } catch { /* 状态旁路 */ }
+
       await callDshPet('/work-status', {
         method: 'POST',
         body: { state: 'working', task: 'glance' },
       }).catch(() => {})
 
-      // 先用气泡报一声（无锁也可投；surface=any）
       const notice = await broadcastToDshPet('好，我瞅一眼桌面…', { pet, duration: 6_000 })
       if (!notice.ok || notice.data?.ok === false) {
         log(`chat-bridge 预告气泡失败：${notice.error || notice.data?.reason || notice.status}`)
@@ -106,11 +123,24 @@ export function createChatBridge(options) {
         const msg = `我去看屏幕了，但没看成：${e?.message ?? e}`
         log(`chat-bridge 抓屏失败：${msg}`)
         await broadcastToDshPet(msg, { pet, duration: 12_000 })
+        await remember({
+          userText,
+          result: 'capture-failed',
+          durMs: Date.now() - t0,
+          error: e?.message ?? String(e),
+        })
         return
       }
 
       if (!shot?.png || !Buffer.isBuffer(shot.png)) {
         await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
+        await remember({
+          userText,
+          shot,
+          result: 'bad-png',
+          durMs: Date.now() - t0,
+          error: 'bad-png',
+        })
         return
       }
 
@@ -128,33 +158,48 @@ export function createChatBridge(options) {
         const reason = chat.data?.reason || chat.error || `http-${chat.status}`
         const msg = `图有了，但宠物没能开口（${reason}）。`
         log(`chat-bridge 附图对话失败：${msg}`)
-        // 退路：至少把尺寸/窗口事实说出来
         const screen = shot.screen?.w && shot.screen?.h
           ? `${shot.screen.w}×${shot.screen.h}`
           : '未知尺寸'
         const where = shot.window?.title
           ? `窗口「${shot.window.title}」`
           : `整屏 ${screen}`
-        await broadcastToDshPet(
-          `我看了一眼：${where} → ${shot.width}×${shot.height}（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`,
-          { pet, duration: 14_000 },
-        )
+        const fallback =
+          `我看了一眼：${where} → ${shot.width}×${shot.height}`
+          + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
+        await broadcastToDshPet(fallback, { pet, duration: 14_000 })
+        await remember({
+          userText,
+          shot,
+          result: 'chat-failed',
+          durMs: Date.now() - t0,
+          error: reason,
+          reply: fallback,
+        })
         return
       }
 
-      // 对话成功时 dsh-pet 自己会写 say 气泡；再记下基线，避免下一拍把我们的 follow-up 当新意图
+      const reply = typeof chat.data?.text === 'string' ? chat.data.text : ''
       lastContent = prompt
       lastTs = Date.now()
       log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
+      await remember({
+        userText,
+        shot,
+        result: 'ok',
+        durMs: Date.now() - t0,
+        reply,
+      })
     } finally {
       await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
+      try { options.onIdle?.() } catch { /* ignore */ }
       busy = false
     }
   }
 
   async function tick() {
     if (stopped || busy) return
-    const res = await callDshPet(`/chat?pet=${encodeURIComponent(pet)}&rounds=4`, {
+    const res = await callDshPet(`/chat?pet=${encodeURIComponent(pet)}&rounds=8`, {
       method: 'GET',
       timeoutMs: 4_000,
     })
@@ -177,18 +222,38 @@ export function createChatBridge(options) {
     await handleIntent(user.content)
   }
 
+  async function greetOnce() {
+    if (greeted || stopped) return
+    greeted = true
+    const r = await broadcastToDshPet(
+      '小瞥已接入：跟我说「看一眼桌面」或「看一眼屏幕」，我会真的看一眼再回你。',
+      { pet, duration: 10_000 },
+    )
+    if (!r.ok || r.data?.ok === false) {
+      log(`chat-bridge 接入提示失败：${r.error || r.data?.reason || r.status}`)
+      greeted = false
+    }
+  }
+
   function start() {
     if (timer) return
     stopped = false
     timer = setInterval(() => { tick().catch(() => {}) }, intervalMs)
     tick().catch(() => {})
+    // 等 origin / dsh-pet 就绪后再冒泡一次，避免启动瞬间 404；stop 时清掉。
+    greetTimer = setTimeout(() => {
+      greetTimer = null
+      greetOnce().catch(() => {})
+    }, 2_500)
   }
 
   function stop() {
     stopped = true
     if (timer) clearInterval(timer)
     timer = null
+    if (greetTimer) clearTimeout(greetTimer)
+    greetTimer = null
   }
 
-  return { start, stop, tick, isGlanceIntent }
+  return { start, stop, tick, isGlanceIntent, followUpPrompt }
 }

@@ -55,6 +55,7 @@ test('createChatBridge：首次 tick 只建基线，不抓屏', async () => {
   const bridge = createChatBridge({
     home: 'C:\\tmp\\glance-test',
     intervalMs: 60_000,
+    recordEpisode: false,
     log() {},
     capture: async () => {
       captured += 1
@@ -101,6 +102,7 @@ test('createChatBridge：新用户句命中意图 → 抓屏 + POST /chat 附图
   const bridge = createChatBridge({
     home: 'C:\\tmp\\glance-test',
     intervalMs: 60_000,
+    recordEpisode: false,
     log() {},
     capture: async () => {
       captured += 1

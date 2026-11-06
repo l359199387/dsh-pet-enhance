@@ -1,7 +1,7 @@
 {
   "name": "dsh-glance",
   "description": "桌面宠物小瞥：看屏、说话、在授权下动手。",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "entry": {
     "name": "dsh-glance",
     "inject": []

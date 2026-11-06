@@ -124,8 +124,9 @@
 
 - **隐藏**自绘 SVG，**不另开对话框**——对话用 dsh-pet 自带的（悬停宠物按 `L`，或 `Ctrl+Shift+L` 浮层）。
 - Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- 轮询 `GET /chat`：用户新话说到「看屏幕 / 截图 / glance」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**，让宠物自己开口描述；失败再 `/broadcast` 报原因。工作态走 `/work-status`。
-- 右键「更多」挂 **小瞥急停**（`POST /menu/item`，owner=`dsh-glance`）；点了会 `panic`。
+- 轮询 `GET /chat`（近 8 轮）：用户新话说到「看屏幕 / 桌面 / 截图」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**（注入小瞥人格）→ 宠物开口；失败再 `/broadcast`。
+- 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
+- 右键「更多」挂 **小瞥急停**；点了会 `panic`。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
 我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。

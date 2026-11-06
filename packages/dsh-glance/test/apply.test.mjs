@@ -95,7 +95,7 @@ async function call(url, { method = 'GET', headers = { host: '127.0.0.1:50521' }
   return res
 }
 
-test('apply 注册路由与 glance 工具，status 到 B1', async () => {
+test('apply 注册路由与 glance 工具，status 到 B2', async () => {
   const ctx = fakeCtx()
   const dispose = await apply(ctx)
   await flush()
@@ -110,7 +110,7 @@ test('apply 注册路由与 glance 工具，status 到 B1', async () => {
   assert.equal(res.status, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.ok, true)
-  assert.equal(body.stage, 'B1')
+  assert.equal(body.stage, 'B2')
   assert.equal(body.home, home)
   assert.deepEqual(body.tools, ['glance'])
   assert.equal(body.pet, 'idle')
