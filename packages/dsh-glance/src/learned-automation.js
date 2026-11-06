@@ -226,7 +226,27 @@ export async function findLearnedForQuery(home, query) {
     return learn
   }
 
-  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化/.test(q)) {
+  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化|执行一下|运行一下/.test(q)) {
+    // 若话里还带了目标关键词，优先精确匹配；否则取最新可用
+    let hinted = null
+    let hintedScore = 0
+    for (const row of list) {
+      const goal = String(row.goal || '').toLowerCase()
+      if (!goal) continue
+      let score = 0
+      if (q.includes(goal)) score = goal.length * 2
+      for (const token of goal.split(/[\s，,。、]+/).filter((t) => t.length >= 2)) {
+        if (q.includes(token)) score += token.length
+      }
+      if (score > hintedScore) {
+        hintedScore = score
+        hinted = row
+      }
+    }
+    if (hinted && hintedScore >= 2) {
+      const learn = await usable(hinted.id)
+      if (learn) return learn
+    }
     for (const row of list) {
       const learn = await usable(row.id)
       if (learn) return learn
@@ -241,6 +261,12 @@ export async function findLearnedForQuery(home, query) {
     if (!goal) continue
     let score = 0
     if (q.includes(goal) || goal.includes(q)) score = Math.max(score, goal.length)
+    // 「去记录一下每日心情」对「记录每日心情」：去掉「一下/一遍」再比
+    const qCompact = q.replace(/一下|一遍|一回|请|帮我|去|执行|运行|跑/g, '')
+    const gCompact = goal.replace(/\s+/g, '')
+    if (qCompact.includes(gCompact) || gCompact.includes(qCompact)) {
+      score = Math.max(score, gCompact.length)
+    }
     for (const token of goal.split(/[\s，,。、]+/).filter((t) => t.length >= 2)) {
       if (q.includes(token)) score += token.length
     }

@@ -109,6 +109,7 @@ export function localClassify(text, { teaching = false } = {}) {
   if (isTeachStartIntent(s)) return 'teach'
   // 先拦「学会了吗」类，避免被 task 粗筛误伤
   if (isSkillStatusQuestion(s)) return 'chat'
+  // 「执行一下记录每日心情 / 去记录一下…」→ task，走已学自动化
   if (isComputerTaskIntent(s)) return 'task'
   if (isGlanceIntent(s)) return 'glance'
   return 'chat'

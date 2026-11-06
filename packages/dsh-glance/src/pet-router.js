@@ -155,9 +155,13 @@ export function createPetRouter(options) {
         break
       }
       case 'chat':
-      default:
-        await answerSkillStatus(userText)
+      default: {
+        if (await answerSkillStatus(userText)) break
+        // 「执行一下记录每日心情」等：即便粗分到 chat，也再试匹配已学自动化
+        const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
+        if (ran) break
         break
+      }
     }
   }
 

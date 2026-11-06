@@ -31,6 +31,13 @@ export const TEACH_START_RE =
 export const TEACH_END_RE =
   /(?:教完了|教好了|学完了|结束教学|停止教学|不教了|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
 
+/**
+ * 「执行一下 / 去记录一下 / 跑自动化」→ 跑已学会的自动化（不是闲聊）。
+ * 例：执行一下记录每日心情、去记录一下每日心情、再做一次。
+ */
+export const RUN_AUTOMATION_RE =
+  /(?:再做一次|再来一遍|跑(?:一下)?自动化|照着做|按刚才(?:教的)?(?:去做|做)?)|(?:执行|运行|跑|去做|去记|去写|帮我做|帮我记|帮我写)(?:一下|一遍|一回)?/i
+
 function isBridgeEcho(s) {
   return (
     s.startsWith(GLANCE_FOLLOWUP_PREFIX)
@@ -45,10 +52,17 @@ export function isGlanceIntent(text) {
   return GLANCE_INTENT_RE.test(s)
 }
 
+/** 要跑已学自动化 / 再次执行。 */
+export function isRunAutomationIntent(text) {
+  const s = String(text ?? '').trim()
+  if (!s || isBridgeEcho(s)) return false
+  return RUN_AUTOMATION_RE.test(s)
+}
+
 export function isComputerTaskIntent(text) {
   const s = String(text ?? '').trim()
   if (!s || isBridgeEcho(s)) return false
-  return COMPUTER_TASK_RE.test(s)
+  return COMPUTER_TASK_RE.test(s) || isRunAutomationIntent(s)
 }
 
 export function isTeachStartIntent(text) {

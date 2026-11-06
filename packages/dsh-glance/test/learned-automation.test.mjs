@@ -37,4 +37,8 @@ test('学习文件与自动化同 id 一一对应', async () => {
   const auto = await findAutomationForQuery(home, '再做一次刚才教的')
   assert.equal(auto?.id, 'pair-1')
   assert.equal(auto?.learnedId, 'pair-1')
+  const byGoal = await findAutomationForQuery(home, '执行一下保存心情')
+  assert.equal(byGoal?.id, 'pair-1')
+  const byLoose = await findAutomationForQuery(home, '去保存一下心情')
+  assert.equal(byLoose?.id, 'pair-1')
 })

@@ -749,15 +749,23 @@ export function createTeachBridge(options) {
    * @returns {Promise<boolean>} 是否已接手处理
    */
   async function tryRunMatchingPlaybook(userText) {
-    if (!actOn(options.home)) return false
     let playbook = await findAutomationForQuery(options.home, userText)
     if (!playbook && lastPairId) {
       playbook = await readAutomationPlaybook(options.home, lastPairId)
     }
     if (!playbook?.steps?.length) return false
 
+    if (!actOn(options.home)) {
+      await broadcastToDshPet(
+        `找到自动化「${clip(playbook.goal, 36)}」，但「允许动手」还没开。`
+        + '右键宠物 → 更多 → 允许动手 · 开，然后再说一次「执行一下…」。',
+        { pet, duration: 14_000 },
+      )
+      return true
+    }
+
     await broadcastToDshPet(
-      `找到自动化「${clip(playbook.goal, 36)}」（对应学习文件），开跑…`,
+      `好，执行自动化「${clip(playbook.goal, 36)}」…`,
       { pet, duration: 8_000 },
     )
     await runPlaybook(playbook)

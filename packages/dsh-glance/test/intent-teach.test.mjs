@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  isComputerTaskIntent,
+  isRunAutomationIntent,
   isTeachEndIntent,
   isTeachStartIntent,
   shouldSkipAgentBridge,
@@ -21,4 +23,11 @@ test('教学时 glance/agent 让路', () => {
   assert.equal(shouldSkipAgentBridge('教完了'), true)
   assert.equal(agentShouldWake('我教你一下然后点保存'), false)
   assert.equal(agentShouldWake('帮我点保存'), true)
+})
+
+test('执行已学自动化口令', () => {
+  assert.equal(isRunAutomationIntent('执行一下记录每日心情'), true)
+  assert.equal(isRunAutomationIntent('去记录一下每日心情'), true)
+  assert.equal(isComputerTaskIntent('去记录一下每日心情'), true)
+  assert.equal(isRunAutomationIntent('今天天气真好'), false)
 })
