@@ -17,6 +17,7 @@ import { createGlanceTool } from './tool-glance.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
+import { probeDshPet } from './dsh-pet.js'
 
 export const name = 'dsh-glance'
 
@@ -82,6 +83,19 @@ async function refreshActiveWindow(state) {
   }
 }
 
+async function refreshDshPet(state) {
+  const now = Date.now()
+  if (state._dshPetAt && now - state._dshPetAt < 5_000) return state._dshPet
+  state._dshPetAt = now
+  const probed = await probeDshPet({ timeoutMs: 1_200 })
+  state._dshPet = {
+    available: probed.available,
+    pets: probed.pets ?? [],
+    error: probed.error,
+  }
+  return state._dshPet
+}
+
 async function handle(req, res, connection, log, state) {
   const rejection = rejectionFor(req, connection)
   if (rejection !== undefined) {
@@ -107,6 +121,7 @@ async function handle(req, res, connection, log, state) {
       return
     }
     const sidecar = state.sidecar
+    const dshPet = await refreshDshPet(state)
     send(res, 200, {
       ok: true,
       name,
@@ -121,6 +136,7 @@ async function handle(req, res, connection, log, state) {
         hello: sidecar?.getHello?.() ?? null,
       },
       pet: state.glance.snapshot().pet.state.data,
+      dshPet,
     })
     return
   }
@@ -131,7 +147,8 @@ async function handle(req, res, connection, log, state) {
       return
     }
     await refreshActiveWindow(state)
-    send(res, 200, state.glance.snapshot())
+    const dshPet = await refreshDshPet(state)
+    send(res, 200, { ...state.glance.snapshot(), dshPet })
     return
   }
 
@@ -280,6 +297,8 @@ export async function apply(ctx) {
     sidecar: null,
     glance: createGlanceState(),
     _windowAt: 0,
+    _dshPetAt: 0,
+    _dshPet: { available: false, pets: [] },
   }
 
   try {

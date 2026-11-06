@@ -1,10 +1,11 @@
 /**
  * dsh-glance —— 浏览器半身（B1：宠物出现）。
  *
- * 挂在 `shell.overlay`：右下角一只可拖的原创蓝发鲸鱼娘（Q 版），呼吸/眨眼/随光标看；
- * 点击弹出输入框（聊天是 B2）；⏹ 急停先只改 UI / 打 Host `/stop`。
+ * 挂在 `shell.overlay`。
  *
- * 形象是插件原创，不是社区同人「蓝色大肥鱼」的复制件（见 assets/NOTICE.md）。
+ * 若本机已装 `dsh-pet`（探测 `/dsh-pet-7340/state`），默认**隐藏自绘形象**，
+ * 改用 dsh-pet 当桌宠（不拷贝其 CC BY-NC-SA 素材，只调开放 API）。
+ * 未安装时回退到原创 SVG 小瞥。
  *
  * @module client.js
  */
@@ -24,9 +25,13 @@ window.__ModuleLoader__.load({
     } = React
 
     const API = '/api/glance'
+    const DSH_PET = '/dsh-pet-7340'
     const STORAGE_POS = 'dsh-glance.pos'
     const STORAGE_SIZE = 'dsh-glance.size'
+    const STORAGE_USE_PET = 'dsh-glance.useDshPet'
     const PET_SIZE = 128
+    const DOCK_W = 168
+    const DOCK_H = 44
     const inject = ['slots']
 
     const CSS = `
@@ -44,6 +49,10 @@ window.__ModuleLoader__.load({
   --dg-danger: var(--dsw-alias-status-danger, #e25555);
   --dg-accent: var(--dsw-alias-brand-primary, #3b82f6);
 }
+.dg-root[data-mode="proxy"] {
+  width: ${DOCK_W}px;
+  height: ${DOCK_H}px;
+}
 .dg-root * { box-sizing: border-box; }
 .dg-pet {
   position: relative;
@@ -54,6 +63,29 @@ window.__ModuleLoader__.load({
 }
 .dg-pet:active { cursor: grabbing; }
 .dg-pet svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.dg-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--dg-panel);
+  border: 1px solid var(--dg-border);
+  color: var(--dg-text);
+  cursor: grab;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+  font: 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+.dg-dock:active { cursor: grabbing; }
+.dg-dock-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--dg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dg-accent) 25%, transparent);
+  flex: 0 0 auto;
+}
+.dg-dock-title { font-weight: 600; white-space: nowrap; }
+.dg-dock-sub { color: var(--dg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
 .dg-body {
   transform-origin: 64px 96px;
   animation: dg-breathe 3.2s ease-in-out infinite;
@@ -103,13 +135,14 @@ window.__ModuleLoader__.load({
 }
 .dg-root:hover .dg-status,
 .dg-root[data-open="1"] .dg-status { opacity: 1; transform: none; }
+.dg-root[data-mode="proxy"] .dg-status { bottom: calc(100% + 6px); }
 .dg-status strong { font-weight: 600; }
 .dg-status .dg-muted { color: var(--dg-muted); }
 .dg-panel {
   position: absolute;
   right: 0;
   bottom: calc(100% + 40px);
-  width: 220px;
+  width: 240px;
   padding: 8px;
   border-radius: 10px;
   background: var(--dg-panel);
@@ -201,19 +234,57 @@ window.__ModuleLoader__.load({
       try { localStorage.setItem(STORAGE_POS, JSON.stringify(pos)) } catch { /* 隐私模式等 */ }
     }
 
-    function defaultPos() {
-      const margin = 24
-      return {
-        x: Math.max(margin, window.innerWidth - PET_SIZE - margin),
-        y: Math.max(margin, window.innerHeight - PET_SIZE - margin),
+    function readUseDshPet() {
+      try {
+        const raw = localStorage.getItem(STORAGE_USE_PET)
+        if (raw === null) return true
+        return raw === '1' || raw === 'true'
+      } catch {
+        return true
       }
     }
 
-    function clampPos(pos) {
-      const margin = 8
+    function writeUseDshPet(on) {
+      try { localStorage.setItem(STORAGE_USE_PET, on ? '1' : '0') } catch { /* ignore */ }
+    }
+
+    function defaultPos(proxy) {
+      const margin = 24
+      const w = proxy ? DOCK_W : PET_SIZE
+      const h = proxy ? DOCK_H : PET_SIZE
+      // 有 dsh-pet 时控制条放左下，避免和右上角桌宠抢位（docs/06 §7）。
+      if (proxy) {
+        return { x: margin, y: Math.max(margin, window.innerHeight - h - margin) }
+      }
       return {
-        x: Math.min(Math.max(margin, pos.x), Math.max(margin, window.innerWidth - PET_SIZE - margin)),
-        y: Math.min(Math.max(margin, pos.y), Math.max(margin, window.innerHeight - PET_SIZE - margin)),
+        x: Math.max(margin, window.innerWidth - w - margin),
+        y: Math.max(margin, window.innerHeight - h - margin),
+      }
+    }
+
+    function clampPos(pos, proxy) {
+      const margin = 8
+      const w = proxy ? DOCK_W : PET_SIZE
+      const h = proxy ? DOCK_H : PET_SIZE
+      return {
+        x: Math.min(Math.max(margin, pos.x), Math.max(margin, window.innerWidth - w - margin)),
+        y: Math.min(Math.max(margin, pos.y), Math.max(margin, window.innerHeight - h - margin)),
+      }
+    }
+
+    function workStatusFor(petState) {
+      switch (petState) {
+        case 'looking':
+        case 'acting':
+          return { state: 'working', task: 'glance' }
+        case 'thinking':
+          return { state: 'thinking', task: 'glance' }
+        case 'asking':
+          return { state: 'waiting', task: 'glance' }
+        case 'alarmed':
+          return { state: 'error', task: 'stop' }
+        default:
+          return null
       }
     }
 
@@ -339,20 +410,27 @@ window.__ModuleLoader__.load({
     function PetOverlay() {
       const rootRef = useRef(null)
       const dragRef = useRef(null)
-      const [pos, setPos] = useState(() => clampPos(readPos() || defaultPos()))
+      const [useDshPet, setUseDshPet] = useState(() => readUseDshPet())
+      const [dshPetOk, setDshPetOk] = useState(false)
+      const proxy = Boolean(useDshPet && dshPetOk)
+      const [pos, setPos] = useState(() => clampPos(readPos() || defaultPos(false), false))
       const [open, setOpen] = useState(false)
       const [draft, setDraft] = useState('')
       const [petState, setPetState] = useState('idle')
       const [windowTitle, setWindowTitle] = useState('')
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
-      const [hint, setHint] = useState('聊天是下一步（B2），现在只能看着你。')
+      const [hint, setHint] = useState('装了 dsh-pet 就会用它的形象；素材有版权，我们不拷贝。')
 
       useEffect(() => {
-        const onResize = () => setPos((p) => clampPos(p))
+        setPos((p) => clampPos(p, proxy))
+      }, [proxy])
+
+      useEffect(() => {
+        const onResize = () => setPos((p) => clampPos(p, proxy))
         window.addEventListener('resize', onResize)
         return () => window.removeEventListener('resize', onResize)
-      }, [])
+      }, [proxy])
 
       useEffect(() => {
         let cancelled = false
@@ -368,10 +446,19 @@ window.__ModuleLoader__.load({
             if (typeof next === 'string') setPetState(next)
             const win = body.side?.window?.data
             setWindowTitle(win?.title ? String(win.title) : '')
+            if (body.dshPet) setDshPetOk(Boolean(body.dshPet.available))
           } catch {
             // Host 暂时不可达就保持本地状态
+          }
+
+          // 再直探一次 dsh-pet（不经过我们的 Host），装上就能立刻切代理模式。
+          try {
+            const petRes = await fetch(`${DSH_PET}/state`, { credentials: 'same-origin' })
+            if (!cancelled) setDshPetOk(petRes.ok)
+          } catch {
+            if (!cancelled) setDshPetOk(false)
           } finally {
-            if (!cancelled) timer = window.setTimeout(poll, 2000)
+            if (!cancelled) timer = window.setTimeout(poll, 2500)
           }
         }
 
@@ -383,6 +470,7 @@ window.__ModuleLoader__.load({
       }, [])
 
       useEffect(() => {
+        if (proxy) return undefined
         let alive = true
         let timer = 0
         const schedule = () => {
@@ -404,7 +492,7 @@ window.__ModuleLoader__.load({
           alive = false
           window.clearTimeout(timer)
         }
-      }, [petState])
+      }, [petState, proxy])
 
       useEffect(() => {
         if (petState !== 'alarmed') return undefined
@@ -421,6 +509,29 @@ window.__ModuleLoader__.load({
       }, [petState])
 
       useEffect(() => {
+        if (!proxy) return undefined
+        const payload = workStatusFor(petState)
+        const ctrl = new AbortController()
+        if (payload) {
+          fetch(`${DSH_PET}/work-status`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl.signal,
+          }).catch(() => {})
+        } else {
+          fetch(`${DSH_PET}/work-status`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            signal: ctrl.signal,
+          }).catch(() => {})
+        }
+        return () => ctrl.abort()
+      }, [petState, proxy])
+
+      useEffect(() => {
+        if (proxy) return undefined
         const onMove = (e) => {
           const el = rootRef.current
           if (!el) return
@@ -438,7 +549,7 @@ window.__ModuleLoader__.load({
         }
         window.addEventListener('pointermove', onMove, { passive: true })
         return () => window.removeEventListener('pointermove', onMove)
-      }, [])
+      }, [proxy])
 
       const onPointerDown = useCallback((e) => {
         if (e.button !== 0) return
@@ -461,9 +572,9 @@ window.__ModuleLoader__.load({
         const dy = e.clientY - drag.startY
         if (Math.hypot(dx, dy) > 4) drag.moved = true
         if (!drag.moved) return
-        const next = clampPos({ x: drag.orig.x + dx, y: drag.orig.y + dy })
+        const next = clampPos({ x: drag.orig.x + dx, y: drag.orig.y + dy }, proxy)
         setPos(next)
-      }, [])
+      }, [proxy])
 
       const onPointerUp = useCallback((e) => {
         const drag = dragRef.current
@@ -479,7 +590,7 @@ window.__ModuleLoader__.load({
 
       const stop = useCallback(async () => {
         setPetState('alarmed')
-        setHint('已急停。')
+        setHint(proxy ? '已急停；并通知了 dsh-pet。' : '已急停。')
         try {
           await fetch(`${API}/stop`, {
             method: 'POST',
@@ -490,7 +601,21 @@ window.__ModuleLoader__.load({
         } catch {
           setHint('急停信号没送到 Host，本地已进入炸毛。')
         }
-      }, [])
+        if (proxy) {
+          fetch(`${DSH_PET}/work-status`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ state: 'error', task: 'stop' }),
+          }).catch(() => {})
+          fetch(`${DSH_PET}/wake?pet=main`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          }).catch(() => {})
+        }
+      }, [proxy])
 
       const sleepToggle = useCallback(async () => {
         const next = petState === 'sleeping' ? 'idle' : 'sleeping'
@@ -503,18 +628,41 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ state: next }),
           })
         } catch { /* 本地状态已改 */ }
-      }, [petState])
+        if (proxy) {
+          const path = next === 'sleeping' ? '/sleep?pet=main' : '/wake?pet=main'
+          fetch(`${DSH_PET}${path}`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          }).catch(() => {})
+        }
+      }, [petState, proxy])
+
+      const toggleAvatar = useCallback(() => {
+        const next = !useDshPet
+        setUseDshPet(next)
+        writeUseDshPet(next)
+        setHint(next
+          ? (dshPetOk ? '改用 dsh-pet 当形象。' : '勾选了，但还没探测到 dsh-pet；请先安装并重启。')
+          : '改用内置 SVG 小瞥。')
+        if (next && dshPetOk) setPos(clampPos(defaultPos(true), true))
+      }, [useDshPet, dshPetOk])
 
       const submit = useCallback(() => {
         const text = draft.trim()
         if (!text) return
         setDraft('')
-        setHint('收到了。真聊天是 B2，现在先记在心里。')
-      }, [draft])
+        setHint(proxy
+          ? '收到了。B2 会把它交给 dsh-pet 说话；现在先记着。'
+          : '收到了。真聊天是 B2，现在先记在心里。')
+      }, [draft, proxy])
 
       const statusText = windowTitle
         ? `看着 · ${windowTitle}`
-        : `小瞥 · ${stateLabel(petState)}`
+        : proxy
+          ? `小瞥 · 形象由 dsh-pet · ${stateLabel(petState)}`
+          : `小瞥 · ${stateLabel(petState)}`
 
       return h(
         'div',
@@ -522,6 +670,7 @@ window.__ModuleLoader__.load({
           ref: rootRef,
           className: 'dg-root',
           'data-state': petState,
+          'data-mode': proxy ? 'proxy' : 'self',
           'data-open': open ? '1' : '0',
           style: { left: `${pos.x}px`, top: `${pos.y}px` },
           onPointerDown,
@@ -531,14 +680,14 @@ window.__ModuleLoader__.load({
         },
         h('div', { className: 'dg-status', title: statusText },
           h('strong', null, '小瞥'),
-          h('span', { className: 'dg-muted' }, ` · ${stateLabel(petState)}`),
+          h('span', { className: 'dg-muted' }, proxy ? ' · dsh-pet' : ` · ${stateLabel(petState)}`),
           windowTitle ? h('div', { className: 'dg-muted' }, windowTitle) : null,
         ),
         open
           ? h('div', { className: 'dg-panel', onPointerDown: (e) => e.stopPropagation() },
             h('textarea', {
               value: draft,
-              placeholder: '跟小瞥说点什么…',
+              placeholder: proxy ? '跟小瞥说（形象是 dsh-pet）…' : '跟小瞥说点什么…',
               onChange: (e) => setDraft(e.target.value),
               onKeyDown: (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -559,12 +708,32 @@ window.__ModuleLoader__.load({
                 onClick: stop,
               }, '⏹'),
             ),
+            h('div', { className: 'dg-row' },
+              h('button', {
+                type: 'button',
+                className: 'dg-btn',
+                onClick: toggleAvatar,
+                title: dshPetOk ? '切换形象来源' : '未探测到 dsh-pet',
+              }, useDshPet ? (dshPetOk ? '形象：dsh-pet' : '形象：等 dsh-pet') : '形象：内置'),
+            ),
             h('div', { className: 'dg-hint' }, hint),
           )
           : null,
-        h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小瞥，${stateLabel(petState)}` },
-          h(PetSvg, { state: petState, pupil, blinking }),
-        ),
+        proxy
+          ? h('div', {
+            className: 'dg-dock',
+            role: 'button',
+            'aria-label': `小瞥控制条，形象由 dsh-pet，${stateLabel(petState)}`,
+          },
+          h('span', { className: 'dg-dock-dot', 'aria-hidden': true }),
+          h('div', null,
+            h('div', { className: 'dg-dock-title' }, '小瞥'),
+            h('div', { className: 'dg-dock-sub' }, stateLabel(petState)),
+          ),
+          )
+          : h('div', { className: 'dg-pet', role: 'img', 'aria-label': `小瞥，${stateLabel(petState)}` },
+            h(PetSvg, { state: petState, pupil, blinking }),
+          ),
       )
     }
 
@@ -590,8 +759,11 @@ window.__ModuleLoader__.load({
       clampPos,
       defaultPos,
       stateLabel,
+      workStatusFor,
       STORAGE_POS,
+      STORAGE_USE_PET,
       PET_SIZE,
+      DOCK_W,
     }
     return module.exports
   },

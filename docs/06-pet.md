@@ -116,12 +116,15 @@
 
 **动作由 Host 指令驱动**（`pet({anim:"nod"})`），也可以在 Client 内部按状态自动播。两者不冲突：Host 指令优先播一次，播完回当前状态的常驻动画。
 
-## 7. 与 dsh-pet 的互操作（可选）
+## 7. 与 dsh-pet 的互操作（推荐装上）
 
-如果用户同时装了 `dsh-pet`，我们**不抢它的位置**：
+[dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 的**代码 MIT、素材 CC BY-NC-SA 4.0**。我们**绝不拷贝**其 webm/设定图进仓库；要「用它的宠物」，请用户自己安装 dsh-pet，我们走开放 API。
 
-- 我们的宠物**小**（96px），默认在**左下角**（dsh-pet 默认右上角）。
-- 若检测到 `/dsh-pet-7340` 可达，提供设置项：「让 dsh-pet 代为说话」——把 `say` 转成 `POST /dsh-pet-7340/broadcast`，我们的形象只做视角提示。
-- 反过来：我们不注册 `petApi7340` 这个名字（避免冲突），自己的服务名是 `glancePet`。
+探测：`GET /dsh-pet-7340/state` 成功 → 进入代理模式：
 
-**明确不做**：不调用 dsh-pet 的 `/anim` 来假装我们的动作，也不复用它的素材。
+- **隐藏**自绘 SVG；左下角只留「小瞥」控制条（dsh-pet 默认右上，不抢位）。
+- 工作态写入 `POST /dsh-pet-7340/work-status`；睡觉/叫醒走 `/sleep` `/wake`；急停顺带 `wake` + `error` 态。
+- B2 起：`say` → 带锁 `POST /dsh-pet-7340/broadcast`（需先 `/lock`）。
+- 面板可切回「形象：内置」。
+
+我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。

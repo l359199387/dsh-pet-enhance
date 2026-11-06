@@ -97,7 +97,7 @@ Harness「插件」页 → 从目录安装 → 选 packages/dsh-glance
 装完重启宿主，检查三处：
 
 1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-glance`，且 `node_modules/dsh-glance` 是指向本仓库的链接（逐文件 junction，不是拷贝）；
-2. 打开任意会话，右下角出现可拖的小鲸鱼（呼吸/眨眼）；刷新后位置还在；
+2. 打开任意会话应看到小瞥（未装 dsh-pet 时是右下角 SVG；**已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时**左下角控制条，形象由 dsh-pet 渲染——我们不拷贝它的 CC BY-NC-SA 素材）；
 3. 新会话里说「看一眼我屏幕」→ `glance` 出图；卸载后工具与宠物消失、无残留 `python` 进程。外部浏览器直接打开 `/api/glance/status` 会 401，属正常。
 
 没装上或工具没挂上，先看 `~/.dsh/glance-error.log`。开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。
