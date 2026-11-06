@@ -34,28 +34,49 @@ window.__ModuleLoader__.load({
     const DOCK_H = 44
     const inject = ['slots']
 
+    const PET_HIT_SEL = '.dsh-pet-hit, .dsh-pet-stage, .dsh-pet-root'
+
+    /** 事件是否点在 dsh-pet 上（含 shadow / 合成路径）。 */
+    function eventOnDshPet(e) {
+      const nodes = typeof e.composedPath === 'function' ? e.composedPath() : []
+      for (const n of nodes) {
+        if (!n || !n.classList) continue
+        if (n.classList.contains('dsh-pet-hit')) return true
+        if (n.classList.contains('dsh-pet-stage')) return true
+        if (n.classList.contains('dsh-pet-root')) return true
+      }
+      const t = e.target
+      if (t && typeof t.closest === 'function' && t.closest(PET_HIT_SEL)) return true
+      return false
+    }
+
     /**
-     * 单击（非拖拽）落在 dsh-pet 命中区 → 回调。
+     * 网页端单击（非拖拽）落在 dsh-pet → 回调。
+     * 桌面独立窗里的点击进不了本页 document，需另靠常驻「聊天」钮。
      * @param {(p: { x: number, y: number }) => void} onOpen
      */
     function bindDshPetClickToChat(onOpen) {
       let start = null
       const onDown = (e) => {
         if (e.button !== 0) return
-        if (!e.target?.closest?.('.dsh-pet-hit')) return
-        start = { x: e.clientX, y: e.clientY }
+        if (!eventOnDshPet(e)) return
+        start = { x: e.clientX, y: e.clientY, pointerId: e.pointerId }
       }
       const onUp = (e) => {
         if (!start) return
-        const hit = e.target?.closest?.('.dsh-pet-hit')
+        if (start.pointerId != null && e.pointerId !== start.pointerId) return
         const dx = e.clientX - start.x
         const dy = e.clientY - start.y
         const origin = start
         start = null
-        if (!hit || Math.hypot(dx, dy) > 6) return
+        // 抬起时不必仍在命中区：dsh-pet 会 pointer capture，target 可能变。
+        if (Math.hypot(dx, dy) > 6) return
         onOpen?.({ x: origin.x, y: origin.y })
       }
-      const onCancel = () => { start = null }
+      const onCancel = (e) => {
+        if (start && start.pointerId != null && e.pointerId !== start.pointerId) return
+        start = null
+      }
       document.addEventListener('pointerdown', onDown, true)
       document.addEventListener('pointerup', onUp, true)
       document.addEventListener('pointercancel', onCancel, true)
@@ -73,6 +94,13 @@ window.__ModuleLoader__.load({
       const x = Math.min(Math.max(margin, p.x - w / 2), Math.max(margin, window.innerWidth - w - margin))
       const y = Math.min(Math.max(margin, p.y - h - 12), Math.max(margin, window.innerHeight - h - margin))
       return { x, y }
+    }
+
+    function defaultChatPos() {
+      return clampChatPanelPos({
+        x: window.innerWidth - 160,
+        y: window.innerHeight - 80,
+      })
     }
 
     const CSS = `
@@ -161,6 +189,29 @@ window.__ModuleLoader__.load({
   bottom: auto;
   width: 100%;
   margin: 0;
+}
+.dg-root[data-mode="dock"] {
+  width: auto;
+  height: auto;
+  min-height: 0;
+}
+.dg-dock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--dg-panel);
+  color: var(--dg-text);
+  border: 1px solid var(--dg-border);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+  cursor: pointer;
+  font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+.dg-dock:hover { filter: brightness(1.08); }
+.dg-dock:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dg-accent) 70%, transparent);
+  outline-offset: 2px;
 }
 .dg-status strong { font-weight: 600; }
 .dg-status .dg-muted { color: var(--dg-muted); }
@@ -447,13 +498,19 @@ window.__ModuleLoader__.load({
       const [pupil, setPupil] = useState({ x: 0, y: 0 })
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
-      const [chatPos, setChatPos] = useState(() => ({
-        x: Math.max(8, window.innerWidth - 300),
-        y: Math.max(8, window.innerHeight - 260),
-      }))
+      const [chatPos, setChatPos] = useState(() => defaultChatPos())
       const [hint, setHint] = useState(
-        '点一下小蓝鲸弹出聊天。说「看一眼桌面」会抓屏；干活需先开「允许动手」。',
+        '点网页里的宠物，或右下角「聊天」打开对话。桌面独立窗点不到网页监听，请用「聊天」钮。',
       )
+
+      const openChatAt = useCallback((p) => {
+        setChatPos(clampChatPanelPos(p || {
+          x: window.innerWidth - 160,
+          y: window.innerHeight - 80,
+        }))
+        setOpen(true)
+        setHint('跟小蓝鲸说点什么吧。')
+      }, [])
 
       useEffect(() => {
         setPos((p) => clampPos(p, false))
@@ -503,12 +560,8 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         if (!proxy) return undefined
-        return bindDshPetClickToChat((p) => {
-          setChatPos(clampChatPanelPos(p))
-          setOpen(true)
-          setHint('跟小蓝鲸说点什么吧。')
-        })
-      }, [proxy])
+        return bindDshPetClickToChat((p) => openChatAt(p))
+      }, [proxy, openChatAt])
 
       useEffect(() => {
         if (proxy) return undefined
@@ -735,24 +788,48 @@ window.__ModuleLoader__.load({
         )
         : null
 
-      // 已装 dsh-pet：不抢形象；单击命中区只弹出聊天窗。
+      // 已装 dsh-pet：不抢形象；网页宠物可点开聊；桌面窗点不到时用右下角「聊天」钮。
       if (proxy) {
-        if (!open) return null
+        if (open) {
+          return h(
+            'div',
+            {
+              ref: rootRef,
+              className: 'dg-root',
+              'data-state': petState,
+              'data-mode': 'chat',
+              'data-open': '1',
+              style: { left: `${chatPos.x}px`, top: `${chatPos.y}px` },
+            },
+            h('div', { className: 'dg-status', title: statusText },
+              h('strong', null, '小蓝鲸'),
+              h('span', { className: 'dg-muted' }, ' · 对话'),
+            ),
+            chatPanel,
+          )
+        }
+        const dock = clampChatPanelPos({
+          x: window.innerWidth - 72,
+          y: window.innerHeight - 36,
+        })
         return h(
           'div',
           {
             ref: rootRef,
             className: 'dg-root',
-            'data-state': petState,
-            'data-mode': 'chat',
-            'data-open': '1',
-            style: { left: `${chatPos.x}px`, top: `${chatPos.y}px` },
+            'data-mode': 'dock',
+            style: { left: `${dock.x}px`, top: `${dock.y}px` },
           },
-          h('div', { className: 'dg-status', title: statusText },
-            h('strong', null, '小蓝鲸'),
-            h('span', { className: 'dg-muted' }, ' · 对话'),
-          ),
-          chatPanel,
+          h('button', {
+            type: 'button',
+            className: 'dg-dock',
+            title: '打开小蓝鲸聊天（桌面宠物请点这里）',
+            'aria-label': '打开小蓝鲸聊天',
+            onClick: () => openChatAt({
+              x: window.innerWidth - 160,
+              y: window.innerHeight - 80,
+            }),
+          }, '小蓝鲸 · 聊天'),
         )
       }
 
@@ -807,6 +884,7 @@ window.__ModuleLoader__.load({
       workStatusFor,
       bindDshPetClickToChat,
       clampChatPanelPos,
+      eventOnDshPet,
       STORAGE_POS,
       STORAGE_USE_PET,
       PET_SIZE,

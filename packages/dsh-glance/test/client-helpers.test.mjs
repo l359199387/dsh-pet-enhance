@@ -59,8 +59,23 @@ test('client 纯函数：clampPos / stateLabel', () => {
     assert.equal(typeof api.clampPos, 'function')
     assert.equal(typeof api.defaultPos, 'function')
     assert.equal(api.STORAGE_POS, 'dsh-glance.pos')
+    assert.equal(typeof api.eventOnDshPet, 'function')
+    assert.equal(typeof api.bindDshPetClickToChat, 'function')
   } finally {
     if (prev === undefined) delete globalThis.window
     else globalThis.window = prev
   }
+})
+
+test('eventOnDshPet：识别命中区 class', () => {
+  const api = loadClientTestApi()
+  const hit = { classList: { contains: (c) => c === 'dsh-pet-hit' } }
+  assert.equal(api.eventOnDshPet({
+    composedPath: () => [hit],
+    target: null,
+  }), true)
+  assert.equal(api.eventOnDshPet({
+    composedPath: () => [{ classList: { contains: () => false } }],
+    target: { closest: () => null },
+  }), false)
 })
