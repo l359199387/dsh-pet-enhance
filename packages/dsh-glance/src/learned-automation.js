@@ -231,6 +231,53 @@ export async function assertLearnedAutomationPair(home, id) {
   return { ok: true, learn, task, playbook }
 }
 
+/** 从目标里抠可匹配关键词（B站 / 心情 等），避免整句 goal 对不上口语。 */
+export function goalMatchTokens(goal) {
+  const g = String(goal || '').toLowerCase().replace(/\s+/g, '')
+  if (!g) return []
+  const out = new Set()
+  for (const t of g.split(/[\s，,。、！？!?.；;：:\-/\\|]+/).filter((x) => x.length >= 2)) {
+    out.add(t)
+  }
+  // 常见短词：整句里也能命中
+  for (const tip of ['b站', '哔哩哔哩', 'bilibili', '心情', '记事本', '浏览器', 'edge', 'chrome']) {
+    if (g.includes(tip)) out.add(tip)
+  }
+  // 「我教你看看B站」→ 看看b站 / b站
+  const stripped = g
+    .replace(/^(我来)?(教你|教我|学一下|跟我学)/, '')
+    .replace(/^(一下|一遍|怎么|如何)/, '')
+  if (stripped.length >= 2) out.add(stripped)
+  if (stripped.startsWith('看看') && stripped.length > 2) out.add(stripped.slice(2))
+  if (stripped.startsWith('看看')) out.add(stripped)
+  return [...out].filter((t) => t.length >= 2)
+}
+
+function scoreGoalAgainstQuery(goal, q) {
+  const g = String(goal || '').toLowerCase()
+  if (!g || !q) return 0
+  let score = 0
+  if (q.includes(g) || g.includes(q)) score = Math.max(score, g.length)
+  // 「继续去看看B站」→ 去掉续跑口令后再比
+  const qCompact = q.replace(/一下|一遍|一回|请|帮我|去|执行|运行|跑|继续|再|接着/g, '')
+  const gCompact = g.replace(/\s+/g, '')
+  const gCore = gCompact
+    .replace(/^(我来)?(教你|教我|学一下|跟我学)/, '')
+    .replace(/^(一下|一遍|怎么|如何)/, '')
+  if (qCompact && (qCompact.includes(gCompact) || gCompact.includes(qCompact))) {
+    score = Math.max(score, gCompact.length)
+  }
+  if (qCompact && gCore && (qCompact.includes(gCore) || gCore.includes(qCompact))) {
+    score = Math.max(score, gCore.length + 2)
+  }
+  // 「看看b站」对「继续去看看b站 / 去看看b站」
+  if (gCore && q.includes(gCore)) score = Math.max(score, gCore.length + 3)
+  for (const token of goalMatchTokens(g)) {
+    if (q.includes(token)) score += Math.min(token.length, 8)
+  }
+  return score
+}
+
 /**
  * 按用户话匹配已学会条目（再取同 id 自动化）。
  */
@@ -252,13 +299,7 @@ export async function findLearnedForQuery(home, query) {
     let hinted = null
     let hintedScore = 0
     for (const row of list) {
-      const goal = String(row.goal || '').toLowerCase()
-      if (!goal) continue
-      let score = 0
-      if (q.includes(goal)) score = goal.length * 2
-      for (const token of goal.split(/[\s，,。、]+/).filter((t) => t.length >= 2)) {
-        if (q.includes(token)) score += token.length
-      }
+      const score = scoreGoalAgainstQuery(row.goal, q)
       if (score > hintedScore) {
         hintedScore = score
         hinted = row
@@ -278,19 +319,7 @@ export async function findLearnedForQuery(home, query) {
   let best = null
   let bestScore = 0
   for (const row of list) {
-    const goal = String(row.goal || '').toLowerCase()
-    if (!goal) continue
-    let score = 0
-    if (q.includes(goal) || goal.includes(q)) score = Math.max(score, goal.length)
-    // 「去记录一下每日心情」对「记录每日心情」：去掉「一下/一遍」再比
-    const qCompact = q.replace(/一下|一遍|一回|请|帮我|去|执行|运行|跑/g, '')
-    const gCompact = goal.replace(/\s+/g, '')
-    if (qCompact.includes(gCompact) || gCompact.includes(qCompact)) {
-      score = Math.max(score, gCompact.length)
-    }
-    for (const token of goal.split(/[\s，,。、]+/).filter((t) => t.length >= 2)) {
-      if (q.includes(token)) score += token.length
-    }
+    const score = scoreGoalAgainstQuery(row.goal, q)
     if (score > bestScore) {
       bestScore = score
       best = row

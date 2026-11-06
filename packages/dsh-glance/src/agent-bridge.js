@@ -67,6 +67,7 @@ function clipBubble(text, max = 160) {
  *   pollChat?: boolean,
  *   onActing?: () => void,
  *   onIdle?: () => void,
+ *   resetActBudget?: () => void,
  * }} options
  */
 export function createAgentBridge(options) {
@@ -95,6 +96,7 @@ export function createAgentBridge(options) {
         return
       }
 
+      try { options.resetActBudget?.() } catch { /* ignore */ }
       const preferred = options.getPreferredSessionId?.() ?? null
       await broadcastToDshPet('好，我去主会话里看屏幕再动手…', { pet, duration: 8_000 })
       try { options.onActing?.() } catch { /* ignore */ }

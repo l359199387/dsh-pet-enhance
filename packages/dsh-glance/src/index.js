@@ -457,7 +457,9 @@ function installTools(ctx, log, state) {
             const text = userBubble
               || (code === 'DENIED_WINDOW'
                 ? '这个窗口在黑名单里，我不能点也不能打字。'
-                : (reason || '这个动作被策略拦住了。'))
+                : code === 'BUDGET_EXCEEDED'
+                  ? '这轮动作次数用完了。再说一次「去看看… / 执行一下…」，我会开新一轮再试。'
+                  : (reason || '这个动作被策略拦住了。'))
             await broadcastToDshPet(text, { duration: 12_000 })
           },
         })
@@ -534,6 +536,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
       log,
       pollChat: false,
       getPreferredSessionId: () => state.lastSessionId,
+      resetActBudget: () => {
+        state.budget?.reset()
+        state.rememberedConfirms?.clear()
+      },
       onActing: () => state.glance.setPet('acting'),
       onIdle: () => {
         if (state.glance.snapshot().pet.state.data === 'acting') {
@@ -559,6 +565,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
       getPreferredSessionId: () => state.lastSessionId,
       ensureLiveWatch: async (on) => { await setLiveWatchRef(on) },
       get attachments() { return state.attachments || null },
+      resetActBudget: () => {
+        state.budget?.reset()
+        state.rememberedConfirms?.clear()
+      },
       runAct: (args) => {
         if (typeof state.runAct === 'function') return state.runAct(args)
         return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })

@@ -92,6 +92,29 @@ export function parseTeachDigestReply(text) {
 
 export const TEACH_POLL_MS = 350
 
+/** 无明确目标的「再做一次」类口令，才允许回落最近一对自动化。 */
+export function isVagueReplayIntent(text) {
+  const s = String(text || '').trim()
+  if (!s) return false
+  return /^(再做一次|再来一遍|照着做|跑一下自动化|跑自动化|执行一下|运行一下|按刚才教的(?:去做|做)?)$/i.test(s)
+}
+
+/**
+ * 教学时在地址栏/搜索框留下的拼音脏数据（如 bilibli1），有理解摘要时不应盲打。
+ * @param {string} text
+ */
+export function isLikelyAddressBarNoise(text) {
+  const t = String(text || '').trim()
+  if (!t || t.length > 40) return false
+  // 纯拉丁+数字、像打错的站名/拼音，而非正常中文句子
+  if (!/^[a-z0-9./:_-]+$/i.test(t)) return false
+  if (/https?:\/\//i.test(t) || /\.(com|cn|net|org)\b/i.test(t)) return false
+  // bilibli1 / bilibili1 / dafeiyu1 这类末尾补 1 的输入法残留
+  if (/^[a-z]{4,}\d$/i.test(t)) return true
+  if (/bili|bilibili|bilibli/i.test(t) && !/\./.test(t)) return true
+  return false
+}
+
 function lastUserMessage(messages) {
   if (!Array.isArray(messages)) return null
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -217,6 +240,7 @@ function stepToActArgs(step, sessionId) {
  *   ensureLiveWatch?: (on: boolean) => Promise<void>,
  *   attachments?: { saveImage?: Function },
  *   runAct?: (args: object) => Promise<{ text?: string, meta?: object }>,
+ *   resetActBudget?: () => void,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
  *   pollChat?: boolean,
@@ -710,34 +734,44 @@ export function createTeachBridge(options) {
    */
   async function runPlaybook(playbook) {
     const id = playbook.id
+    // 用户再次开口跑自动化：清掉上一轮动作预算，避免「卡在第 2 步」假死
+    try { options.resetActBudget?.() } catch { /* ignore */ }
     await readTeachSecrets(options.home, id)
     const runAct = options.runAct
+    const learnMeta = await readLearned(options.home, id).catch(() => null)
+    const summary = learnMeta?.understanding?.summary || playbook.strategy?.summary || ''
+    const fastPlan = learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan || ''
     // 旧 playbook 里可能残留「wojiaowanle1」等教完了拼音；执行时跳过
     const scriptSteps = (playbook.steps || []).filter((s) => {
       if (s.mode !== 'script') return false
       if (s.action === 'type' && !s.secretRef && isTeachNoiseTypedText(s.text)) return false
+      // 地址栏类乱码（如 bilibli1）在有学习理解时不要盲打——容易打进桌宠对话框
+      if (s.action === 'type' && !s.secretRef && summary && isLikelyAddressBarNoise(s.text)) {
+        return false
+      }
       return true
     })
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
+    // 有学习理解/快捷路径 → 优先变通，不机械复刻点击坐标
     const smart = playbook.approach === 'smart'
       || playbook.strategy?.approach === 'smart'
-      || Boolean(playbook.strategy?.fastPlan)
+      || Boolean(fastPlan)
+      || Boolean(String(summary).trim())
 
     if (smart) {
       const preferred = options.getPreferredSessionId?.() ?? null
-      const learnMeta = await readLearned(options.home, id).catch(() => null)
       const prompt = buildSmartRunPrompt({
         ...playbook,
         strategy: {
           ...(playbook.strategy || {}),
-          summary: learnMeta?.understanding?.summary || playbook.strategy?.summary,
-          fastPlan: learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan,
+          summary,
+          fastPlan,
         },
       }, {
         ownerNotes: learnMeta?.ownerNotes || playbook.ownerNotes,
       })
       await broadcastToDshPet(
-        `按快捷思路做「${clip(playbook.goal, 28)}」${playbook.strategy?.fastPlan ? `：${clip(playbook.strategy.fastPlan, 36)}` : ''}…`,
+        `按快捷思路做「${clip(playbook.goal, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
         { pet, duration: 10_000 },
       )
       const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
@@ -855,7 +889,8 @@ export function createTeachBridge(options) {
    */
   async function tryRunMatchingPlaybook(userText) {
     let playbook = await findAutomationForQuery(options.home, userText)
-    if (!playbook && lastPairId) {
+    // 仅「再做一次」这类无目标口令才回落到最近一对；避免「ibli1」误触发
+    if (!playbook && lastPairId && isVagueReplayIntent(userText)) {
       playbook = await readAutomationPlaybook(options.home, lastPairId)
     }
     if (!playbook?.steps?.length) return false

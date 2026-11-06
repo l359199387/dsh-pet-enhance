@@ -6,6 +6,8 @@ import { after, test } from 'node:test'
 import {
   buildTeachDigestPrompt,
   createTeachBridge,
+  isLikelyAddressBarNoise,
+  isVagueReplayIntent,
   parseTeachDigestReply,
 } from '../src/teach-bridge.js'
 import { AGENT_WAKE_PREFIX } from '../src/intent.js'
@@ -21,6 +23,16 @@ const tinyPng = Buffer.from(
   + '0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
   'hex',
 )
+
+test('地址栏脏输入与模糊回放口令', () => {
+  assert.equal(isLikelyAddressBarNoise('bilibli1'), true)
+  assert.equal(isLikelyAddressBarNoise('dafeiyu1'), true)
+  assert.equal(isLikelyAddressBarNoise('https://www.bilibili.com'), false)
+  assert.equal(isLikelyAddressBarNoise('今天心情不错'), false)
+  assert.equal(isVagueReplayIntent('再做一次'), true)
+  assert.equal(isVagueReplayIntent('ibli1'), false)
+  assert.equal(isVagueReplayIntent('继续去看看B站'), false)
+})
 
 test('parseTeachDigestReply：OK / NEED_MORE / FAST', () => {
   assert.equal(parseTeachDigestReply('NEED_MORE').needMore, true)

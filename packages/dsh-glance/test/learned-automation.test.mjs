@@ -42,3 +42,22 @@ test('学习文件与自动化同 id 一一对应', async () => {
   const byLoose = await findAutomationForQuery(home, '去保存一下心情')
   assert.equal(byLoose?.id, 'pair-1')
 })
+
+test('口语「继续去看看B站」能匹配教学 goal', async () => {
+  const steps = buildPublicPlan([
+    { kind: 'type', i: 0, text: 'hello', window: { title: 'Edge' } },
+  ])
+  const playbook = buildPlaybook('我教你看看B站', steps, 'bili-1')
+  await createLearnedAutomationPair(home, {
+    id: 'bili-1',
+    goal: '我教你看看B站',
+    teachSessionId: 'bili-1',
+    understanding: { summary: '打开 bilibili 刷视频', stats: playbook.stats, clarified: [] },
+    evidence: steps,
+    playbook,
+  })
+  const hit = await findAutomationForQuery(home, '继续去看看B站')
+  assert.equal(hit?.id, 'bili-1')
+  const hit2 = await findAutomationForQuery(home, '去刷刷B站')
+  assert.equal(hit2?.id, 'bili-1')
+})

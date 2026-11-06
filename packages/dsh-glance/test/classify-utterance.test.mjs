@@ -36,6 +36,8 @@ test('localClassify：「学会了吗」是 chat，不是 task', () => {
   assert.equal(localClassify('把窗口最小化'), 'task')
   assert.equal(localClassify('执行一下记录每日心情'), 'task')
   assert.equal(localClassify('去记录一下每日心情'), 'task')
+  assert.equal(localClassify('去看看B站'), 'task')
+  assert.equal(localClassify('继续去看看B站'), 'task')
   assert.equal(localClassify('再做一次'), 'task')
   assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_end')
 })
