@@ -28,6 +28,11 @@ WHEEL_DELTA = 120
 # 滑轮静止超过此时长 → 一次滚动手势结束（不按每格截图）
 SCROLL_IDLE_SEC = 0.45
 
+# 64 位下必须用指针宽度类型，否则 CallNextHookEx 截断 lparam → 鼠标卡死
+LRESULT = ctypes.c_ssize_t
+HHOOK = getattr(w, "HHOOK", ctypes.c_void_p)
+HINSTANCE = getattr(w, "HINSTANCE", ctypes.c_void_p)
+
 # 与 policy / episode 对齐的轻量敏感标题
 _SENSITIVE_TITLE_RE = None
 
@@ -47,11 +52,18 @@ class _MSLLHOOKSTRUCT(ctypes.Structure):
 
 
 LowLevelMouseProc = ctypes.WINFUNCTYPE(
-    ctypes.c_long,
+    LRESULT,
     ctypes.c_int,
     w.WPARAM,
     w.LPARAM,
 )
+
+user32.SetWindowsHookExW.restype = HHOOK
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, LowLevelMouseProc, HINSTANCE, w.DWORD]
+user32.CallNextHookEx.restype = LRESULT
+user32.CallNextHookEx.argtypes = [HHOOK, ctypes.c_int, w.WPARAM, w.LPARAM]
+user32.UnhookWindowsHookEx.restype = w.BOOL
+user32.UnhookWindowsHookEx.argtypes = [HHOOK]
 
 
 def _sensitive_re():
@@ -146,6 +158,8 @@ class ObserveSession:
         self._scroll_horizontal = False
         self._hook = None
         self._hook_proc = None
+        # 钩子回调里只入队，禁止 Win32 查窗（慢会拖垮鼠标）
+        self._wheel_raw: queue.Queue[tuple[int, int, int, bool]] = queue.Queue(maxsize=256)
 
     @property
     def running(self) -> bool:
@@ -165,6 +179,8 @@ class ObserveSession:
         t = self._thread
         if t:
             t.join(timeout=1.5)
+        # 线程异常退出时兜底卸钩，避免残留钩子卡鼠标
+        self._uninstall_wheel_hook()
         self._thread = None
 
     def drain(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -207,6 +223,7 @@ class ObserveSession:
             while not self._stop.is_set():
                 try:
                     self._pump_messages()
+                    self._drain_wheel_raw()
                     self._tick_mouse()
                     self._tick_keys()
                     self._tick_scroll_idle()
@@ -221,7 +238,10 @@ class ObserveSession:
 
     def _pump_messages(self) -> None:
         msg = w.MSG()
-        while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):  # PM_REMOVE
+        # 低级钩依赖本线程消息泵；一次多抽几条，避免堆积
+        for _ in range(32):
+            if not user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):  # PM_REMOVE
+                break
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
@@ -230,39 +250,66 @@ class ObserveSession:
             return
 
         def _proc(n_code: int, wparam: int, lparam: int) -> int:
+            # 钩子里只做极轻量入队；任何异常也必须 CallNextHookEx，否则鼠标卡死
             try:
                 if n_code >= 0 and wparam in (WM_MOUSEWHEEL, WM_MOUSEHWHEEL):
                     info = ctypes.cast(lparam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-                    raw = ctypes.c_short(info.mouseData >> 16).value
+                    raw = ctypes.c_short((info.mouseData >> 16) & 0xFFFF).value
                     steps = int(raw / WHEEL_DELTA) if WHEEL_DELTA else 0
                     if steps == 0 and raw != 0:
                         steps = 1 if raw > 0 else -1
-                    self._on_wheel(
-                        int(info.pt.x),
-                        int(info.pt.y),
-                        steps,
-                        horizontal=(wparam == WM_MOUSEHWHEEL),
-                    )
+                    try:
+                        self._wheel_raw.put_nowait((
+                            int(info.pt.x),
+                            int(info.pt.y),
+                            int(steps),
+                            bool(wparam == WM_MOUSEHWHEEL),
+                        ))
+                    except queue.Full:
+                        pass
             except Exception:
                 pass
-            return int(user32.CallNextHookEx(self._hook, n_code, wparam, lparam))
+            # LL 钩子第一参可为 NULL
+            return int(user32.CallNextHookEx(None, n_code, wparam, lparam) or 0)
 
-        self._hook_proc = LowLevelMouseProc(_proc)
-        self._hook = user32.SetWindowsHookExW(
-            WH_MOUSE_LL,
-            self._hook_proc,
-            None,
-            0,
-        )
+        try:
+            self._hook_proc = LowLevelMouseProc(_proc)
+            hook = user32.SetWindowsHookExW(
+                WH_MOUSE_LL,
+                self._hook_proc,
+                None,
+                0,
+            )
+            if not hook:
+                # 装钩失败则放弃滑轮录制，绝不能卡住鼠标
+                self._hook_proc = None
+                self._hook = None
+                return
+            self._hook = hook
+        except Exception:
+            self._hook = None
+            self._hook_proc = None
 
     def _uninstall_wheel_hook(self) -> None:
-        if self._hook:
+        hook = self._hook
+        self._hook = None
+        if hook:
             try:
-                user32.UnhookWindowsHookEx(self._hook)
+                user32.UnhookWindowsHookEx(hook)
             except Exception:
                 pass
-        self._hook = None
         self._hook_proc = None
+
+    def _drain_wheel_raw(self) -> None:
+        while True:
+            try:
+                x, y, steps, horizontal = self._wheel_raw.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                self._on_wheel(x, y, steps, horizontal)
+            except Exception:
+                pass
 
     def _on_wheel(self, x: int, y: int, steps: int, horizontal: bool = False) -> None:
         if steps == 0:

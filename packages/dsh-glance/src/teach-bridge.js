@@ -367,6 +367,8 @@ export function createTeachBridge(options) {
     if (!teaching || !sessionId) return
     const r = await observe('poll')
     if (!r?.ok || !Array.isArray(r.events)) return
+    // 截图异步排队，避免串行 await 卡住教学轮询（体感像鼠标失灵）
+    const shotJobs = []
     for (const ev of r.events) {
       const norm = await appendTeachEvent(options.home, sessionId, ev, stepIndex)
       stepIndex += 1
@@ -374,17 +376,17 @@ export function createTeachBridge(options) {
       askedIdle = false
       // 左/右/中/侧键任意点击 → 鼠标附近小图
       if (isTeachMouseClickKind(norm.kind) && frames) {
-        await frames.snapOnClick({
+        shotJobs.push(frames.snapOnClick({
           eventI: norm.i,
           x: norm.x,
           y: norm.y,
           button: normalizeMouseButton(norm.button, norm.kind),
           action: norm.kind,
           window: norm.window?.title || null,
-        })
+        }))
       } else if (isTeachScrollBoundaryKind(norm.kind) && frames) {
         // 滑轮：只在手势开始/结束截，中间每格不截
-        await frames.snapOnScrollBoundary({
+        shotJobs.push(frames.snapOnScrollBoundary({
           eventI: norm.i,
           x: norm.x,
           y: norm.y,
@@ -392,13 +394,16 @@ export function createTeachBridge(options) {
           delta: norm.delta,
           horizontal: norm.horizontal,
           window: norm.window?.title || null,
-        })
+        }))
       } else if (norm.window?.title && frames) {
-        await frames.maybeOnWindow(norm.window.title)
+        shotJobs.push(frames.maybeOnWindow(norm.window.title))
       }
       if (norm.sensitive && norm.kind === 'type') {
         await broadcastToDshPet('嗯，敏感输入我只记在本地了。', { pet, duration: 5_000 })
       }
+    }
+    if (shotJobs.length) {
+      await Promise.allSettled(shotJobs)
     }
     if (!askedIdle && stepIndex > 0 && Date.now() - lastEventAt > 25_000) {
       askedIdle = true
