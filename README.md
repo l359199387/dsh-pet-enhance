@@ -86,7 +86,7 @@
 
 ---
 
-## 安装（Sprint 0 已可装）
+## 安装（A1：装得上、看得见）
 
 本机**没有** `dsh` 命令行，走 GUI：
 
@@ -94,10 +94,13 @@
 Harness「插件」页 → 从目录安装 → 选 packages/dsh-glance
 ```
 
-装完检查两处：`~/.dsh/profiles/desktop/cordis.patch.yml` 里有 `dsh-glance` 这条；
-浏览器打开 `http://127.0.0.1:50521/api/glance/status` 能看到 `{ ok: true, stage: "A0" }`。
+装完重启宿主，检查三处：
 
-开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。
+1. `~/.dsh/profiles/desktop/cordis.patch.yml` 里有 `dsh-glance` 这条；
+2. 浏览器打开 `http://127.0.0.1:50521/api/glance/status`，拿到 `{ ok: true, stage: "A1", tools: ["glance"] }`；
+3. 新开一个会话说「看一眼我屏幕」，模型会调 `glance` 并拿到一张图。
+
+没装上或工具没挂上，先看 `~/.dsh/glance-error.log`。开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。
 
 ---
 

@@ -8,7 +8,7 @@
 
 ### A1 · 能装、能抓一张全屏图
 
-- 骨架（package.json / patch / icon / locale）
+- 骨架（package.json / cordis.patch.yml / dsh.plugin.json；`icon` + `locale/en.json` 属于上架展示元数据，随 B1 一起补）
 - `glance` 工具只实现 `action:"see"`，整屏、`low` 档
 - 抓屏走 **PowerShell 降级路径**（不依赖 Python，先打通链路）
 - `attachments.saveImage` + `render` 返回图与文字信封

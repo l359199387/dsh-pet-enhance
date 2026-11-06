@@ -1,8 +1,8 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * Sprint 0 的唯一目标：**装得上、拔得掉**。所以这里只建数据目录、挂一条
- * `GET /api/glance/status` 用来证明「插件真的起来了」，工具与 sidecar 从 A1 再加。
+ * A1 装配两件事：`GET /api/glance/status`（证明起来了）+ `glance` 工具（证明图能交给模型）。
+ * 抓屏本身在 `capture.js`，工具契约在 `tool-spec.js`，这里只负责「挂上去 / 拔干净」。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -14,10 +14,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
+import { createGlanceTool } from './tool-glance.js'
+import { loadDefineTool } from './define.js'
+import { TOOL_NAME } from './tool-spec.js'
 
 export const name = 'dsh-glance'
 
-// Sprint 0 还没有必须的服务。A1 起加 'tools'，B1 起加 'sessionController'。
+// `tools` / `attachments` 用 ctx.inject 按需拿（硬约束 5）：没有它们的部署只是少个工具。
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
@@ -49,7 +52,7 @@ function readConnection(scoped) {
   }
 }
 
-async function handle(req, res, connection, log) {
+async function handle(req, res, connection, log, state) {
   // 前缀路由不经内核准入，第一件事永远是过自己的闸门。
   const rejection = rejectionFor(req, connection)
   if (rejection !== undefined) {
@@ -78,10 +81,10 @@ async function handle(req, res, connection, log) {
       ok: true,
       name,
       version: VERSION,
-      stage: 'A0',
+      stage: 'A1',
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
-      tools: [],
+      tools: state.tools.slice(),
     })
     return
   }
@@ -89,7 +92,7 @@ async function handle(req, res, connection, log) {
   send(res, 404, { ok: false, rejected: ['没有这条路由'] })
 }
 
-function installRoutes(ctx, log) {
+function installRoutes(ctx, log, state) {
   // `webServer` 刻意不写进 `inject`：它是可选能力，写进去会让没有它的部署连插件都起不来。
   if (typeof ctx?.inject !== 'function') {
     log('宿主没有 ctx.inject，跳过 HTTP 接口')
@@ -101,7 +104,7 @@ function installRoutes(ctx, log) {
         () => scoped.webServer.register({
           kind: 'prefix',
           path: ROUTE_PREFIX,
-          handler: (req, res) => handle(req, res, readConnection(scoped), log),
+          handler: (req, res) => handle(req, res, readConnection(scoped), log, state),
         }),
         'dsh-glance: routes',
       )
@@ -112,15 +115,60 @@ function installRoutes(ctx, log) {
   }
 }
 
+function installTools(ctx, log, state) {
+  if (typeof ctx?.inject !== 'function') {
+    log('宿主没有 ctx.inject，跳过工具')
+    return
+  }
+  try {
+    ctx.inject(['tools', 'attachments'], (scoped) => {
+      let dispose
+      let disposed = false
+
+      // 工具注册也归 effect 拥有（硬约束 4）。这里住的是「卸插件时把工具摘掉」，
+      // 而注册本身是异步的（要等 import），所以用 disposed 标记兜住「还没挂上就被拔」。
+      scoped.effect(() => () => {
+        disposed = true
+        state.tools = state.tools.filter((n) => n !== TOOL_NAME)
+        try { dispose?.() } catch { /* 已经摘过 */ }
+      }, 'dsh-glance: glance tool')
+
+      void (async () => {
+        try {
+          const defineTool = await loadDefineTool()
+          if (disposed) return
+          const tool = createGlanceTool({
+            defineTool,
+            home: glanceHome(),
+            attachments: scoped.attachments,
+            log,
+          })
+          dispose = scoped.tools.register(tool)
+          state.tools.push(TOOL_NAME)
+          log(`工具已注册：${TOOL_NAME}`)
+        } catch (e) {
+          writeError(e, 'glance-tool')
+          log(`工具没挂上：${e?.message ?? e}`)
+        }
+      })()
+    })
+  } catch (e) {
+    writeError(e, 'glance-tool')
+    log(`工具没挂上：${e?.message ?? e}`)
+  }
+}
+
 export async function apply(ctx) {
   const log = (m) => { try { ctx?.logger?.info?.(`[dsh-glance] ${m}`) } catch { /* 日志不该影响加载 */ } }
   const disposers = []
+  const state = { tools: [] }
 
   try {
     const home = glanceHome()
     mkdirSync(join(home, 'episodes'), { recursive: true })
     log(`home: ${home}`)
-    installRoutes(ctx, log)
+    installRoutes(ctx, log, state)
+    installTools(ctx, log, state)
   } catch (e) {
     writeError(e)
     log(`加载失败：${e?.message ?? e}`)

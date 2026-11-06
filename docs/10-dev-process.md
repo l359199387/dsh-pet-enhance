@@ -50,11 +50,11 @@ C:\Users\13591\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.
 |---|---|
 | `~/.dsh/profiles/desktop/package.json` | 依赖列表 + `dsh.profile.bundles` |
 | `~/.dsh/profiles/desktop/cordis.patch.yml` | 插件行的插入记录（**权威**：装了没装看这里） |
-| `~/.dsh/profiles/desktop/node_modules/dsh-glance` | 实际被加载的代码（改源码后不重装就不会生效） |
+| `~/.dsh/profiles/desktop/node_modules/dsh-glance` | 实际被加载的代码（官方说本地目录安装是「链接 checkout」，不是拷贝；确认用 `Get-Item …\dsh-glance | Select LinkType,Target`） |
 | `~/.dsh/profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log` | 安装失败的唯一现场 |
 | `~/.dsh/glance-error.log` | 插件自己写的失败日志（硬约束 6） |
 
-**注意**：`node_modules/dsh-glance` 是**安装时的副本**（不是软链）。改完 `packages/` 里的源码必须重装或重启，否则你验的是旧代码。这是本项目最容易浪费半小时的坑。
+**注意**：链接 checkout 也好、副本也好，**宿主是启动时 import 的**。改完 `packages/` 里的源码必须重启宿主（或重装）才生效，否则你验的是旧进程里那份旧代码。这是本项目最容易浪费半小时的坑。
 
 ## 4. 仓库骨架（Sprint 0 已建）
 
@@ -64,10 +64,16 @@ packages/dsh-glance/
 ├── dsh.plugin.json       # 插件清单：entry.name + inject
 ├── cordis.patch.yml      # 一行 insert（profile 装进来就靠它）
 ├── src/
-│   ├── index.js          # 入口：export name / inject / apply
+│   ├── index.js          # 入口：export name / inject / apply（只装配）
 │   ├── trust.js          # /api/glance/* 的信任栅栏（前缀路由不经内核准入）
-│   └── log.js            # 写 ~/.dsh/glance-error.log（带 64KB 轮转）
-├── sidecar/              # A1 起加：抓屏/输入子进程 + 协议单测
+│   ├── log.js            # 写 ~/.dsh/glance-error.log（带 64KB 轮转）
+│   ├── define.js         # 取宿主的 defineTool（import dsh-tools + DSH_TOOLS_PATH 兜底）
+│   ├── capture.js        # 起 powershell 跑 capture.ps1，拿回 PNG Buffer
+│   ├── tool-spec.js      # glance 的参数/输出/说明（模型看到的就是这里）
+│   └── tool-glance.js    # 抓一帧 → 存附件 → 交图
+├── sidecar/
+│   └── capture.ps1       # A1 的降级抓屏（DPI aware + 整屏 + 缩放）
+├── test/                 # node --test：trust / apply / capture / tool-glance
 └── client.js             # B1 起加：悬浮宠物页面
 ```
 
@@ -76,6 +82,9 @@ packages/dsh-glance/
 - `index.js` 只做装配：建目录、注册路由、把服务接起来。业务逻辑一律放 `src/` 的其他文件。
 - `trust.js` 是所有自定义前缀路由的**入口闸门**。不写它，任何本机进程都能改你的记忆和确认状态（见 07 §13）。
 - `log.js` 只负责「失败留痕」，**不吞异常**：写完日志照样返回失败。
+- `define.js` 是唯一碰 `@deepseek-ai/dsh-tools` 的地方；拿不到就抛，由 `index.js` 记日志、不挂工具——插件本体照常可用。
+- `capture.js` 只认「给我一张整屏 PNG」；坐标、DPI、窗口、输入都是 A2 sidecar 的事，别往里塞。
+- `tool-spec.js` 是模型看到的全部文案；`tool-glance.js` 是流程（抓 → 存 → 交）；两者分开，改文案不用碰逻辑。
 
 `tools/dev-check.mjs` 是 §2 第③步的执行者：文件齐全 → JSON 可解析 → 全部 `node --check` → Python 编译 → 扫 `console.log` → 清单一致性。一条命令，退出码即结论。
 
@@ -85,7 +94,7 @@ packages/dsh-glance/
 
 | 阶段 | 一句话 DoD | 冒烟动作（做不到就是没过） |
 |---|---|---|
-| **A1** | 能拿到一张真实的 PNG，并知道它多大 | `glance` 返回图；裁出的文件尺寸 = 屏幕物理像素 |
+| **A1** | 能拿到一张真实的 PNG，并说清它是屏幕的哪一块 | `glance` 返回图；`meta.screen` 是物理像素、图宽 ≤ 档位画布宽；一张 2560×1440 的屏实测 500–600ms |
 | **A2** | 单窗口抓取 + DPI 正确 | 缩放 125% 下抓窗口，图不糊、坐标不加倍 |
 | **B1** | 宠物出现在右下角，能点、能拖 | 刷新页面它还在；拔插件它就消失 |
 | **B2** | 说一句话，气泡里有回答 | 关掉模型 → 有明确报错，不是静默 |
@@ -109,7 +118,7 @@ packages/dsh-glance/
 
 1. **工具根本没出现** → 看 `~/.dsh/profiles/desktop/cordis.patch.yml` 有没有 `dsh-glance` 这条；没有就是没装上。
 2. **装上了但工具没出现** → 看 `~/.dsh/glance-error.log`；`apply` 里任何一次 throw 都会让整行静默失败。
-3. **改了代码没变化** → 忘了重装/重启（`node_modules` 里是副本）。
+3. **改了代码没变化** → 宿主持有旧进程：重启宿主（或重装插件）再看。
 4. **安装就失败** → `.plugin-manager/logs/operation-*/pnpm.log`；常见是 `package.json` 里 `dsh.bundle.patch` 路径写错。
 5. **路由 404 / 403** → 403 是 `trust.js` 在正常工作（不是 bug）；404 是前缀没匹配上，检查 `ROUTE_PREFIX` 与 `webServer.register` 的 `path` 是否一致。
 6. **拔掉后还有东西在跑** → `Get-Process python` 看 sidecar；有残留就是某处注册没走 `ctx.effect`。
