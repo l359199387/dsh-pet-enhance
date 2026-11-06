@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { after, test } from 'node:test'
 import {
   buildHarnessAutomationPrompt,
-  DEFAULT_AFTER_SECONDS,
   registerHarnessAutomation,
   skillSlugFromId,
 } from '../src/harness-schedule.js'
@@ -28,7 +27,7 @@ test('prompt：点击靠 glance；文字步骤可复打', () => {
   assert.ok(p.includes('用户键入文字') || p.includes('text'))
 })
 
-test('registerHarnessAutomation：create(sessionId, request) 且用 after_seconds', async () => {
+test('未说明时间：只写 skill，不 create 定时', async () => {
   process.env.DSH_HOME = home
   const calls = []
   const ctx = {
@@ -37,7 +36,7 @@ test('registerHarnessAutomation：create(sessionId, request) 且用 after_second
         return {
           async create(sessionId, request) {
             calls.push({ sessionId, request })
-            return { id: 'schedule-abc', title: request.title, kind: 'after' }
+            return { id: 'should-not' }
           },
         }
       }
@@ -56,17 +55,51 @@ test('registerHarnessAutomation：create(sessionId, request) 且用 after_second
     log() {},
   })
   assert.equal(r.ok, true)
-  assert.equal(r.scheduleId, 'schedule-abc')
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].sessionId, 'sess-preferred')
-  assert.equal(calls[0].request.title, '小蓝鲸｜记录每日的心情')
-  assert.equal(calls[0].request.after_seconds, DEFAULT_AFTER_SECONDS)
-  assert.equal(calls[0].request.timing, undefined)
+  assert.equal(r.scheduled, false)
+  assert.equal(r.reason, 'no-schedule-requested')
+  assert.equal(calls.length, 0)
+  assert.equal(r.scheduleId, undefined)
   const skillPath = join(home, 'skills', r.skillName, 'SKILL.md')
   assert.ok(readFileSync(skillPath, 'utf8').includes('记录每日的心情'))
 })
 
-test('无会话时明确失败', async () => {
+test('说明每天晚上九点：才 create 定时', async () => {
+  process.env.DSH_HOME = home
+  const calls = []
+  const ctx = {
+    get(name) {
+      if (name === 'schedule') {
+        return {
+          async create(sessionId, request) {
+            calls.push({ sessionId, request })
+            return { id: 'schedule-abc', title: request.title }
+          },
+        }
+      }
+      if (name === 'sessions') {
+        return { list: () => [{ id: 'sess-1', focused: true }] }
+      }
+      return null
+    },
+  }
+  const r = await registerHarnessAutomation(ctx, {
+    goal: '每天晚上九点记录心情',
+    learnedId: '20261107-014933-4caa90ac',
+    automationId: '20261107-014933-4caa90ac',
+    summary: 'demo',
+    preferredSessionId: 'sess-preferred',
+    log() {},
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.scheduled, true)
+  assert.equal(r.scheduleId, 'schedule-abc')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].sessionId, 'sess-preferred')
+  assert.equal(calls[0].request.timing.kind, 'daily')
+  assert.match(r.timingLabel || '', /21:00/)
+})
+
+test('无会话且需要定时时明确失败', async () => {
   process.env.DSH_HOME = home
   const r = await registerHarnessAutomation({
     get(name) {
@@ -74,7 +107,7 @@ test('无会话时明确失败', async () => {
       return null
     },
   }, {
-    goal: 'x',
+    goal: '每天9点检查',
     learnedId: 'id1',
     automationId: 'id1',
     summary: '',

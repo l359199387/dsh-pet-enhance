@@ -148,6 +148,7 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
     assert.equal(scrolls.length, 2)
     assert.ok(scrolls.every((s) => s.hint?.frameFile), '滑轮起止都应有截图')
     assert.ok(wakes.some((w) => /滚动开始|滚动结束/.test(w.text)), '理解提示应含滑轮起止')
+    assert.equal(schedules.length, 0, '未说明几点/每周几时不应登记 Harness 定时')
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh

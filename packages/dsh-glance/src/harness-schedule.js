@@ -1,9 +1,9 @@
 /**
  * 把小蓝鲸学会的自动化登记到 DeepSeek Harness 的 schedule（自动化任务页）。
  *
- * 宿主真实签名（当前安装版）：
- *   schedule.create(sessionId, { title, prompt, after_seconds|at|… }, signal?)
- * 返回 record（含 id）。无 pause API 时用一年后的 after_seconds，避免教完立刻投递。
+ * 规则：用户没明确说「每周几 / 几点 / 每隔…」→ 只写 skill + 本地自动化，**不** create 定时、不开启。
+ * 宿主签名（当前安装版）：
+ *   schedule.create(sessionId, { title, prompt, after_seconds|at|timing|… }, signal?)
  *
  * @module src/harness-schedule.js
  */
@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { serviceOf } from './host-ctx.js'
 import { pickSessionId } from './wake-session.js'
+import { parseScheduleSpec, timingToCreateFields } from './schedule-parse.js'
 
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -77,11 +78,19 @@ export async function writeGlanceSkillFile({ goal, learnedId, automationId, summ
   return { name, path }
 }
 
-/** 一年后才到点，避免教完立刻往会话灌指令；可在自动化页查看/管理。 */
+/** @deprecated 不再用作默认定时；仅测试/显式 after 兼容。 */
 export const DEFAULT_AFTER_SECONDS = 365 * 24 * 3600
 
 /**
- * @returns {Promise<{ ok: boolean, scheduleId?: string, skillName?: string, reason?: string }>}
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   scheduled?: boolean,
+ *   scheduleId?: string,
+ *   skillName?: string,
+ *   reason?: string,
+ *   timingLabel?: string,
+ *   sessionId?: string,
+ * }>}
  */
 export async function registerHarnessAutomation(ctx, {
   goal,
@@ -89,6 +98,8 @@ export async function registerHarnessAutomation(ctx, {
   automationId,
   summary,
   preferredSessionId = null,
+  scheduleText = '',
+  timing = null,
   log = () => {},
 } = {}) {
   let skillName = skillSlugFromId(learnedId)
@@ -109,15 +120,36 @@ export async function registerHarnessAutomation(ctx, {
     learnedId,
     skillName,
   })
-  // 标题带「小蓝鲸」前缀，方便在自动化页辨认
   const rawGoal = String(goal || learnedId || '自动化').trim() || '自动化'
   const titled = rawGoal.startsWith('小蓝鲸') ? rawGoal : `小蓝鲸｜${rawGoal}`
   const title = clip(titled, 120)
+
+  const spec = timing || parseScheduleSpec(scheduleText, goal, summary)
+  if (!spec) {
+    log(`Harness：未说明运行时间，跳过 schedule.create（仅本地+skill=${skillName}）`)
+    return {
+      ok: true,
+      scheduled: false,
+      skillName,
+      reason: 'no-schedule-requested',
+    }
+  }
+
+  const timingFields = timingToCreateFields(spec)
+  if (!timingFields) {
+    return {
+      ok: true,
+      scheduled: false,
+      skillName,
+      reason: 'timing-unsupported',
+    }
+  }
 
   const schedule = serviceOf(ctx, 'schedule')
   if (!schedule?.create) {
     return {
       ok: false,
+      scheduled: false,
       skillName,
       reason: 'no-schedule-service',
     }
@@ -127,6 +159,7 @@ export async function registerHarnessAutomation(ctx, {
   if (!sessionId) {
     return {
       ok: false,
+      scheduled: false,
       skillName,
       reason: 'no-session-for-schedule',
     }
@@ -135,21 +168,31 @@ export async function registerHarnessAutomation(ctx, {
   const request = {
     title,
     prompt,
-    after_seconds: DEFAULT_AFTER_SECONDS,
+    ...timingFields,
   }
 
   try {
-    // 真实签名：create(sessionId, request, signal?) → record
     const created = await schedule.create(sessionId, request)
     const scheduleId = created?.id || created?.record?.id || created?.task?.id
     if (!scheduleId) {
-      return { ok: false, skillName, reason: 'create-no-id', raw: created }
+      return { ok: false, scheduled: false, skillName, reason: 'create-no-id', raw: created }
     }
-    log(`Harness 自动化已登记 ${scheduleId}（after 1y，绑定会话 ${sessionId}） skill=${skillName}`)
-    return { ok: true, scheduleId: String(scheduleId), skillName, sessionId: String(sessionId) }
+    log(
+      `Harness 定时已登记 ${scheduleId}（${spec.label}，绑定会话 ${sessionId}） skill=${skillName}`,
+    )
+    return {
+      ok: true,
+      scheduled: true,
+      scheduleId: String(scheduleId),
+      skillName,
+      sessionId: String(sessionId),
+      timingLabel: spec.label,
+    }
   } catch (e) {
     const msg = String(e?.message ?? e)
     log(`Harness schedule.create 失败：${msg}`)
-    return { ok: false, skillName, reason: msg.slice(0, 200) }
+    return { ok: false, scheduled: false, skillName, reason: msg.slice(0, 200) }
   }
 }
+
+export { parseScheduleSpec, timingToCreateFields, hasExplicitScheduleIntent } from './schedule-parse.js'

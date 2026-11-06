@@ -635,14 +635,21 @@ export function createTeachBridge(options) {
     })
     lastPairId = id
 
-    // 5) 登记 Harness（执行提示不含学习图）
+    // 5) 登记 Harness：未明说每周几/几点 → 不定时、不开启；仅写 skill
     const preferred = options.getPreferredSessionId?.() ?? null
+    const scheduleText = [
+      goal,
+      digested.summary,
+      digested.fastPlan,
+      ...(clarified.clarified || []),
+    ].filter(Boolean).join('\n')
     const harness = await registerHarnessAutomation(options.ctx, {
       goal,
       learnedId: id,
       automationId: pair.task.id,
       summary: digested.summary || narrative,
       preferredSessionId: preferred,
+      scheduleText,
       log,
     })
 
@@ -651,6 +658,8 @@ export function createTeachBridge(options) {
       learnedId: pair.learn.id,
       automationId: pair.task.id,
       scheduleId: harness.scheduleId || null,
+      scheduled: Boolean(harness.scheduled),
+      timingLabel: harness.timingLabel || null,
       skillName: harness.skillName || null,
       harnessOk: harness.ok,
       harnessReason: harness.reason || null,
@@ -662,17 +671,23 @@ export function createTeachBridge(options) {
     await turnOffLiveWatchQuiet()
     frames = null
 
-    if (harness.ok) {
+    if (harness.ok && harness.scheduled) {
+      await broadcastToDshPet(
+        `理解清楚了。本地学习/自动化已建（id=${clip(id, 20)}）。`
+        + `已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`,
+        { pet, duration: 18_000 },
+      )
+    } else if (harness.ok) {
       await broadcastToDshPet(
         `理解清楚了。本地学习文件与自动化已建（id=${clip(id, 20)}）。`
-        + `Harness 自动化页可找「小蓝鲸｜${clip(goal, 20)}」（id=${clip(harness.scheduleId, 18)}，先暂停不跑）。`
-        + '要跑时说「再做一次」或到自动化页立即运行。这次不动手。',
+        + '未设定运行时间，也未开启定时——你没说每周几/几点就先不排程。'
+        + '要跑时说「再做一次」；若要定时，教的时候说明「每天几点/每周几」。这次不动手。',
         { pet, duration: 18_000 },
       )
     } else {
       await broadcastToDshPet(
         `本地学习/自动化已建（id=${clip(id, 20)}，含 ${frameMeta.count} 张教学截图）；`
-        + `Harness 页登记失败：${harness.reason || '无 schedule'}。可说「再做一次」跑本地版。这次不动手。`,
+        + `Harness 登记失败：${harness.reason || '无 schedule'}。可说「再做一次」跑本地版。这次不动手。`,
         { pet, duration: 18_000 },
       )
     }
