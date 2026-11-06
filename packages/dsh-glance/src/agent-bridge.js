@@ -64,6 +64,7 @@ function clipBubble(text, max = 160) {
  *   isActEnabled?: (home: string) => boolean,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
+ *   pollChat?: boolean,
  *   onActing?: () => void,
  *   onIdle?: () => void,
  * }} options
@@ -75,6 +76,7 @@ export function createAgentBridge(options) {
   const actOn = options.isActEnabled ?? isActEnabled
   const wake = options.wake ?? wakeSession
   const waitReply = options.waitReply ?? waitAssistantReply
+  const pollChat = options.pollChat !== false
   let timer = null
   let stopped = false
   let lastTs = 0
@@ -159,8 +161,9 @@ export function createAgentBridge(options) {
   }
 
   function start() {
-    if (timer) return
     stopped = false
+    if (!pollChat) return
+    if (timer) return
     timer = setInterval(() => { tick().catch(() => {}) }, intervalMs)
     tick().catch(() => {})
   }
@@ -175,6 +178,7 @@ export function createAgentBridge(options) {
     start,
     stop,
     tick,
+    handleTask,
     isComputerTaskIntent,
     shouldWakeAgent,
     buildAgentWakePrompt,

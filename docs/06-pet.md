@@ -125,15 +125,16 @@
 - **隐藏**自绘 SVG 形象；**双击宠物**打开 dsh-pet 自带对话弹窗（同右键「对话」/ 悬停 `L`）；**单击**仍为 dsh-pet 原 Q 弹。
   - 网页：双击发裸 `L` / 备援钮 `Ctrl+Shift+L`。
   - 桌面独立窗：Host 启动时给已装 dsh-pet 的 Helper 打幂等 `dblclick → showChatFromMenu` 补丁，并 `POST /reload`；升级 dsh-pet 后重启宿主会再打一次。
-- Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
-- 轮询 `GET /chat`（近 8 轮）：
-  - 「看屏幕 / 桌面 / 截图」→ `chat-bridge` 抓帧附图让宠物开口。
-  - 「帮我点 / 把…最小化 / 输入…」等 → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
+- Host 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
+- **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` 极短分流（禁止工具、只回标签；失败才 regex 兜底），再分发：
+  - `glance` → `chat-bridge` 抓帧附图让宠物开口。
+  - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
+  - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **教学回放**：L 里说「我教你一下」→ 你自己操作，sidecar `observe` 只记录点击/按键；「教完了」后 Host 按本地步骤回放（`~/.dsh/glance/teach/`）。密码类窗口输入只进 `.secrets.json`，计划里不出现原文；回放时用 `secretRef` 本地注入。
+- **教学理解执行**：分流判定要学 → 你自己操作，sidecar `observe` 只记录；教完后把**脱敏证据**叫醒主会话，由模型理解后 glance/act（不是 Host 盲重放坐标）。密码类只进 `.secrets.json`，证据里用 `secretRef`。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
-  - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动「看一眼桌面」。
+  - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。
   - **允许动手 · 开/关**：对应 `actEnabled`；关则 `act` 拒绝真动手。
   - **小蓝鲸急停**。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。

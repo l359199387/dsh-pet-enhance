@@ -64,6 +64,8 @@ export function followUpPrompt(userText, shot) {
  *   onLooking?: () => void,
  *   onIdle?: () => void,
  *   recordEpisode?: boolean,
+ *   pollChat?: boolean,
+ *   greetOnStart?: boolean,
  * }} options
  */
 export function createChatBridge(options) {
@@ -72,6 +74,8 @@ export function createChatBridge(options) {
   const intervalMs = options.intervalMs ?? 2_000
   const capture = options.capture ?? captureFrame
   const recordEpisode = options.recordEpisode !== false
+  const pollChat = options.pollChat !== false
+  const greetOnStart = options.greetOnStart !== false
   let timer = null
   let greetTimer = null
   let stopped = false
@@ -223,7 +227,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：可以说「看一眼桌面」；要动手时先开「允许动手」，再说「帮我把…最小化」这类话，我会在主会话里理解后操作。',
+      '小蓝鲸已接入：随便聊；想看屏幕、教我操作、或让我动手，直接说就行。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {
@@ -233,15 +237,19 @@ export function createChatBridge(options) {
   }
 
   function start() {
-    if (timer) return
+    if (timer || greetTimer) return
     stopped = false
-    timer = setInterval(() => { tick().catch(() => {}) }, intervalMs)
-    tick().catch(() => {})
+    if (pollChat) {
+      timer = setInterval(() => { tick().catch(() => {}) }, intervalMs)
+      tick().catch(() => {})
+    }
     // 等 origin / dsh-pet 就绪后再冒泡一次，避免启动瞬间 404；stop 时清掉。
-    greetTimer = setTimeout(() => {
-      greetTimer = null
-      greetOnce().catch(() => {})
-    }, 2_500)
+    if (greetOnStart) {
+      greetTimer = setTimeout(() => {
+        greetTimer = null
+        greetOnce().catch(() => {})
+      }, 2_500)
+    }
   }
 
   function stop() {
@@ -252,5 +260,5 @@ export function createChatBridge(options) {
     greetTimer = null
   }
 
-  return { start, stop, tick, isGlanceIntent, followUpPrompt }
+  return { start, stop, tick, handleIntent, isGlanceIntent, followUpPrompt }
 }

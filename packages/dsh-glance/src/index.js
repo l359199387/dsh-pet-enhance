@@ -37,6 +37,7 @@ import { createChatBridge } from './chat-bridge.js'
 import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { createTeachBridge } from './teach-bridge.js'
+import { createPetRouter } from './pet-router.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
@@ -49,7 +50,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.2.0'
+export const VERSION = '0.2.1'
 
 const startedAt = Date.now()
 
@@ -423,12 +424,15 @@ function installDshPetBridge(ctx, log, state, disposers) {
       home,
       sidecar: () => state.sidecar,
       log,
+      pollChat: false,
+      greetOnStart: false,
       ...petHooks,
     })
     const agent = createAgentBridge({
       ctx,
       home,
       log,
+      pollChat: false,
       getPreferredSessionId: () => state.lastSessionId,
       onActing: () => state.glance.setPet('acting'),
       onIdle: () => {
@@ -448,6 +452,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       home,
       sidecar: () => state.sidecar,
       log,
+      pollChat: false,
       confirmGate: state.confirmGate,
       getPreferredSessionId: () => state.lastSessionId,
       runAct: (args) => {
@@ -457,6 +462,15 @@ function installDshPetBridge(ctx, log, state, disposers) {
       onTeaching: (on) => {
         state.glance.setPet(on ? 'looking' : 'idle')
       },
+    })
+    const router = createPetRouter({
+      ctx,
+      home,
+      log,
+      chatBridge: bridge,
+      agentBridge: agent,
+      teachBridge: teach,
+      getPreferredSessionId: () => state.lastSessionId,
     })
 
     const syncLive = () => {
@@ -559,6 +573,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     bridge.start()
     agent.start()
     teach.start()
+    router.start()
     ensureMenu().catch(() => {})
     const timer = setInterval(() => {
       ensureMenu().catch(() => {})
@@ -567,6 +582,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     return () => {
       stopped = true
       clearInterval(timer)
+      router.stop()
       bridge.stop()
       agent.stop()
       teach.stop()
