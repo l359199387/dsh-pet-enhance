@@ -20,6 +20,16 @@ PW_RENDERFULLCONTENT = 2
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 BLACK_RANGE_MAX = 8
 BLACK_MEAN_MAX = 12
+# 32px 以下的多半是托盘/覆盖层的隐形窗；列出来只会把候选标题搅浑。
+MIN_WINDOW_SIDE = 32
+# 有标题但不是用户会想「看」的窗口：桌面壳、覆盖层、托盘。留着会让 WINDOW_NOT_FOUND
+# 的候选变成一堆垃圾（实测候选里出现过 Program Manager / dummyLayeredWnd）。
+TITLE_DENYLIST = {
+    "program manager",
+    "dummylayeredwnd",
+    "nvidia geforce overlay",
+    "trayrocketview",
+}
 
 _stats = {
     "started_at": time.time(),
@@ -204,6 +214,8 @@ def _is_capturable(hwnd: int) -> bool:
     title = _window_title(hwnd)
     if not title.strip():
         return False
+    if title.strip().lower() in TITLE_DENYLIST:
+        return False
     # 跳过 cloaked（UWP 挂起等）
     try:
         cloaked = ctypes.c_int(0)
@@ -232,7 +244,7 @@ def list_windows() -> list[dict]:
         if not rect:
             return True
         left, top, right, bottom = rect
-        if right - left < 8 or bottom - top < 8:
+        if right - left < MIN_WINDOW_SIDE or bottom - top < MIN_WINDOW_SIDE:
             return True
         results.append({
             "hwnd": int(hwnd),
