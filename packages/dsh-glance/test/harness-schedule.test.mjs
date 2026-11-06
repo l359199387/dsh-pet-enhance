@@ -59,7 +59,7 @@ test('registerHarnessAutomation：create(sessionId, request) 且用 after_second
   assert.equal(r.scheduleId, 'schedule-abc')
   assert.equal(calls.length, 1)
   assert.equal(calls[0].sessionId, 'sess-preferred')
-  assert.equal(calls[0].request.title, '记录每日的心情')
+  assert.equal(calls[0].request.title, '小蓝鲸｜记录每日的心情')
   assert.equal(calls[0].request.after_seconds, DEFAULT_AFTER_SECONDS)
   assert.equal(calls[0].request.timing, undefined)
   const skillPath = join(home, 'skills', r.skillName, 'SKILL.md')

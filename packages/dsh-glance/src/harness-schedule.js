@@ -109,8 +109,10 @@ export async function registerHarnessAutomation(ctx, {
     learnedId,
     skillName,
   })
-  // 标题用目标；避免奇怪前缀导致校验歧义
-  const title = clip(String(goal || learnedId || '小蓝鲸自动化').trim() || '小蓝鲸自动化', 120)
+  // 标题带「小蓝鲸」前缀，方便在自动化页辨认
+  const rawGoal = String(goal || learnedId || '自动化').trim() || '自动化'
+  const titled = rawGoal.startsWith('小蓝鲸') ? rawGoal : `小蓝鲸｜${rawGoal}`
+  const title = clip(titled, 120)
 
   const schedule = serviceOf(ctx, 'schedule')
   if (!schedule?.create) {

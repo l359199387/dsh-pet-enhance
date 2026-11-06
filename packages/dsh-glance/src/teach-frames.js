@@ -17,8 +17,24 @@ export const MAX_SUPPLEMENT_FRAMES = 2
 export const MAX_CLICK_FRAMES = 40
 /** 滑轮起止帧软上限（每次手势 2 张） */
 export const MAX_SCROLL_FRAMES = 24
+/** 理解阶段最多喂给模型的附图数（控 token；其余只在文字里写路径） */
+export const MAX_DIGEST_IMAGES = 8
 /** @deprecated 旧合计上限；现点击/滑轮帧单独预算 */
 export const MAX_TOTAL_FRAMES = MAX_KEY_FRAMES + MAX_SUPPLEMENT_FRAMES + MAX_CLICK_FRAMES + MAX_SCROLL_FRAMES
+
+/** 从过多证据帧里均匀抽 N 张（保留首尾）。 */
+export function sampleFramesForDigest(frameList, limit = MAX_DIGEST_IMAGES) {
+  const evidence = (frameList || []).filter((f) => f.role === 'click' || f.role === 'scroll')
+  const context = (frameList || []).filter((f) => f.role === 'key' || f.role === 'supplement')
+  const pool = evidence.length ? evidence : context
+  if (pool.length <= limit) return pool.slice()
+  const idxs = new Set([0, pool.length - 1])
+  const mid = Math.max(1, limit - 2)
+  for (let i = 1; i <= mid; i += 1) {
+    idxs.add(Math.round((i * (pool.length - 1)) / (mid + 1)))
+  }
+  return [...idxs].sort((a, b) => a - b).slice(0, limit).map((i) => pool[i])
+}
 
 /** 点击证据：鼠标附近正方形边长（屏幕像素） */
 export const CLICK_CROP_SIZE = 400
@@ -490,8 +506,24 @@ export function createFrameRecorder(options) {
     const out = []
     for (const f of ordered) {
       try {
-        const png = await readFile(join(dir, f.file))
-        out.push({ ...f, png, name: f.file })
+        const path = join(dir, f.file)
+        const png = await readFile(path)
+        out.push({ ...f, png, name: f.file, path })
+      } catch { /* skip */ }
+    }
+    return out
+  }
+
+  /** 专供 digest：均匀抽样，默认最多 MAX_DIGEST_IMAGES。 */
+  async function loadDigestImages(limit = MAX_DIGEST_IMAGES) {
+    const dir = teachFramesDir(options.home, options.sessionId)
+    const picked = sampleFramesForDigest(frames, limit)
+    const out = []
+    for (const f of picked) {
+      try {
+        const path = join(dir, f.file)
+        const png = await readFile(path)
+        out.push({ ...f, png, name: f.file, path })
       } catch { /* skip */ }
     }
     return out
@@ -507,6 +539,7 @@ export function createFrameRecorder(options) {
     writeManifest,
     promoteToLearned,
     loadPngBuffers,
+    loadDigestImages,
     list: () => frames.slice(),
     keyCount,
     clickCount,

@@ -21,49 +21,87 @@ VK_MBUTTON = 0x04
 VK_XBUTTON1 = 0x05  # 侧键后退
 VK_XBUTTON2 = 0x06  # 侧键前进
 
-WH_MOUSE_LL = 14  # WH_MOUSE_LL（13 是键盘低级钩）
-WM_MOUSEWHEEL = 0x020A
-WM_MOUSEHWHEEL = 0x020E
+# 滑轮：用 Raw Input（消息窗），不用 WH_MOUSE_LL——低级钩会拖慢整机鼠标
+WM_INPUT = 0x00FF
+RID_INPUT = 0x10000003
+RIM_TYPEMOUSE = 0
+RIDEV_INPUTSINK = 0x00000100
+RIDEV_REMOVE = 0x00000001
+RI_MOUSE_WHEEL = 0x0400
+RI_MOUSE_HWHEEL = 0x0800
 WHEEL_DELTA = 120
+HWND_MESSAGE = -3
 # 滑轮静止超过此时长 → 一次滚动手势结束（不按每格截图）
 SCROLL_IDLE_SEC = 0.45
-
-# 64 位下必须用指针宽度类型，否则 CallNextHookEx 截断 lparam → 鼠标卡死
-LRESULT = ctypes.c_ssize_t
-HHOOK = getattr(w, "HHOOK", ctypes.c_void_p)
-HINSTANCE = getattr(w, "HINSTANCE", ctypes.c_void_p)
 
 # 与 policy / episode 对齐的轻量敏感标题
 _SENSITIVE_TITLE_RE = None
 
 
-class _POINT(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-
-class _MSLLHOOKSTRUCT(ctypes.Structure):
+class RAWINPUTDEVICE(ctypes.Structure):
     _fields_ = [
-        ("pt", _POINT),
-        ("mouseData", w.DWORD),
-        ("flags", w.DWORD),
-        ("time", w.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
+        ("usUsagePage", ctypes.c_ushort),
+        ("usUsage", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("hwndTarget", w.HWND),
     ]
 
 
-LowLevelMouseProc = ctypes.WINFUNCTYPE(
-    LRESULT,
-    ctypes.c_int,
-    w.WPARAM,
-    w.LPARAM,
-)
+class RAWINPUTHEADER(ctypes.Structure):
+    _fields_ = [
+        ("dwType", w.DWORD),
+        ("dwSize", w.DWORD),
+        ("hDevice", w.HANDLE),
+        ("wParam", w.WPARAM),
+    ]
 
-user32.SetWindowsHookExW.restype = HHOOK
-user32.SetWindowsHookExW.argtypes = [ctypes.c_int, LowLevelMouseProc, HINSTANCE, w.DWORD]
-user32.CallNextHookEx.restype = LRESULT
-user32.CallNextHookEx.argtypes = [HHOOK, ctypes.c_int, w.WPARAM, w.LPARAM]
-user32.UnhookWindowsHookEx.restype = w.BOOL
-user32.UnhookWindowsHookEx.argtypes = [HHOOK]
+
+class _RAWMOUSE_BUTTONS(ctypes.Structure):
+    _fields_ = [
+        ("usButtonFlags", ctypes.c_ushort),
+        ("usButtonData", ctypes.c_ushort),
+    ]
+
+
+class _RAWMOUSE_UNION(ctypes.Union):
+    _fields_ = [
+        ("ulButtons", ctypes.c_ulong),
+        ("buttons", _RAWMOUSE_BUTTONS),
+    ]
+
+
+class RAWMOUSE(ctypes.Structure):
+    _fields_ = [
+        ("usFlags", ctypes.c_ushort),
+        ("u", _RAWMOUSE_UNION),
+        ("ulRawButtons", ctypes.c_ulong),
+        ("lLastX", ctypes.c_long),
+        ("lLastY", ctypes.c_long),
+        ("ulExtraInformation", ctypes.c_ulong),
+    ]
+
+
+class RAWINPUT(ctypes.Structure):
+    _fields_ = [
+        ("header", RAWINPUTHEADER),
+        ("mouse", RAWMOUSE),
+    ]
+
+
+user32.RegisterRawInputDevices.argtypes = [
+    ctypes.POINTER(RAWINPUTDEVICE),
+    ctypes.c_uint,
+    ctypes.c_uint,
+]
+user32.RegisterRawInputDevices.restype = w.BOOL
+user32.GetRawInputData.argtypes = [
+    w.HANDLE,
+    ctypes.c_uint,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_uint),
+    ctypes.c_uint,
+]
+user32.GetRawInputData.restype = ctypes.c_uint
 
 
 def _sensitive_re():
@@ -156,9 +194,7 @@ class ObserveSession:
         self._scroll_window = ""
         self._scroll_sensitive = False
         self._scroll_horizontal = False
-        self._hook = None
-        self._hook_proc = None
-        # 钩子回调里只入队，禁止 Win32 查窗（慢会拖垮鼠标）
+        self._raw_hwnd = None
         self._wheel_raw: queue.Queue[tuple[int, int, int, bool]] = queue.Queue(maxsize=256)
 
     @property
@@ -179,8 +215,7 @@ class ObserveSession:
         t = self._thread
         if t:
             t.join(timeout=1.5)
-        # 线程异常退出时兜底卸钩，避免残留钩子卡鼠标
-        self._uninstall_wheel_hook()
+        self._teardown_raw_input()
         self._thread = None
 
     def drain(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -218,7 +253,7 @@ class ObserveSession:
         return bool(t and _sensitive_re().search(t))
 
     def _loop(self) -> None:
-        self._install_wheel_hook()
+        self._setup_raw_input()
         try:
             while not self._stop.is_set():
                 try:
@@ -234,71 +269,102 @@ class ObserveSession:
                     pass
                 self._stop.wait(0.02)
         finally:
-            self._uninstall_wheel_hook()
+            self._teardown_raw_input()
+
+    def _setup_raw_input(self) -> None:
+        """消息窗 + Raw Input 只收鼠标；移动不进系统钩，避免卡顿。"""
+        try:
+            self._raw_hwnd = user32.CreateWindowExW(
+                0,
+                "STATIC",
+                "glance-observe-raw",
+                0,
+                0, 0, 0, 0,
+                HWND_MESSAGE,
+                None,
+                None,
+                None,
+            )
+            if not self._raw_hwnd:
+                return
+            rid = RAWINPUTDEVICE()
+            rid.usUsagePage = 0x01  # generic desktop
+            rid.usUsage = 0x02  # mouse
+            rid.dwFlags = RIDEV_INPUTSINK
+            rid.hwndTarget = self._raw_hwnd
+            if not user32.RegisterRawInputDevices(ctypes.byref(rid), 1, ctypes.sizeof(RAWINPUTDEVICE)):
+                user32.DestroyWindow(self._raw_hwnd)
+                self._raw_hwnd = None
+        except Exception:
+            self._raw_hwnd = None
+
+    def _teardown_raw_input(self) -> None:
+        hwnd = self._raw_hwnd
+        self._raw_hwnd = None
+        if not hwnd:
+            return
+        try:
+            rid = RAWINPUTDEVICE()
+            rid.usUsagePage = 0x01
+            rid.usUsage = 0x02
+            rid.dwFlags = RIDEV_REMOVE
+            rid.hwndTarget = None
+            user32.RegisterRawInputDevices(ctypes.byref(rid), 1, ctypes.sizeof(RAWINPUTDEVICE))
+        except Exception:
+            pass
+        try:
+            user32.DestroyWindow(hwnd)
+        except Exception:
+            pass
 
     def _pump_messages(self) -> None:
         msg = w.MSG()
-        # 低级钩依赖本线程消息泵；一次多抽几条，避免堆积
-        for _ in range(32):
+        for _ in range(64):
             if not user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):  # PM_REMOVE
                 break
+            if int(msg.message) == WM_INPUT:
+                self._handle_raw_input(msg.lParam)
+                continue
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
-    def _install_wheel_hook(self) -> None:
-        if self._hook:
-            return
-
-        def _proc(n_code: int, wparam: int, lparam: int) -> int:
-            # 钩子里只做极轻量入队；任何异常也必须 CallNextHookEx，否则鼠标卡死
-            try:
-                if n_code >= 0 and wparam in (WM_MOUSEWHEEL, WM_MOUSEHWHEEL):
-                    info = ctypes.cast(lparam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-                    raw = ctypes.c_short((info.mouseData >> 16) & 0xFFFF).value
-                    steps = int(raw / WHEEL_DELTA) if WHEEL_DELTA else 0
-                    if steps == 0 and raw != 0:
-                        steps = 1 if raw > 0 else -1
-                    try:
-                        self._wheel_raw.put_nowait((
-                            int(info.pt.x),
-                            int(info.pt.y),
-                            int(steps),
-                            bool(wparam == WM_MOUSEHWHEEL),
-                        ))
-                    except queue.Full:
-                        pass
-            except Exception:
-                pass
-            # LL 钩子第一参可为 NULL
-            return int(user32.CallNextHookEx(None, n_code, wparam, lparam) or 0)
-
+    def _handle_raw_input(self, lparam) -> None:
         try:
-            self._hook_proc = LowLevelMouseProc(_proc)
-            hook = user32.SetWindowsHookExW(
-                WH_MOUSE_LL,
-                self._hook_proc,
-                None,
-                0,
+            size = ctypes.c_uint(0)
+            hdr = ctypes.sizeof(RAWINPUTHEADER)
+            user32.GetRawInputData(
+                lparam, RID_INPUT, None, ctypes.byref(size), hdr,
             )
-            if not hook:
-                # 装钩失败则放弃滑轮录制，绝不能卡住鼠标
-                self._hook_proc = None
-                self._hook = None
+            if size.value <= 0 or size.value > 4096:
                 return
-            self._hook = hook
-        except Exception:
-            self._hook = None
-            self._hook_proc = None
-
-    def _uninstall_wheel_hook(self) -> None:
-        hook = self._hook
-        self._hook = None
-        if hook:
+            buf = (ctypes.c_byte * size.value)()
+            got = user32.GetRawInputData(
+                lparam, RID_INPUT, ctypes.byref(buf), ctypes.byref(size), hdr,
+            )
+            if got == 0xFFFFFFFF or got == 0:
+                return
+            ri = ctypes.cast(buf, ctypes.POINTER(RAWINPUT)).contents
+            if ri.header.dwType != RIM_TYPEMOUSE:
+                return
+            flags = int(ri.mouse.u.buttons.usButtonFlags)
+            data = ctypes.c_short(ri.mouse.u.buttons.usButtonData).value
+            horizontal = False
+            if flags & RI_MOUSE_WHEEL:
+                horizontal = False
+            elif flags & RI_MOUSE_HWHEEL:
+                horizontal = True
+            else:
+                return
+            steps = int(data / WHEEL_DELTA) if WHEEL_DELTA else 0
+            if steps == 0 and data != 0:
+                steps = 1 if data > 0 else -1
+            x, y = _cursor()
             try:
-                user32.UnhookWindowsHookEx(hook)
-            except Exception:
+                self._wheel_raw.put_nowait((x, y, int(steps), horizontal))
+            except queue.Full:
                 pass
-        self._hook_proc = None
+        except Exception:
+            pass
 
     def _drain_wheel_raw(self) -> None:
         while True:

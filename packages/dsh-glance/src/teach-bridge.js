@@ -39,6 +39,8 @@ import {
   attachClickFramesToPlaybook,
   createFrameRecorder,
   describeClickFramesForPrompt,
+  MAX_DIGEST_IMAGES,
+  teachFramesDir,
 } from './teach-frames.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
@@ -54,13 +56,17 @@ export function buildTeachDigestPrompt(goal, narrative, frameCountOrImages) {
   const images = Array.isArray(frameCountOrImages) ? frameCountOrImages : null
   const frameCount = images ? images.length : Number(frameCountOrImages) || 0
   const legend = images ? describeClickFramesForPrompt(images) : ''
+  const paths = images?.length
+    ? images.map((img, i) => `图${i + 1}文件：${img.path || img.name || ''}`).filter((l) => !l.endsWith('：')).join('\n')
+    : ''
   return (
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
     + `【教学理解·仅学习】目标：「${String(goal || '').slice(0, 80)}」。`
-    + `附图 ${frameCount} 张（点击为鼠标附近小图，图内坐标已按该图规格换算；执行时不再带图）。\n`
+    + `本消息附带 ${frameCount} 张 PNG（鼠标附近小图；图内坐标已换算）。\n`
     + (legend ? `附图与点击对应关系：\n${legend}\n` : '')
-    + `步骤摘要：\n${String(narrative || '').slice(0, 500)}\n`
-    + '请只按「图内坐标」在对应小图上找点击目标，不要当成整屏坐标；'
+    + (paths ? `本地路径（附件失败时可对照）：\n${paths}\n` : '')
+    + `步骤摘要：\n${String(narrative || '').slice(0, 700)}\n`
+    + '请结合附图看点击目标；只按「图内坐标」找，不要当成整屏坐标；'
     + '「用户键入文字「…」」是亲手打的字，记进语义。'
     + '用一两句话说明在教什么自动化。'
     + '若看不清关键界面，只回复 NEED_MORE；看清了回复 OK: <摘要>。'
@@ -423,7 +429,12 @@ export function createTeachBridge(options) {
       return { summary: narrative, usedFrames: 0, supplemented: false }
     }
     await frames.snapEnd()
-    let imgs = await frames.loadPngBuffers()
+    const loadDigest = async () => (
+      typeof frames.loadDigestImages === 'function'
+        ? frames.loadDigestImages(MAX_DIGEST_IMAGES)
+        : frames.loadPngBuffers(MAX_DIGEST_IMAGES)
+    )
+    let imgs = await loadDigest()
     if (!imgs.length) {
       return { summary: narrative, usedFrames: 0, supplemented: false }
     }
@@ -436,13 +447,16 @@ export function createTeachBridge(options) {
         preferredId: preferred,
         images: imageList,
         attachments: options.attachments,
+        maxImages: MAX_DIGEST_IMAGES,
+        log,
       })
       if (!woken.ok) {
         log(`teach digest 叫醒失败：${woken.reason}`)
         return { needMore: false, summary: narrative }
       }
+      log(`teach digest 附图成功 ${woken.imageCount ?? 0} 张（失败 ${woken.imageFailed ?? 0}）`)
       const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 60_000,
+        timeoutMs: 90_000,
         isAborted: () => stopped,
       })
       if (!reply.ok || !reply.text) {
@@ -456,7 +470,7 @@ export function createTeachBridge(options) {
     if (parsed.needMore) {
       await frames.supplement('before')
       await frames.supplement('after')
-      imgs = await frames.loadPngBuffers()
+      imgs = await loadDigest()
       supplemented = true
       parsed = await askOnce(imgs)
     }
@@ -465,6 +479,7 @@ export function createTeachBridge(options) {
       summary: parsed.summary || narrative,
       usedFrames: imgs.length,
       supplemented,
+      frameDir: teachFramesDir(options.home, id),
     }
   }
 
@@ -619,16 +634,16 @@ export function createTeachBridge(options) {
 
     if (harness.ok) {
       await broadcastToDshPet(
-        `理解清楚了（${frameMeta.clicks ?? frameMeta.count} 次点击截图，执行时不再看这些图）。`
-        + `学习文件已存，Harness 自动化「${clip(goal, 24)}」已创建（暂停）。`
-        + '我不会现在动手。要跑时说「再做一次」或自动化页立即运行。',
-        { pet, duration: 16_000 },
+        `理解清楚了。本地学习文件与自动化已建（id=${clip(id, 20)}）。`
+        + `Harness 自动化页可找「小蓝鲸｜${clip(goal, 20)}」（id=${clip(harness.scheduleId, 18)}，先暂停不跑）。`
+        + '要跑时说「再做一次」或到自动化页立即运行。这次不动手。',
+        { pet, duration: 18_000 },
       )
     } else {
       await broadcastToDshPet(
-        `学习文件已存（含 ${frameMeta.count} 张教学截图），本地自动化已建；`
-        + `Harness 页登记失败（${harness.reason || '无 schedule'}）。这次不动手。`,
-        { pet, duration: 16_000 },
+        `本地学习/自动化已建（id=${clip(id, 20)}，含 ${frameMeta.count} 张教学截图）；`
+        + `Harness 页登记失败：${harness.reason || '无 schedule'}。可说「再做一次」跑本地版。这次不动手。`,
+        { pet, duration: 18_000 },
       )
     }
     sessionId = null

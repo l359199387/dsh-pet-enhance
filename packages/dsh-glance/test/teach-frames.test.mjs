@@ -12,8 +12,10 @@ import {
   learnedFramesDir,
   mapClickToCropImage,
   mapScreenToImageCoords,
+  MAX_DIGEST_IMAGES,
   MAX_KEY_FRAMES,
   resolveVirtualBounds,
+  sampleFramesForDigest,
 } from '../src/teach-frames.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-frames-'))
@@ -24,6 +26,14 @@ const tinyPng = Buffer.from(
   + '0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
   'hex',
 )
+
+test('sampleFramesForDigest：过多时均匀抽且保首尾', () => {
+  const list = Array.from({ length: 20 }, (_, i) => ({ role: 'click', i, file: `${i}.png` }))
+  const picked = sampleFramesForDigest(list, 8)
+  assert.ok(picked.length <= MAX_DIGEST_IMAGES)
+  assert.equal(picked[0].i, 0)
+  assert.equal(picked[picked.length - 1].i, 19)
+})
 
 test('clickCropRegion：居中 400 并贴边', () => {
   const mid = clickCropRegion(800, 450, { x: 0, y: 0, w: 1600, h: 900 }, 400)
