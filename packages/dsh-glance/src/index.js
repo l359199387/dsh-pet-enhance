@@ -18,8 +18,11 @@ import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
 import {
+  broadcastToDshPet,
   clearGlanceMenu,
   callDshPet,
+  MENU_LIVE_OFF,
+  MENU_LIVE_ON,
   MENU_OWNER,
   MENU_STOP,
   probeDshPet,
@@ -28,6 +31,8 @@ import {
   setDshPetBaseUrl,
 } from './dsh-pet.js'
 import { createChatBridge } from './chat-bridge.js'
+import { createLiveWatch } from './live-watch.js'
+import { loadSettings, saveSettings } from './settings.js'
 
 export const name = 'dsh-glance'
 
@@ -283,17 +288,43 @@ function installDshPetBridge(ctx, log, state, disposers) {
 
     let stopped = false
     let registered = false
-    const bridge = createChatBridge({
-      home: glanceHome(),
-      sidecar: () => state.sidecar,
-      log,
+    let liveWatch = false
+    const home = glanceHome()
+    const petHooks = {
       onLooking: () => state.glance.setPet('looking'),
       onIdle: () => {
         if (state.glance.snapshot().pet.state.data === 'looking') {
           state.glance.setPet('idle')
         }
       },
+    }
+    const bridge = createChatBridge({
+      home,
+      sidecar: () => state.sidecar,
+      log,
+      ...petHooks,
     })
+    const live = createLiveWatch({
+      home,
+      sidecar: () => state.sidecar,
+      log,
+      ...petHooks,
+    })
+
+    const syncLive = () => {
+      if (liveWatch) live.start()
+      else live.stop()
+    }
+
+    const pushMenu = async () => {
+      const r = await registerGlanceMenu({ liveWatch })
+      if (r.ok) {
+        registered = true
+        return true
+      }
+      log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
+      return false
+    }
 
     const ensureMenu = async () => {
       if (stopped) return
@@ -302,15 +333,26 @@ function installDshPetBridge(ctx, log, state, disposers) {
         registered = false
         return
       }
-      if (!registered) {
-        const r = await registerGlanceMenu()
-        if (r.ok) {
-          registered = true
-          log('已在 dsh-pet 菜单挂上「小蓝鲸急停」；对话请悬停宠物按 L，说「看一眼屏幕」')
-        } else {
-          log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
-        }
+      const was = registered
+      if (await pushMenu() && !was) {
+        log(`已在 dsh-pet「更多」挂上「实时看屏幕」与「${MENU_STOP}」`)
       }
+    }
+
+    const setLiveWatch = async (next) => {
+      liveWatch = Boolean(next)
+      await saveSettings(home, { liveWatch }).catch((e) => {
+        log(`保存设置失败：${e?.message ?? e}`)
+      })
+      syncLive()
+      await pushMenu()
+      await broadcastToDshPet(
+        liveWatch
+          ? '好，开始盯着屏幕；有变化我会吱一声。想细看再说「看一眼桌面」。'
+          : '好，不盯了。你随时可以说「看一眼桌面」。',
+        { duration: 10_000 },
+      )
+      log(`实时看屏幕 → ${liveWatch ? '开' : '关'}`)
     }
 
     const pollMenu = async () => {
@@ -320,11 +362,23 @@ function installDshPetBridge(ctx, log, state, disposers) {
         { method: 'GET', timeoutMs: 3_000 },
       )
       if (!r.ok || !r.data?.ok || !r.data.events) return
-      if (r.data.events[MENU_STOP]) {
+      const ev = r.data.events
+      if (ev[MENU_STOP]) {
         state.glance.panic()
         log('dsh-pet 菜单触发小蓝鲸急停')
       }
+      // 点当前文案即翻转；开/关两态都认，避免重注册竞态漏点。
+      if (ev[MENU_LIVE_ON] || ev[MENU_LIVE_OFF]) {
+        await setLiveWatch(!liveWatch)
+      }
     }
+
+    loadSettings(home).then((s) => {
+      if (stopped) return
+      liveWatch = Boolean(s.liveWatch)
+      syncLive()
+      pushMenu().catch(() => {})
+    }).catch(() => {})
 
     bridge.start()
     ensureMenu().catch(() => {})
@@ -336,6 +390,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       stopped = true
       clearInterval(timer)
       bridge.stop()
+      live.stop()
       if (registered) clearGlanceMenu().catch(() => {})
     }
   }

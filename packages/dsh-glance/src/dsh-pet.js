@@ -13,8 +13,19 @@
 export const DSH_PET_PREFIX = '/dsh-pet-7340'
 export const MENU_OWNER = 'dsh-glance'
 export const MENU_STOP = '小蓝鲸急停'
+export const MENU_LIVE_ON = '实时看屏幕 · 开'
+export const MENU_LIVE_OFF = '实时看屏幕 · 关'
 /** 动作类接口必填；any = 网页/桌面都能收到。 */
 export const PET_SURFACE = 'any'
+
+/** 右键开关文案：开/关两态（dsh-pet 菜单没有原生勾选）。 */
+export function liveWatchMenuLabel(enabled) {
+  return enabled ? MENU_LIVE_ON : MENU_LIVE_OFF
+}
+
+export function glanceMenuLabels(liveWatchEnabled) {
+  return [liveWatchMenuLabel(liveWatchEnabled), MENU_STOP]
+}
 
 /** Host 装配期写入；浏览器半身可以继续走相对路径（base 为空）。 */
 let defaultBaseUrl = ''
@@ -59,16 +70,20 @@ function withSurface(path, surface = PET_SURFACE) {
   return `${raw}${join}surface=${encodeURIComponent(surface)}`
 }
 
-/** 在 dsh-pet 右键「更多」里挂急停；对话请用它自带的 L，不要另开输入框。 */
+/**
+ * 在 dsh-pet 右键「更多」里挂：实时看屏幕开关 + 急停。
+ * @param {{ liveWatch?: boolean, target?: string } & object} [options]
+ */
 export async function registerGlanceMenu(options = {}) {
+  const { liveWatch = false, target = 'both', ...rest } = options
   return callDshPet('/menu/item', {
     method: 'POST',
     body: {
       owner: MENU_OWNER,
-      labels: [MENU_STOP],
-      target: 'web',
+      labels: glanceMenuLabels(liveWatch),
+      target,
     },
-    ...options,
+    ...rest,
   })
 }
 
