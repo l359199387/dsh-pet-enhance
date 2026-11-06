@@ -1,5 +1,5 @@
 /**
- * 教学模式：只记操作 → Host 短消化成 playbook → 不懂就问 → 脚本步本地跑，glance 步短叫醒。
+ * 教学模式：眼睛+操作证据 → 教完理解 → 不懂就问 → 问清后创建「学习文件↔自动化」1:1 → 再执行。
  *
  * 敏感窗/密码类输入：只落本地 secrets，发给模型的提示里不出现原文。
  *
@@ -20,15 +20,17 @@ import {
   compactGlanceHints,
   createTeachSession,
   detectTeachAmbiguities,
-  findPlaybookForQuery,
   narratePlan,
   newTeachSessionId,
-  readPlaybook,
   readTeachEvents,
   readTeachSecrets,
-  savePlaybook,
   updateTeachMeta,
 } from './teach-store.js'
+import {
+  createLearnedAutomationPair,
+  findAutomationForQuery,
+  readAutomationPlaybook,
+} from './learned-automation.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
@@ -188,8 +190,8 @@ export function createTeachBridge(options) {
   let goal = ''
   let lastEventAt = 0
   let askedIdle = false
-  /** @type {string | null} 最近一次落盘的 playbook id，便于「再做一次」 */
-  let lastPlaybookId = null
+  /** @type {string | null} 最近一对 learned↔automation 的 id */
+  let lastPairId = null
 
   function sidecar() {
     return typeof options.sidecar === 'function' ? options.sidecar() : options.sidecar
@@ -286,7 +288,8 @@ export function createTeachBridge(options) {
       body: { state: 'working', task: 'teaching' },
     }).catch(() => {})
     await broadcastToDshPet(
-      `好，我看着学（实时看屏幕已开）。目标：${clip(goal, 40)}。你操作；做完告诉我。我会短消化成脚本，不懂就问你。密码只记本地。`,
+      `好，眼睛开着，我跟着学。目标：${clip(goal, 40)}。你点、你输入；做完告诉我。`
+      + '我会先理解，不懂就问，问清了再建成自动化（和学习记录一一对应）。密码只记本地。',
       { pet, duration: 14_000 },
     )
     if (!observeTimer) {
@@ -318,42 +321,46 @@ export function createTeachBridge(options) {
   }
 
   /** 歧义追问：不懂就问清（confirm 气泡）。 */
+  /**
+   * 理解后追问；返回已澄清的 code 列表。不懂就停，不创建自动化。
+   * @returns {Promise<{ ok: boolean, clarified: string[], reason?: string }>}
+   */
   async function clarifyAmbiguities(id, runGoal, steps) {
     const questions = detectTeachAmbiguities(runGoal, steps)
-    if (!questions.length) return { ok: true }
+    const clarified = []
+    if (!questions.length) return { ok: true, clarified }
     if (!options.confirmGate?.ask) {
-      // 无确认闸时：目标不清则停，避免瞎跑
       if (questions.some((q) => q.code === 'goal' || q.code === 'empty')) {
         await broadcastToDshPet(
           `我还不懂：${questions[0].summary}请再说清楚目标后再教一次。`,
           { pet, duration: 14_000 },
         )
-        return { ok: false, reason: 'need-clarify' }
+        return { ok: false, clarified, reason: 'need-clarify' }
       }
-      return { ok: true }
+      return { ok: true, clarified: questions.map((q) => q.code) }
     }
     for (const q of questions) {
-      await broadcastToDshPet(`有一点要问清：${q.summary}`, { pet, duration: 10_000 })
+      await broadcastToDshPet(`理解时卡住了，要问清：${q.summary}`, { pet, duration: 10_000 })
       const verdict = await options.confirmGate.ask({
         summary: q.summary,
         tier: 'L2',
         action: { teachSession: id, clarify: q.code },
       })
       if (!verdict.allow) {
-        await broadcastToDshPet('好，先停。想清楚了再教我。', { pet, duration: 8_000 })
+        await broadcastToDshPet('好，先不建自动化。想清楚了再教我。', { pet, duration: 8_000 })
         await updateTeachMeta(options.home, id, { status: 'cancelled', clarify: q.code })
-        return { ok: false, reason: 'user-deny' }
+        return { ok: false, clarified, reason: 'user-deny' }
       }
+      clarified.push(q.code)
     }
-    return { ok: true }
+    return { ok: true, clarified }
   }
 
   async function stopAndRun() {
     if (!teaching || !sessionId) {
-      // 不在录制中：尝试再次执行已学 playbook
       const ran = await tryRunMatchingPlaybook('再做一次刚才教的')
       if (ran) return
-      await broadcastToDshPet('现在不在教学模式。想教我直接说；要再跑已学会的也可以说。', {
+      await broadcastToDshPet('现在不在教学模式。想教我直接说；要跑已建好的自动化也可以说。', {
         pet,
         duration: 10_000,
       })
@@ -384,36 +391,54 @@ export function createTeachBridge(options) {
       return
     }
 
-    // Host 零模型短消化 → playbook
+    // 1) 理解操作（Host 短消化，0 模型 token）
+    await broadcastToDshPet('好，我开始理解你刚才的操作…', { pet, duration: 6_000 })
     const playbook = buildPlaybook(goal, steps, id)
+    const narrative = narratePlan(steps)
+    await updateTeachMeta(options.home, id, { status: 'understanding' })
+
+    // 2) 不动就问，问清才继续
     const clarified = await clarifyAmbiguities(id, goal, steps)
     if (!clarified.ok) {
       sessionId = null
       return
     }
 
-    await savePlaybook(options.home, playbook)
-    lastPlaybookId = id
+    // 3) 问清后创建：学习文件 ↔ 自动化任务（同 id 一一对应）
+    const pair = await createLearnedAutomationPair(options.home, {
+      id,
+      goal,
+      teachSessionId: id,
+      understanding: {
+        summary: narrative,
+        stats: playbook.stats,
+        clarified: clarified.clarified,
+      },
+      evidence: steps,
+      playbook,
+    })
+    lastPairId = id
     await updateTeachMeta(options.home, id, {
-      status: 'playbook',
+      status: 'paired',
+      learnedId: pair.learn.id,
+      automationId: pair.task.id,
       playbookStats: playbook.stats,
     })
 
-    const narrative = narratePlan(steps)
     await broadcastToDshPet(
-      `消化好了：脚本 ${playbook.stats.script} 步 / 需看屏 ${playbook.stats.glance} 步。\n`
-      + `${clip(narrative, 100)}\n下次同任务会少费口舌。`,
+      `理解清楚了。已记学习文件，并建好自动化「${clip(goal, 32)}」`
+      + `（脚本 ${playbook.stats.script} / 看屏 ${playbook.stats.glance}，一一对应）。`,
       { pet, duration: 14_000 },
     )
 
     if (!actOn(options.home)) {
-      await broadcastToDshPet('要动手请先打开「允许动手」，然后再说去做。', { pet, duration: 12_000 })
+      await broadcastToDshPet('要跑自动化请先打开「允许动手」，然后再说去做。', { pet, duration: 12_000 })
       await updateTeachMeta(options.home, id, { status: 'awaiting-act' })
       sessionId = null
       return
     }
 
-    await runPlaybook(playbook)
+    await runPlaybook(pair.playbook)
     sessionId = null
   }
 
@@ -501,8 +526,8 @@ export function createTeachBridge(options) {
     } else {
       await broadcastToDshPet(
         reply.reason === 'timeout'
-          ? '看屏步超时了。playbook 已保存，下次可少费口舌再跑。'
-          : '看屏步没文字结果；去主会话看看。playbook 已存。',
+          ? '看屏步超时了。学习文件和自动化已建好，下次可直接跑。'
+          : '看屏步没文字结果；去主会话看看。学习/自动化已存。',
         { pet, duration: 12_000 },
       )
       await updateTeachMeta(options.home, id, {
@@ -513,30 +538,37 @@ export function createTeachBridge(options) {
   }
 
   /**
-   * 再次执行：匹配已学 playbook，省消化 token。
+   * 再次执行：按 learned↔automation 1:1 匹配，省消化 token。
    * @returns {Promise<boolean>} 是否已接手处理
    */
   async function tryRunMatchingPlaybook(userText) {
     if (!actOn(options.home)) return false
-    let playbook = await findPlaybookForQuery(options.home, userText)
-    if (!playbook && lastPlaybookId) {
-      playbook = await readPlaybook(options.home, lastPlaybookId)
+    let playbook = await findAutomationForQuery(options.home, userText)
+    if (!playbook && lastPairId) {
+      playbook = await readAutomationPlaybook(options.home, lastPairId)
     }
     if (!playbook?.steps?.length) return false
 
     await broadcastToDshPet(
-      `找到已学「${clip(playbook.goal, 36)}」，按脚本跑（少费口舌）…`,
+      `找到自动化「${clip(playbook.goal, 36)}」（对应学习文件），开跑…`,
       { pet, duration: 8_000 },
     )
     await runPlaybook(playbook)
     return true
   }
 
-  /** @deprecated 本地逐步；现用 runPlaybook */
+  /** @deprecated */
   async function runPlanLocal(id, runGoal, steps) {
     const playbook = buildPlaybook(runGoal, steps, id)
-    await savePlaybook(options.home, playbook)
-    await runPlaybook(playbook)
+    const pair = await createLearnedAutomationPair(options.home, {
+      id,
+      goal: runGoal,
+      teachSessionId: id,
+      understanding: { summary: narratePlan(steps), stats: playbook.stats, clarified: [] },
+      evidence: steps,
+      playbook,
+    })
+    await runPlaybook(pair.playbook)
   }
 
   async function tick() {

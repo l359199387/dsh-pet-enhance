@@ -50,7 +50,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.2.3'
+export const VERSION = '0.2.4'
 
 const startedAt = Date.now()
 
@@ -694,6 +694,8 @@ export async function apply(ctx) {
     const home = glanceHome()
     mkdirSync(join(home, 'episodes'), { recursive: true })
     mkdirSync(join(home, 'teach'), { recursive: true })
+    mkdirSync(join(home, 'learned'), { recursive: true })
+    mkdirSync(join(home, 'automations'), { recursive: true })
     ensureDesktopToken(home)
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)

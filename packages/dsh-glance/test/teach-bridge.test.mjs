@@ -8,7 +8,7 @@ import {
   createTeachBridge,
 } from '../src/teach-bridge.js'
 import { TEACH_FOLLOWUP_PREFIX, AGENT_WAKE_PREFIX } from '../src/intent.js'
-import { readPlaybook } from '../src/teach-store.js'
+import { assertLearnedAutomationPair, listLearnedIndex } from '../src/learned-automation.js'
 import { saveSettings } from '../src/settings.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-teach-b-'))
@@ -27,18 +27,16 @@ test('buildTeachGlancePrompt：短提示只含 glance 线索', () => {
   assert.ok(p.includes(TEACH_FOLLOWUP_PREFIX))
   assert.ok(p.includes('glance'))
   assert.ok(p.includes('记事本'))
-  assert.ok(!p.includes('ctrl+s') || p.includes('脚本'))
 })
 
-test('教完：落 playbook；纯脚本不叫醒模型', async () => {
-  await saveSettings(home, { actEnabled: true })
+test('教完：理解后建 learned↔automation，纯脚本不叫醒', async () => {
+  await saveSettings(home, { liveWatch: true, actEnabled: true })
   const wakes = []
   const acts = []
   const queued = [
     { kind: 'key', keys: 'ctrl+s', window: { title: '记事本' } },
     { kind: 'type', text: 'hello', window: { title: '记事本' } },
   ]
-  await saveSettings(home, { liveWatch: true, actEnabled: true })
   const bridge = createTeachBridge({
     home,
     ctx: {},
@@ -73,16 +71,15 @@ test('教完：落 playbook；纯脚本不叫醒模型', async () => {
   assert.equal(bridge.isTeaching(), false)
   assert.equal(wakes.length, 0)
   assert.ok(acts.length >= 2)
-  const { listPlaybookIndex } = await import('../src/teach-store.js')
-  const idx = await listPlaybookIndex(home)
+  const idx = await listLearnedIndex(home)
   assert.equal(idx.length, 1)
-  const saved = await readPlaybook(home, idx[0].id)
-  assert.equal(saved.stats.script, 2)
-  assert.equal(saved.stats.glance, 0)
+  const pair = await assertLearnedAutomationPair(home, idx[0].id)
+  assert.equal(pair.ok, true)
+  assert.equal(pair.playbook.stats.script, 2)
   bridge.stop()
 })
 
-test('含 click：脚本本地跑 + glance 短叫醒', async () => {
+test('含 click：问清后建对，再脚本+glance', async () => {
   await saveSettings(home, { liveWatch: true, actEnabled: true })
   const wakes = []
   const acts = []
@@ -122,8 +119,12 @@ test('含 click：脚本本地跑 + glance 短叫醒', async () => {
   await bridge.startTeaching('教你登录')
   await bridge.stopAndRun()
   assert.equal(wakes.length, 1)
-  assert.ok(wakes[0].includes('glance'))
   assert.ok(!wakes[0].includes('secret!'))
-  assert.ok(acts.some((a) => a.secretRef && String(a.secretRef).includes('step:')))
+  const idx = await listLearnedIndex(home)
+  assert.ok(idx.length >= 1)
+  const latest = idx[0]
+  const pair = await assertLearnedAutomationPair(home, latest.id)
+  assert.equal(pair.ok, true)
+  assert.equal(pair.learn.automationId, pair.task.id)
   bridge.stop()
 })

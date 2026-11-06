@@ -131,7 +131,7 @@
   - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
   - `teach` / `teach_end` → 教学模式；`chat` → 不另抢话（桌宠自己已答）。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **教学理解执行**：分流判定要学 → **须开「实时看屏幕」**（未开则头顶提示/确认后代开，否则不开课）→ 你自己操作，sidecar `observe` 只记录 → Host **零模型短消化**成 `*.playbook.json`（script 步本地跑、glance 步短叫醒）→ 歧义用确认气泡问清。再次同任务优先匹配 playbook，少耗 token。密码类只进 `.secrets.json`，证据里用 `secretRef`。
+- **教学 → 自动化（1:1）**：须开「实时看屏幕」→ 你操作（眼睛+点击/输入证据）→ 教完后 **先理解** → **不懂就问清** → 再同时写入 `learned/<id>/`（学习文件）与 `automations/<id>/`（自动化任务，同 id 一一对应）→ 执行时跑自动化（script 本地 / glance 短叫醒）。「学会了吗」查 learned。密码只进 teach secrets，`secretRef` 不上模型。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。
