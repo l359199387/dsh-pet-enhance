@@ -14,12 +14,20 @@ import ctypes
 import ctypes.wintypes as w
 
 user32 = ctypes.windll.user32
+try:
+    imm32 = ctypes.windll.imm32
+except Exception:  # noqa: BLE001 — 非 Windows / 无 imm32
+    imm32 = None
 
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
 VK_MBUTTON = 0x04
 VK_XBUTTON1 = 0x05  # 侧键后退
 VK_XBUTTON2 = 0x06  # 侧键前进
+
+# IME：组字时按键是拼音，不是正文；只收 RESULTSTR 上屏的汉字/英文
+GCS_COMPSTR = 0x0008
+GCS_RESULTSTR = 0x0800
 
 # 滑轮：用 Raw Input（消息窗），不用 WH_MOUSE_LL——低级钩会拖慢整机鼠标
 WM_INPUT = 0x00FF
@@ -150,6 +158,43 @@ def _key_down(vk: int) -> bool:
     return bool(user32.GetAsyncKeyState(vk) & 0x8000)
 
 
+def _is_pet_chrome_title(title: str) -> bool:
+    t = title or ""
+    low = t.lower()
+    return ("dsh-pet" in low) or ("桌宠" in t)
+
+
+def _ime_state(hwnd: int) -> tuple[str, bool]:
+    """返回 (刚上屏的成词, 是否处于 IME 开/组字中应忽略拉丁键)。"""
+    if not imm32 or not hwnd:
+        return "", False
+    try:
+        himc = imm32.ImmGetContext(w.HWND(hwnd))
+    except Exception:
+        return "", False
+    if not himc:
+        return "", False
+    try:
+        open_ime = bool(imm32.ImmGetOpenStatus(himc))
+        result = ""
+        n = int(imm32.ImmGetCompositionStringW(himc, GCS_RESULTSTR, None, 0) or 0)
+        if n > 0:
+            buf = ctypes.create_unicode_buffer(n // 2 + 2)
+            imm32.ImmGetCompositionStringW(himc, GCS_RESULTSTR, buf, n + 2)
+            result = buf.value or ""
+        n_comp = int(imm32.ImmGetCompositionStringW(himc, GCS_COMPSTR, None, 0) or 0)
+        # 中文 IME 打开时，物理键是拼音/选词，不能当正文；成词走 RESULTSTR
+        skip_latin = open_ime or n_comp > 0
+        return result, skip_latin
+    except Exception:
+        return "", False
+    finally:
+        try:
+            imm32.ImmReleaseContext(w.HWND(hwnd), himc)
+        except Exception:
+            pass
+
+
 def _vk_to_text(vk: int, shift: bool) -> str | None:
     if 0x30 <= vk <= 0x39:  # 0-9
         return chr(vk)
@@ -184,6 +229,7 @@ class ObserveSession:
         self._type_sensitive = False
         self._type_window = ""
         self._type_at = 0.0
+        self._last_ime_result = ""
         self._last_click_at = 0.0
         # 滑轮手势：开始发 scroll_start，静止后发 scroll_end（中间格数只累加）
         self._scroll_active = False
@@ -458,6 +504,26 @@ class ObserveSession:
                     "sensitive": sensitive,
                 })
 
+    def _append_type(self, text: str, title: str, sensitive: bool) -> None:
+        if not text:
+            return
+        if not self._type_buf:
+            self._type_window = title
+            self._type_sensitive = sensitive
+        else:
+            self._type_sensitive = self._type_sensitive or sensitive
+        self._type_buf += text
+        self._type_at = time.time()
+
+    def _sync_prev_keys(self) -> None:
+        """IME 吞键时也要更新边沿，避免松手后一次补发一串。"""
+        for vk in list(range(0x08, 0x93)):
+            if vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):
+                continue
+            if vk in (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2):
+                continue
+            self._prev_keys[vk] = _key_down(vk)
+
     def _tick_keys(self) -> None:
         shift = _key_down(0x10)
         ctrl = _key_down(0x11)
@@ -465,6 +531,30 @@ class ObserveSession:
         win = _key_down(0x5B)
         title = _foreground_title()
         sensitive = self._is_sensitive(title)
+        hwnd = int(user32.GetForegroundWindow() or 0)
+
+        # 对桌宠说话（「我教完了」等）不是业务输入，绝不能进自动化
+        if _is_pet_chrome_title(title):
+            self._flush_type()
+            self._sync_prev_keys()
+            return
+
+        ime_result, ime_skip_latin = _ime_state(hwnd)
+        if ime_result and ime_result != self._last_ime_result:
+            # 同一成词可能连读几拍；只在变化时追加
+            delta = ime_result
+            if self._last_ime_result and ime_result.startswith(self._last_ime_result):
+                delta = ime_result[len(self._last_ime_result):]
+            self._last_ime_result = ime_result
+            if delta:
+                self._append_type(delta, title, sensitive)
+        elif not ime_result:
+            self._last_ime_result = ""
+
+        if ime_skip_latin and not (ctrl or alt or win):
+            # 仍允许记组合键；纯拼音/选词数字丢掉
+            self._sync_prev_keys()
+            return
 
         # 组合键：ctrl/alt/win + 字母
         if ctrl or alt or win:
@@ -540,13 +630,7 @@ class ObserveSession:
             ch = _vk_to_text(vk, shift)
             if ch is None:
                 continue
-            if not self._type_buf:
-                self._type_window = title
-                self._type_sensitive = sensitive
-            else:
-                self._type_sensitive = self._type_sensitive or sensitive
-            self._type_buf += ch
-            self._type_at = time.time()
+            self._append_type(ch, title, sensitive)
 
 
 _SESSION = ObserveSession()

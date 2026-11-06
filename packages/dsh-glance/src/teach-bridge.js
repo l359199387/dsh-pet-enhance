@@ -16,6 +16,7 @@ import {
 import {
   appendTeachEvent,
   buildPlaybook,
+  isTeachNoiseTypedText,
   buildPublicPlan,
   compactGlanceHints,
   createTeachSession,
@@ -686,7 +687,12 @@ export function createTeachBridge(options) {
     const id = playbook.id
     await readTeachSecrets(options.home, id)
     const runAct = options.runAct
-    const scriptSteps = (playbook.steps || []).filter((s) => s.mode === 'script')
+    // 旧 playbook 里可能残留「wojiaowanle1」等教完了拼音；执行时跳过
+    const scriptSteps = (playbook.steps || []).filter((s) => {
+      if (s.mode !== 'script') return false
+      if (s.action === 'type' && !s.secretRef && isTeachNoiseTypedText(s.text)) return false
+      return true
+    })
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
     const smart = playbook.approach === 'smart'
       || playbook.strategy?.approach === 'smart'

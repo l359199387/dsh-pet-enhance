@@ -9,6 +9,7 @@ import {
   compactGlanceHints,
   detectTeachAmbiguities,
   findPlaybookForQuery,
+  isTeachNoiseTypedText,
   narratePlan,
   savePlaybook,
 } from '../src/teach-store.js'
@@ -33,6 +34,25 @@ test('buildPlaybook：用户键入明文→文字 script；点击→glance；sec
   assert.equal(pb.steps[3].secretRef, 'sid1/step:3')
   assert.match(compactGlanceHints(pb), /click@A/)
   assert.match(narratePlan(pb.steps), /用户键入文字「meirixinqing1」/)
+})
+
+test('isTeachNoiseTypedText：教完了拼音/汉字不算业务输入', () => {
+  assert.equal(isTeachNoiseTypedText('wojiaowanle1'), true)
+  assert.equal(isTeachNoiseTypedText('wojiexuewanle1'), true)
+  assert.equal(isTeachNoiseTypedText('我教完了'), true)
+  assert.equal(isTeachNoiseTypedText('1', { prevText: 'wojiaowanle' }), true)
+  assert.equal(isTeachNoiseTypedText('meirixinqing1'), false)
+  assert.equal(isTeachNoiseTypedText('hello'), false)
+})
+
+test('buildPublicPlan：丢掉教完了噪声与桌宠窗键入', () => {
+  const steps = buildPublicPlan([
+    { kind: 'type', i: 0, text: 'hello', window: { title: '记事本' } },
+    { kind: 'type', i: 1, text: 'wojiaowanle1', window: { title: '记事本' } },
+    { kind: 'type', i: 2, text: '1', window: { title: '记事本' } },
+    { kind: 'type', i: 3, text: 'bye', window: { title: 'dsh-pet 桌宠（桌面模式）' } },
+  ])
+  assert.deepEqual(steps.map((s) => s.text), ['hello'])
 })
 
 test('detectTeachAmbiguities：目标不清 / 步少会提问', () => {

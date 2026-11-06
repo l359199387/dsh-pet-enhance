@@ -7,7 +7,26 @@
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isDeniedWindow } from './policy.js'
+import { isDeniedWindow, isPetChromeTitle } from './policy.js'
+
+/**
+ * 教学噪声键入：对宠说「教完了」的拼音/汉字，或 IME 选词残留下的孤立数字。
+ * 这些不是业务正文，自动化不应复打。
+ * @param {string | null | undefined} text
+ * @param {{ prevText?: string | null }} [ctx]
+ */
+export function isTeachNoiseTypedText(text, ctx = {}) {
+  const raw = String(text ?? '')
+  const t = raw.trim().toLowerCase().replace(/\s+/g, '')
+  if (!t) return true
+  if (/我教完了|我学完了|教完了|学完了|教好了|结束教学/.test(raw)) return true
+  if (/^(wo)?(jie)?(jiao|xue)?wanle\d*$/i.test(t)) return true
+  if (/^wojiaowanle\d*$/i.test(t) || /^wojiexuewanle\d*$/i.test(t)) return true
+  // 上一步已是「教完了」拼音时，后面单独冒出来的选词数字 1–9
+  const prev = String(ctx.prevText ?? '').trim().toLowerCase().replace(/\s+/g, '')
+  if (/^\d$/.test(t) && prev && /wanle\d*$/i.test(prev)) return true
+  return false
+}
 
 export function teachDir(home) {
   return join(home, 'teach')
@@ -219,6 +238,8 @@ export async function updateTeachMeta(home, id, patch) {
  */
 export function buildPublicPlan(events) {
   const steps = []
+  /** @type {string | null} */
+  let lastTyped = null
   for (const ev of events) {
     if (isTeachMouseClickKind(ev.kind)) {
       const button = normalizeMouseButton(ev.button, ev.kind)
@@ -246,23 +267,35 @@ export function buildPublicPlan(events) {
         reason: `教学步骤 #${ev.i} 滑轮${axis}滚动${phase}`,
       })
     } else if (ev.kind === 'type') {
+      const winTitle = ev.window?.title || null
+      if (isPetChromeTitle(winTitle)) {
+        // 对桌宠窗口的键入（教完了等）不进计划
+        continue
+      }
       if (ev.sensitive || ev.secretRef) {
         steps.push({
           eventI: ev.i,
           action: 'type',
           secretRef: ev.secretRef,
-          window: ev.window?.title || null,
+          window: winTitle,
           reason: `教学步骤 #${ev.i} 输入敏感内容（仅本地）`,
           publicNote: '输入（本地敏感·已保存，不上模型）',
         })
+        lastTyped = null
       } else {
+        const text = String(ev.text || '')
+        if (isTeachNoiseTypedText(text, { prevText: lastTyped })) {
+          lastTyped = text
+          continue
+        }
         steps.push({
           eventI: ev.i,
           action: 'type',
-          text: ev.text || '',
-          window: ev.window?.title || null,
+          text,
+          window: winTitle,
           reason: `教学步骤 #${ev.i} 输入`,
         })
+        lastTyped = text
       }
     } else if (ev.kind === 'key') {
       steps.push({
@@ -362,7 +395,10 @@ export function buildPlaybook(goal, steps, sessionId) {
     }
     if (s.action === 'type') {
       const text = String(s.text || '').slice(0, 500)
-      // 主人自己打的字：记成文字步骤（如文件夹名 meirixinqing1）
+      if (isPetChromeTitle(s.window) || isTeachNoiseTypedText(text)) {
+        return null
+      }
+      // 主人自己打的字：记成文字步骤（自动化可复打同一段字）
       return {
         i,
         mode: 'script',
@@ -395,7 +431,7 @@ export function buildPlaybook(goal, steps, sessionId) {
       window: s.window || null,
       hint: { x: s.x, y: s.y },
     }
-  })
+  }).filter(Boolean)
   const script = items.filter((x) => x.mode === 'script').length
   const glance = items.filter((x) => x.mode === 'glance').length
   return {
