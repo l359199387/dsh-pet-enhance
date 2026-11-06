@@ -17,7 +17,7 @@ test('skillSlug 为 kebab-case', () => {
   assert.match(skillSlugFromId('20261107-014933-4caa90ac'), /^glance-learn-[a-z0-9]+$/)
 })
 
-test('prompt 禁止盲打字指引', () => {
+test('prompt：点击靠 glance；文字步骤可复打', () => {
   const p = buildHarnessAutomationPrompt({
     goal: '记录心情',
     learnedId: 'x',
@@ -25,6 +25,7 @@ test('prompt 禁止盲打字指引', () => {
   })
   assert.ok(p.includes('不要加载'))
   assert.ok(p.includes('glance'))
+  assert.ok(p.includes('用户键入文字') || p.includes('text'))
 })
 
 test('registerHarnessAutomation：create(sessionId, request) 且用 after_seconds', async () => {

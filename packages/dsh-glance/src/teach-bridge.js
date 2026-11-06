@@ -107,7 +107,7 @@ export function buildTeachUnderstandPrompt(goal, steps, sessionId) {
       )
     }
     if (s.action === 'type') {
-      return `${n}. 演示输入「${clip(s.text, 48)}」（${win}）`
+      return `${n}. 用户键入文字「${clip(s.text, 48)}」（${win}）`
     }
     if (s.action === 'key') {
       return `${n}. 演示按键 ${s.keys}（${win}）`

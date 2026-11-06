@@ -223,7 +223,7 @@ export function narratePlan(steps) {
   }).join('\n')
 }
 
-/** 仅这些按键允许本地脚本；其余（含演示打字）一律 glance，避免教完盲打字。 */
+/** 仅这些按键允许本地脚本；其余按键走 glance。明文 type 另按 typed-text 记 script。 */
 const SAFE_SCRIPT_KEYS = new Set([
   'enter', 'tab', 'esc', 'escape',
   'ctrl+s', 'ctrl+c', 'ctrl+v', 'ctrl+a', 'ctrl+z',

@@ -34,7 +34,8 @@ export function buildHarnessAutomationPrompt({ goal, learnedId, skillName }) {
     + `学习 id=${learnedId}；可用 skill「${skillName}」加载说明。`
     + '先 glance 看清**当前**屏幕，再按目标用 act。'
     + '不要加载 learned/frames 教学图片（图只用于学习，执行不用）。'
-    + '坐标与演示打字只是参考，禁止盲打录制原文；敏感输入只用 secretRef。一两句汇报。'
+    + '点击坐标只是参考，界面变了要 glance 重找；'
+    + 'playbook 里 mode=script 的「用户键入文字」可按 text 复打；敏感输入只用 secretRef。一两句汇报。'
   )
 }
 
@@ -42,7 +43,7 @@ export function buildSkillMarkdown({ name, goal, learnedId, automationId, summar
   return (
     `---\n`
     + `name: ${name}\n`
-    + `description: ${clip(goal, 120)}（小蓝鲸教学·与自动化一一对应）。执行前先 glance，勿盲打字。\n`
+    + `description: ${clip(goal, 120)}（小蓝鲸教学·与自动化一一对应）。执行前先 glance；文字步骤按 text 复打。\n`
     + `---\n\n`
     + `# ${clip(goal, 80)}\n\n`
     + `- learnedId: \`${learnedId}\`\n`
@@ -51,7 +52,7 @@ export function buildSkillMarkdown({ name, goal, learnedId, automationId, summar
     + `## 理解摘要\n\n${clip(summary, 800)}\n\n`
     + `## 执行纪律\n\n`
     + `1. 先 glance，再 act。\n`
-    + `2. 坐标与演示输入仅为证据，界面变了要重找。\n`
+    + `2. 点击坐标仅为证据，界面变了要重找；typed-text 按记录的文字复打。\n`
     + `3. 密码类只用本地 secretRef，禁止复述明文。\n`
   )
 }
