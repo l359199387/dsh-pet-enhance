@@ -1,0 +1,16 @@
+---
+description: 每个开发切片完成后自动提交 git
+alwaysApply: true
+---
+
+# 开发完成后自动提交
+
+每当一个可验收的开发切片做完（代码写完、`tools/dev-check.mjs` 全绿、CHANGELOG/阶段标记已更新），**不要等用户再说「提交」**，立刻按仓库既有 git 安全流程创建一次本地 commit：
+
+1. `git status` / `git diff` / `git log` 了解变更与文风
+2. 暂存本次切片相关文件（不含密钥、`.env` 等）
+3. 提交信息沿用本仓库风格：`阶段: 做了什么`（例：`B1: shell.overlay 小鲸鱼`）
+4. `git status` 确认工作区干净
+5. **不要** `git push`，除非用户明确要求
+
+未完成、红灯、或用户明确说先别提交时，跳过。
