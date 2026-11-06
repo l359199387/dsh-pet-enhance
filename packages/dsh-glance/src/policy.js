@@ -233,13 +233,20 @@ export function evaluateActPolicy(input) {
   )
   const deniedTitle = titles.find((t) => isDeniedWindow(t, input.denyTitles))
   if (deniedTitle) {
+    const short = String(deniedTitle).slice(0, 60)
     return {
       ok: false,
       tier,
       needsConfirm: false,
       code: 'DENIED_WINDOW',
-      reason: `窗口「${String(deniedTitle).slice(0, 60)}」在黑名单里：可以看，不能点、不能打字。`,
+      reason:
+        `黑名单拦截：窗口「${short}」属于敏感窗（密码/银行/支付/UAC 等），`
+        + '我可以看，但不能点、不能打字。请换到普通窗口，或把文件名里的敏感词去掉后再试。'
+        + '请把这句话原样告诉用户，不要改成「需要确认 / 点好 / 重启」之类。',
       windowTitle: deniedTitle,
+      userBubble:
+        `这个窗口在黑名单里（「${short}」），我不能点也不能打字。`
+        + '换个普通窗口吧；若文件名带「密码」等字，先改名再让我动手。',
     }
   }
 

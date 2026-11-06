@@ -29,6 +29,8 @@ test('黑名单：前台是桌宠时仍看点下方窗标题', () => {
   assert.equal(r.ok, false)
   assert.equal(r.code, 'DENIED_WINDOW')
   assert.match(r.windowTitle, /密码本/)
+  assert.match(r.reason, /黑名单/)
+  assert.match(r.userBubble, /黑名单/)
 })
 
 test('分级：观察 / 可逆 / 提交 / 危险 / 禁止', () => {

@@ -68,6 +68,7 @@ function auditArgs(args) {
  *   turnKey?: () => string,
  *   denyTitles?: string[],
  *   onConfirmAsk?: (summary: string) => void | Promise<void>,
+ *   onPolicyDeny?: (info: { code?: string, reason?: string, userBubble?: string, tier?: string }) => void | Promise<void>,
  * }} options
  */
 export function createActTool(options = {}) {
@@ -190,6 +191,14 @@ export function createActTool(options = {}) {
       if (decision.windowTitle) windowTitle = decision.windowTitle
 
       if (!decision.ok) {
+        try {
+          await options.onPolicyDeny?.({
+            code: decision.code,
+            reason: decision.reason,
+            userBubble: decision.userBubble,
+            tier,
+          })
+        } catch { /* ignore */ }
         return finishAudit({
           text: decision.reason || '策略拒绝',
           meta: {
@@ -197,6 +206,7 @@ export function createActTool(options = {}) {
             code: decision.code,
             tier,
             budget: decision.budget,
+            windowTitle: decision.windowTitle ?? windowTitle,
           },
         })
       }

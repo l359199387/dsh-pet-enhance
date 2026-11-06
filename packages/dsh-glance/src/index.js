@@ -48,7 +48,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.1.2'
+export const VERSION = '0.1.3'
 
 const startedAt = Date.now()
 
@@ -350,6 +350,13 @@ function installTools(ctx, log, state) {
           getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
           onConfirmAsk: async () => {
             // 确认气泡由网页 overlay / 桌面 Helper 头顶弹出；这里不再刷普通说话气泡抢注意力。
+          },
+          onPolicyDeny: async ({ code, userBubble, reason }) => {
+            const text = userBubble
+              || (code === 'DENIED_WINDOW'
+                ? '这个窗口在黑名单里，我不能点也不能打字。'
+                : (reason || '这个动作被策略拦住了。'))
+            await broadcastToDshPet(text, { duration: 12_000 })
           },
         })))
         state.tools.push(ACT_TOOL_NAME)

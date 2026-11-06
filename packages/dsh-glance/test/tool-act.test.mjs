@@ -114,12 +114,14 @@ test('黑名单窗口拒绝点击', async () => {
   assert.equal(r.meta.code, 'DENIED_WINDOW')
 })
 
-test('前台是桌宠、点下方是密码本 → 仍拒绝', async () => {
+test('前台是桌宠、点下方是密码本 → 仍拒绝并通知', async () => {
   process.env.DSH_GLANCE_ACT = '1'
+  let denied = null
   const tool = createActTool({
     home,
     log() {},
     isArmed: () => true,
+    onPolicyDeny: async (info) => { denied = info },
     sidecar: mockSidecar({
       stats: () => ({
         ok: true,
@@ -132,6 +134,9 @@ test('前台是桌宠、点下方是密码本 → 仍拒绝', async () => {
   const r = await tool.execute({ action: 'click', x: 100, y: 100, reason: '点中间' })
   assert.equal(r.meta.ok, false)
   assert.equal(r.meta.code, 'DENIED_WINDOW')
+  assert.match(r.text, /黑名单/)
+  assert.equal(denied?.code, 'DENIED_WINDOW')
+  assert.match(String(denied?.userBubble || ''), /黑名单/)
 })
 
 test('L2 用户点不要 → 不执行 input', async () => {
