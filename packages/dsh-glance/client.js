@@ -4,8 +4,8 @@
  * 挂在 `shell.overlay`。
  *
  * 若本机已装 `dsh-pet`：隐藏自绘形象；
- * **单击宠物**打开 dsh-pet 自带对话弹窗（等同悬停按 L / 右键「对话」）；
- * 急停在右键「更多」。未装时用内置 SVG。
+ * **双击宠物**打开 dsh-pet 自带对话弹窗（等同悬停按 L / 右键「对话」）；
+ * 单击仍为 dsh-pet 原行为（Q 弹）。急停在右键「更多」。未装时用内置 SVG。
  *
  * @module client.js
  */
@@ -86,7 +86,7 @@ window.__ModuleLoader__.load({
         })
         return
       }
-      // 裸 L：与菜单 hint「L 键」一致；要求指针仍停在宠物上（单击抬起时通常满足）
+      // 裸 L：与菜单 hint「L 键」一致；要求指针仍停在宠物上（双击后通常满足）
       dispatchKey({
         key: 'l',
         code: 'KeyL',
@@ -100,37 +100,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 网页端单击（非拖拽）落在 dsh-pet → 打开原生对话。
-     * 桌面独立窗的点击进不了本页；桌面请继续右键「对话」，或把显示位置设成含网页。
+     * 网页端双击落在 dsh-pet → 打开原生对话；单击不拦截（留给 dsh-pet Q 弹）。
+     * 桌面独立窗由 Host 给 Helper 打 dblclick 补丁。
      */
     function bindDshPetClickToChat(onOpen) {
-      let start = null
-      const onDown = (e) => {
-        if (e.button !== 0) return
+      const onDbl = (e) => {
         if (!eventOnDshPet(e)) return
-        start = { x: e.clientX, y: e.clientY, pointerId: e.pointerId }
-      }
-      const onUp = (e) => {
-        if (!start) return
-        if (start.pointerId != null && e.pointerId !== start.pointerId) return
-        const dx = e.clientX - start.x
-        const dy = e.clientY - start.y
-        start = null
-        if (Math.hypot(dx, dy) > 6) return
-        // 下一帧再发键：让 dsh-pet 先处理完 pointerup / click，hover 标记仍在
+        // 下一帧再发键：让 dsh-pet 先处理完 dblclick，hover 标记仍在
         window.setTimeout(() => onOpen?.(), 0)
       }
-      const onCancel = (e) => {
-        if (start && start.pointerId != null && e.pointerId !== start.pointerId) return
-        start = null
-      }
-      document.addEventListener('pointerdown', onDown, true)
-      document.addEventListener('pointerup', onUp, true)
-      document.addEventListener('pointercancel', onCancel, true)
+      document.addEventListener('dblclick', onDbl, true)
       return () => {
-        document.removeEventListener('pointerdown', onDown, true)
-        document.removeEventListener('pointerup', onUp, true)
-        document.removeEventListener('pointercancel', onCancel, true)
+        document.removeEventListener('dblclick', onDbl, true)
       }
     }
 
@@ -540,7 +521,7 @@ window.__ModuleLoader__.load({
       const [blinking, setBlinking] = useState(false)
       const [busy, setBusy] = useState(false)
       const [hint, setHint] = useState(
-        '点宠物打开对话（同右键「对话」/ L）。桌面独立窗同样单击即可（需重载过 Helper）。',
+        '双击宠物打开对话（同右键「对话」/ L）；单击仍是原来的互动。桌面独立窗同样（需重载过 Helper）。',
       )
 
       useEffect(() => {
@@ -811,7 +792,7 @@ window.__ModuleLoader__.load({
         )
         : null
 
-      // 已装 dsh-pet：不抢形象；单击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
+      // 已装 dsh-pet：不抢形象；双击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
       if (proxy) {
         const dock = clampDockPos()
         return h(

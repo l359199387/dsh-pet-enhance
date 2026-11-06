@@ -1,6 +1,6 @@
 {
   "name": "dsh-glance",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "小蓝鲸：DSH 的桌面宠物插件。看得见、会说话、能动手。",
   "type": "module",
   "main": "./src/index.js",

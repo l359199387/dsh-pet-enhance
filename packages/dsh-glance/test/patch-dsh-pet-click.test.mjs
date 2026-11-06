@@ -4,47 +4,76 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
+  OLD_CLICK_PATCH_MARK,
   PATCH_MARK,
   applyDshPetClickPatches,
+  initJsPath,
   inputJsPath,
-  patchDesktopClickOpensChat,
+  patchDesktopDblClickOpensChat,
+  stripOldClickOpensChat,
 } from '../src/patch-dsh-pet-click.js'
 
-const SAMPLE = `
+const SAMPLE_INPUT_OLD = `
   onClick(e) {
-    if (this.sleeping) {
+    playClickSound();
+    // ${OLD_CLICK_PATCH_MARK} — 单击打开原生对话（同右键「对话」）
+    if (typeof this.showChatFromMenu === 'function') {
+      this.showChatFromMenu();
       return;
     }
-    // 点击音效与浏览器同位置：放在「按下已触发积分」的早退之后、点击动画判断之前
-    playClickSound();
     if (!this.animations.clicks.length) return;
-    this.pendingSquash = true; // 等新点击动画切到前台后 Q 弹（压新首帧，与浏览器一致）
+    this.pendingSquash = true;
     this.playOnce(S.pick(this.animations.clicks));
   },
 `
 
-test('patchDesktopClickOpensChat：写入标记且幂等', () => {
-  const once = patchDesktopClickOpensChat(SAMPLE)
+const SAMPLE_INIT = `
+  bindEvents() {
+    const ac = new AbortController();
+    this.ac = ac;
+    this.hit.addEventListener('click', (e) => this.onClick(e), { signal: ac.signal });
+    this.hit.addEventListener('contextmenu', (e) => this.onContextMenu(e), { signal: ac.signal });
+  }
+`
+
+test('stripOldClickOpensChat：剥掉旧单击块且幂等', () => {
+  const once = stripOldClickOpensChat(SAMPLE_INPUT_OLD)
+  assert.equal(once.changed, true)
+  assert.ok(!once.text.includes(OLD_CLICK_PATCH_MARK))
+  assert.ok(!once.text.includes('showChatFromMenu'))
+  assert.ok(once.text.includes('playClickSound'))
+  const twice = stripOldClickOpensChat(once.text)
+  assert.equal(twice.changed, false)
+  assert.equal(twice.reason, 'no-old-patch')
+})
+
+test('patchDesktopDblClickOpensChat：写入标记且幂等', () => {
+  const once = patchDesktopDblClickOpensChat(SAMPLE_INIT)
   assert.equal(once.changed, true)
   assert.ok(once.text.includes(PATCH_MARK))
+  assert.ok(once.text.includes('dblclick'))
   assert.ok(once.text.includes('showChatFromMenu'))
-  const twice = patchDesktopClickOpensChat(once.text)
+  const twice = patchDesktopDblClickOpensChat(once.text)
   assert.equal(twice.changed, false)
   assert.equal(twice.reason, 'already-patched')
 })
 
-test('applyDshPetClickPatches：写盘并再跑不变', () => {
+test('applyDshPetClickPatches：剥旧单击 + 写双击，再跑不变', () => {
   const root = mkdtempSync(join(tmpdir(), 'glance-pet-'))
-  const file = inputJsPath(root)
+  const inputFile = inputJsPath(root)
+  const initFile = initJsPath(root)
   mkdirSync(join(root, 'runtime', 'electron-helper', 'sprite'), { recursive: true })
-  writeFileSync(file, SAMPLE, 'utf8')
+  writeFileSync(inputFile, SAMPLE_INPUT_OLD, 'utf8')
+  writeFileSync(initFile, SAMPLE_INIT, 'utf8')
 
   const a = applyDshPetClickPatches({ roots: [root] })
   assert.equal(a.ok, true)
-  assert.equal(a.results[0].changed, true)
-  assert.ok(readFileSync(file, 'utf8').includes(PATCH_MARK))
+  assert.ok(a.results.some((r) => r.changed && r.reason === 'stripped-old-click'))
+  assert.ok(a.results.some((r) => r.changed && r.reason === 'patched'))
+  assert.ok(!readFileSync(inputFile, 'utf8').includes(OLD_CLICK_PATCH_MARK))
+  assert.ok(readFileSync(initFile, 'utf8').includes(PATCH_MARK))
 
   const b = applyDshPetClickPatches({ roots: [root] })
-  assert.equal(b.results[0].changed, false)
-  assert.equal(b.results[0].reason, 'already-patched')
+  assert.equal(b.results.every((r) => !r.changed || r.reason === 'already-patched' || r.reason === 'missing'), true)
+  assert.ok(b.results.some((r) => r.reason === 'already-patched'))
 })
