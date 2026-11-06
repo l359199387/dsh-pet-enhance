@@ -32,6 +32,9 @@ export function normalizeQuality(value) {
   return Object.hasOwn(CANVAS_WIDTH, q) ? q : 'low'
 }
 
+/**
+ * 降级路径用的 Windows PowerShell 5.1。PATH 上没有 `pwsh.exe`，这里必须是绝对路径。
+ */
 const POWERSHELL = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 
 /** 跑一次 PowerShell，收集 stdout；超时或 abort 一律杀掉子进程。 */
