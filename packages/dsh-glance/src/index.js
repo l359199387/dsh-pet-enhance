@@ -22,6 +22,8 @@ import {
   broadcastToDshPet,
   clearGlanceMenu,
   callDshPet,
+  MENU_ACT_OFF,
+  MENU_ACT_ON,
   MENU_LIVE_OFF,
   MENU_LIVE_ON,
   MENU_OWNER,
@@ -312,6 +314,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     let stopped = false
     let registered = false
     let liveWatch = false
+    let actEnabled = false
     const home = glanceHome()
     const petHooks = {
       onLooking: () => state.glance.setPet('looking'),
@@ -340,7 +343,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     const pushMenu = async () => {
-      const r = await registerGlanceMenu({ liveWatch })
+      const r = await registerGlanceMenu({ liveWatch, actEnabled })
       if (r.ok) {
         registered = true
         return true
@@ -358,7 +361,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
       const was = registered
       if (await pushMenu() && !was) {
-        log(`已在 dsh-pet「更多」挂上「实时看屏幕」与「${MENU_STOP}」`)
+        log(`已在 dsh-pet「更多」挂上「实时看屏幕 / 允许动手 / ${MENU_STOP}」`)
       }
     }
 
@@ -376,6 +379,21 @@ function installDshPetBridge(ctx, log, state, disposers) {
         { duration: 10_000 },
       )
       log(`实时看屏幕 → ${liveWatch ? '开' : '关'}`)
+    }
+
+    const setActEnabled = async (next) => {
+      actEnabled = Boolean(next)
+      await saveSettings(home, { actEnabled }).catch((e) => {
+        log(`保存设置失败：${e?.message ?? e}`)
+      })
+      await pushMenu()
+      await broadcastToDshPet(
+        actEnabled
+          ? '好，允许动手了。我会按你的话点鼠标、打字；甩到左上角或点急停可立刻停。'
+          : '好，收手了。act 已关闭，不会再动鼠标键盘。',
+        { duration: 10_000 },
+      )
+      log(`允许动手 → ${actEnabled ? '开' : '关'}`)
     }
 
     const pollMenu = async () => {
@@ -397,11 +415,15 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (ev[MENU_LIVE_ON] || ev[MENU_LIVE_OFF]) {
         await setLiveWatch(!liveWatch)
       }
+      if (ev[MENU_ACT_ON] || ev[MENU_ACT_OFF]) {
+        await setActEnabled(!actEnabled)
+      }
     }
 
     loadSettings(home).then((s) => {
       if (stopped) return
       liveWatch = Boolean(s.liveWatch)
+      actEnabled = Boolean(s.actEnabled)
       syncLive()
       pushMenu().catch(() => {})
     }).catch(() => {})

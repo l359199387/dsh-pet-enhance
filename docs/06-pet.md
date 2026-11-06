@@ -126,9 +126,10 @@
 - Host `chat-bridge` 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
 - 轮询 `GET /chat`（近 8 轮）：用户新话说到「看屏幕 / 桌面 / 截图」等 → 先 `/broadcast` 报一声 → `captureFrame` → **`POST /chat?surface=any` 附图**（注入小蓝鲸人格）→ 宠物开口；失败再 `/broadcast`。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
-- 右键「更多」挂 **实时看屏幕 · 开/关**（点一下翻转，状态写入 `~/.dsh/glance/settings.json`）与 **小蓝鲸急停**。
-  - 开：约每 15s 盯一帧，窗口/画面指纹变了就冒泡「屏幕有变化…」（不每拍附图对话）。
-  - 关：只保留你主动说「看一眼桌面」时的抓屏。
+- 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
+  - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动「看一眼桌面」。
+  - **允许动手 · 开/关**：对应 `actEnabled`；关则 `act` 拒绝真动手。
+  - **小蓝鲸急停**。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
 我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `glancePet`（尚未挂）。

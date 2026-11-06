@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../src/settings.js'
-import { glanceMenuLabels, MENU_LIVE_OFF, MENU_LIVE_ON, MENU_STOP } from '../src/dsh-pet.js'
+import {
+  glanceMenuLabels,
+  MENU_ACT_OFF,
+  MENU_ACT_ON,
+  MENU_LIVE_OFF,
+  MENU_LIVE_ON,
+  MENU_STOP,
+} from '../src/dsh-pet.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-set-'))
 after(() => { rmSync(home, { recursive: true, force: true }) })
@@ -23,7 +30,7 @@ test('saveSettings 可读写 liveWatch 与 actEnabled', async () => {
   assert.equal((await loadSettings(home)).liveWatch, false)
 })
 
-test('菜单文案：开关两态 + 急停', () => {
-  assert.deepEqual(glanceMenuLabels(false), [MENU_LIVE_OFF, MENU_STOP])
-  assert.deepEqual(glanceMenuLabels(true), [MENU_LIVE_ON, MENU_STOP])
+test('菜单文案：看屏 / 动手 / 急停', () => {
+  assert.deepEqual(glanceMenuLabels(false, false), [MENU_LIVE_OFF, MENU_ACT_OFF, MENU_STOP])
+  assert.deepEqual(glanceMenuLabels(true, true), [MENU_LIVE_ON, MENU_ACT_ON, MENU_STOP])
 })

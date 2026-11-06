@@ -10,6 +10,7 @@
 - 中文 `type` 走剪贴板粘贴并尽量恢复；组合键 `key`（如 `ctrl+s`）。
 - failsafe：动作前光标在左上角 ≤2px → `FAILSAFE`，不重试；`abort` op 可打断进行中的 input。
 - 工具 `act` 已注册，**默认关闭**（`settings.actEnabled` 或 `DSH_GLANCE_ACT=1`）；急停会 `panic` + `sidecar.abort()`。
+- dsh-pet「更多」增加 **允许动手 · 开/关**（与 settings 同步，点一下翻转）。
 - `/status` 的 `stage` 为 `C1`；版本 `0.0.5`。
 
 ## 0.0.4 · 未发布
