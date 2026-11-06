@@ -2,7 +2,7 @@
 
 小瞥：DSH 的桌面宠物插件。看得见、会说话、能动手。
 
-当前是 **A2**：常驻 Python sidecar + 整屏 / 单窗口 / 区域抓取；`glance` 能把图交给模型。
+当前是 **B1**：A2 的抓屏能力 + 右下角 SVG 小鲸鱼（可拖、会眨眼；聊天是下一步）。
 
 ```
 Harness「插件」页 → 从目录安装 → 选这个目录
@@ -22,12 +22,14 @@ Harness「插件」页 → 从目录安装 → 选这个目录
 | 文件 | 职责 |
 |---|---|
 | `src/index.js` | 入口：建目录、挂路由、挂工具、挂 sidecar（只装配） |
+| `src/state.js` | 宠物叶子状态（counter） |
 | `src/trust.js` | `/api/glance/*` 的信任栅栏 |
 | `src/log.js` | 失败留痕（`~/.dsh/glance-error.log`） |
 | `src/sidecar.js` | Python 进程 + JSON Lines 协议 + 重建退避 |
 | `src/capture.js` | sidecar 优先，PowerShell 整屏降级 |
 | `src/tool-spec.js` | 模型看到的参数、说明、输出 schema |
 | `src/tool-glance.js` | 抓 → 存附件 → 交图 |
+| `client.js` | `shell.overlay` 小鲸鱼 |
 | `sidecar/glance.py` | 抓屏（Pillow / PrintWindow） |
 | `sidecar/capture.ps1` | A1 降级：DPI 感知整屏 |
 

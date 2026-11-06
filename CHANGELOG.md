@@ -2,6 +2,16 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
+## 0.0.3 · 未发布
+
+### 宠物出现（B1）
+
+- 浏览器半 `client.js`：挂到 `shell.overlay`，右下角出现可拖的 SVG 小鲸鱼（呼吸 / 眨眼 / 眼珠随光标）。
+- 位置写入 `localStorage`（`dsh-glance.pos`），刷新后还在；颜色走 `--dsw-alias-*`，深色模式不用硬编码底。
+- 点击弹出输入框 + ⏹ 急停（打 `POST /api/glance/stop`，宠物进 `alarmed` 三秒）；真聊天仍是 B2。
+- Host 新增 `GET /state`（活动窗口 + 宠物叶子）、`POST /pet`（idle/sleeping/alarmed）；`glance` 抓屏时宠物进 `looking`。
+- `/status` 的 `stage` 改为 `B1`。
+
 ## 0.0.2 · 未发布
 
 ### 单窗口与常驻 sidecar（A2）

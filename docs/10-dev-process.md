@@ -75,9 +75,10 @@ packages/dsh-glance/
 │   ├── glance.py         # A2：hello/capture/windows/thumb/quit（C1 起加 input）
 │   ├── test_protocol.py  # 协议单测（不许动鼠标）
 │   └── capture.ps1       # A1 的降级抓屏（DPI aware + 整屏 + 缩放）
-├── test/                 # node --test：trust / apply / capture / tool-glance / sidecar
-└── client.js             # B1 起加：悬浮宠物页面
+├── test/                 # node --test：trust / apply / capture / tool-glance / sidecar / state
+└── client.js             # B1：shell.overlay 悬浮小鲸鱼
 ```
+
 
 每个文件的**唯一职责**：
 

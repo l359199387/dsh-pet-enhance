@@ -1,15 +1,17 @@
 {
   "name": "dsh-glance",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "小瞥：DSH 的桌面宠物插件。看得见、会说话、能动手。",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./client": "./client.js"
   },
   "files": [
     "src",
     "sidecar",
+    "client.js",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md"
@@ -23,6 +25,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
     }
   },
   "license": "Apache-2.0",

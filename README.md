@@ -86,7 +86,7 @@
 
 ---
 
-## 安装（A2：装得上、看得见、能盯窗口）
+## 安装（B1：看得见、能盯窗口、右下角有小瞥）
 
 本机**没有** `dsh` 命令行，走 GUI：
 
@@ -97,8 +97,8 @@ Harness「插件」页 → 从目录安装 → 选 packages/dsh-glance
 装完重启宿主，检查三处：
 
 1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-glance`，且 `node_modules/dsh-glance` 是指向本仓库的链接（逐文件 junction，不是拷贝）；
-2. 新会话里说「看一眼我屏幕」，模型调 `glance` 拿到图；再说「看看某某窗口」应只看到该窗（找不到会给出候选标题）。外部浏览器直接打开 `/api/glance/status` 会 401，属正常；
-3. 卸载后工具消失、无残留 `python` sidecar 进程。
+2. 打开任意会话，右下角出现可拖的小鲸鱼（呼吸/眨眼）；刷新后位置还在；
+3. 新会话里说「看一眼我屏幕」→ `glance` 出图；卸载后工具与宠物消失、无残留 `python` 进程。外部浏览器直接打开 `/api/glance/status` 会 401，属正常。
 
 没装上或工具没挂上，先看 `~/.dsh/glance-error.log`。开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。
 

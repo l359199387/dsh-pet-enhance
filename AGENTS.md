@@ -7,7 +7,7 @@
 `dsh-glance`（一瞥）：DSH 的可热插拔插件。一只叫「小瞥」的桌面宠物，能**看见**屏幕、**说话**、**聊天**、并在授权下用鼠标键盘**做事**。
 
 - 文档：`docs/01`–`10`（调研 → 产品 → 架构 → 路线 → 风险 → 宠物 → 安全 → 聊天语音 → **记忆与技能包** → **开发流程**）
-- 要安装的包：`packages/dsh-glance/`（当前阶段 **A2**：sidecar + 单窗口）
+- 要安装的包：`packages/dsh-glance/`（当前阶段 **B1**：sidecar + 单窗口 + 宠物浮层）
 - 参考仓库（只读，不要改）：`C:\deepseekwork\_ref\dsh-see-now`、`C:\deepseekwork\_ref\dsh-tts-bridge`
 - dsh-pet 没有本地副本（clone 失败），只读过其 README/API.md/CORDIS.md；需要时从 raw.githubusercontent 读
 - 记忆相关的本机实测脚本：`tools/bench_memory.mjs`（可复跑，测的是 SQLite+FTS5+CJK bigram）

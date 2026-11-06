@@ -62,9 +62,11 @@ function envelope(shot) {
  *   attachments?: { saveImage?: Function },
  *   log?: (message: string) => void,
  *   sidecar?: { call: Function, isAlive?: Function, getHello?: Function } | null,
+ *   onLooking?: () => void,
+ *   onIdle?: () => void,
  * }} options
  */
-export function createGlanceTool({ home, attachments, log, sidecar } = {}) {
+export function createGlanceTool({ home, attachments, log, sidecar, onLooking, onIdle } = {}) {
   return {
     ...glanceToolSpec(),
     async execute(args, exec) {
@@ -81,6 +83,8 @@ export function createGlanceTool({ home, attachments, log, sidecar } = {}) {
         }
       }
 
+      try { onLooking?.() } catch { /* 状态旁路不能影响工具 */ }
+
       let shot
       try {
         shot = await captureFrame({
@@ -93,6 +97,7 @@ export function createGlanceTool({ home, attachments, log, sidecar } = {}) {
         })
       } catch (error) {
         log?.(`glance 抓屏失败：${error?.code ?? ''} ${error?.message ?? error}`)
+        try { onIdle?.() } catch { /* ignore */ }
         return {
           text: failureText(error),
           images: [],
@@ -107,6 +112,7 @@ export function createGlanceTool({ home, attachments, log, sidecar } = {}) {
           },
         }
       }
+      try { onIdle?.() } catch { /* ignore */ }
 
       const text = envelope(shot)
       const meta = {

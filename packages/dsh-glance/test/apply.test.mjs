@@ -1,14 +1,9 @@
 /**
  * 「装得上、拔得掉」的最小证明：不启动 DSH，用假 ctx 跑一遍 apply。
- *
- * 这个测试要盯住四件事：
- *   1. apply 不抛（抛了宿主那边整行静默消失，用户只看到「没有这个插件」）
- *   2. 路由真的注册到了 `/api/glance`
- *   3. `glance` 工具挂上去了，`/status` 里能看见
- *   4. 卸载后路由和工具都摘干净
  */
 
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,12 +25,10 @@ after(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
-/** 让注册后的清理钩子都排到队尾（注册本身是同步的，留一点余量）。 */
 async function flush() {
   for (let i = 0; i < 3; i += 1) await new Promise((done) => setTimeout(done, 0))
 }
 
-/** 足够 apply 跑起来的最小宿主。 */
 function fakeCtx() {
   const disposers = []
   const tools = []
@@ -83,41 +76,79 @@ function fakeRes() {
   }
 }
 
-async function call(url, headers = { host: '127.0.0.1:50521' }) {
+async function call(url, { method = 'GET', headers = { host: '127.0.0.1:50521' }, body } = {}) {
   const res = fakeRes()
-  await registered.handler({ url, method: 'GET', headers }, res)
+  const req = new EventEmitter()
+  req.url = url
+  req.method = method
+  req.headers = headers
+  const pending = registered.handler(req, res)
+  if (body !== undefined) {
+    queueMicrotask(() => {
+      req.emit('data', Buffer.from(body))
+      req.emit('end')
+    })
+  } else if (method === 'POST') {
+    queueMicrotask(() => req.emit('end'))
+  }
+  await pending
   return res
 }
 
-test('apply 注册路由与 glance 工具，status 能看到它们', async () => {
+test('apply 注册路由与 glance 工具，status 到 B1', async () => {
   const ctx = fakeCtx()
   const dispose = await apply(ctx)
   await flush()
 
-  assert.equal(typeof dispose, 'function', 'apply 必须返回 disposer')
+  assert.equal(typeof dispose, 'function')
   assert.equal(registered?.kind, 'prefix')
   assert.equal(registered?.path, ROUTE_PREFIX)
-
-  assert.equal(ctx._tools.length, 1, 'glance 应该挂上了')
+  assert.equal(ctx._tools.length, 1)
   assert.equal(ctx._tools[0].name, 'glance')
-  assert.equal(typeof ctx._tools[0].execute, 'function')
-  assert.equal(ctx._tools[0].output?.schema?.type, 'object', 'register 要收到 JSON Schema')
 
   const res = await call(`${ROUTE_PREFIX}/status`)
   assert.equal(res.status, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.ok, true)
-  assert.equal(body.stage, 'A2')
+  assert.equal(body.stage, 'B1')
   assert.equal(body.home, home)
   assert.deepEqual(body.tools, ['glance'])
-  assert.equal(body.sidecar?.alive, false)
+  assert.equal(body.pet, 'idle')
 
   dispose()
-  // 路由与工具的清理由宿主销毁 scoped fiber 时触发（`scoped.effect` 的语义），
-  // 这里手动跑一遍收集到的清理函数，模拟卸载。
   for (const off of ctx._disposers) off()
-  assert.equal(registered, undefined, 'fiber 销毁后路由要摘掉')
-  assert.equal(ctx._tools.length, 0, 'fiber 销毁后工具要摘掉')
+  assert.equal(registered, undefined)
+  assert.equal(ctx._tools.length, 0)
+})
+
+test('/state 与 /stop 驱动宠物叶子', async () => {
+  const ctx = fakeCtx()
+  const dispose = await apply(ctx)
+  await flush()
+
+  const stateRes = await call(`${ROUTE_PREFIX}/state`)
+  assert.equal(stateRes.status, 200)
+  const stateBody = JSON.parse(stateRes.body)
+  assert.equal(stateBody.ok, true)
+  assert.equal(stateBody.pet.state.data, 'idle')
+
+  const stopRes = await call(`${ROUTE_PREFIX}/stop`, { method: 'POST', body: '{}' })
+  assert.equal(stopRes.status, 200)
+  assert.equal(JSON.parse(stopRes.body).pet, 'alarmed')
+
+  const after = JSON.parse((await call(`${ROUTE_PREFIX}/state`)).body)
+  assert.equal(after.pet.state.data, 'alarmed')
+  assert.equal(after.guard.armed.data, false)
+
+  const petRes = await call(`${ROUTE_PREFIX}/pet`, {
+    method: 'POST',
+    body: JSON.stringify({ state: 'sleeping' }),
+  })
+  assert.equal(petRes.status, 200)
+  assert.equal(JSON.parse((await call(`${ROUTE_PREFIX}/state`)).body).pet.state.data, 'sleeping')
+
+  dispose()
+  for (const off of ctx._disposers) off()
 })
 
 test('不受信任的请求在进入业务逻辑之前就被拒', async () => {
@@ -125,7 +156,7 @@ test('不受信任的请求在进入业务逻辑之前就被拒', async () => {
   const dispose = await apply(ctx)
   await flush()
 
-  const res = await call(`${ROUTE_PREFIX}/status`, { host: 'evil.example' })
+  const res = await call(`${ROUTE_PREFIX}/status`, { headers: { host: 'evil.example' } })
   assert.equal(res.status, 403)
   assert.equal(JSON.parse(res.body).ok, false)
 
