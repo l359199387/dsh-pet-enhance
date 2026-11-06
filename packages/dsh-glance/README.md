@@ -2,7 +2,7 @@
 
 小蓝鲸：DSH 的桌面宠物插件。看得见、会说话、能动手。
 
-当前是 **C1**：抓屏 + dsh-pet L 看屏对话 + `act`（默认关闭）。启用：`settings.json` 的 `actEnabled: true` 或环境变量 `DSH_GLANCE_ACT=1`。
+当前是 **C1**：抓屏 + dsh-pet L 看屏对话 + `act`（默认关闭）。启用：桌宠右键「更多」→ **允许动手 · 开**，或 `settings.json` 的 `actEnabled: true` / 环境变量 `DSH_GLANCE_ACT=1`。
 
 ```
 Harness「插件」页 → 从目录安装 → 选这个目录
