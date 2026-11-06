@@ -130,6 +130,7 @@
   - 「看屏幕 / 桌面 / 截图」→ `chat-bridge` 抓帧附图让宠物开口。
   - 「帮我点 / 把…最小化 / 输入…」等 → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/glance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
+- **教学回放**：L 里说「我教你一下」→ 你自己操作，sidecar `observe` 只记录点击/按键；「教完了」后 Host 按本地步骤回放（`~/.dsh/glance/teach/`）。密码类窗口输入只进 `.secrets.json`，计划里不出现原文；回放时用 `secretRef` 本地注入。
 - 每次看屏追加 `~/.dsh/glance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
 - 右键「更多」挂三项（状态写入 `~/.dsh/glance/settings.json`）：
   - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动「看一眼桌面」。

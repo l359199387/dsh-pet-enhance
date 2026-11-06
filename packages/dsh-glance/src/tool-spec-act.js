@@ -41,6 +41,10 @@ export function actToolSpec() {
         ms: { type: 'integer', description: 'wait 毫秒' },
         delta: { type: 'integer', description: 'scroll 格数（正上负下）' },
         reason: { type: 'string', description: '为什么做（进审计/确认；请写人话）' },
+        secretRef: {
+          type: 'string',
+          description: '教学敏感输入引用（sessionId/step:N）。有此字段时不要再填 text，正文由 Host 本地注入。',
+        },
       },
       required: ['action'],
     },

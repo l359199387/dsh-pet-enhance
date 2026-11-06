@@ -202,6 +202,7 @@ export function createActionBudget(options = {}) {
  *   budget?: ReturnType<typeof createActionBudget>,
  *   turnKey?: string,
  *   remembered?: Set<string>,
+ *   teachReplay?: boolean,
  * }} input
  * @returns {{
  *   ok: boolean,
@@ -216,8 +217,9 @@ export function createActionBudget(options = {}) {
 export function evaluateActPolicy(input) {
   const args = input.args ?? {}
   const tier = classifyAction(args)
+  const teachReplay = Boolean(input.teachReplay)
 
-  if (tier === 'F') {
+  if (tier === 'F' && !teachReplay) {
     return {
       ok: false,
       tier,
@@ -231,7 +233,9 @@ export function evaluateActPolicy(input) {
     ...(Array.isArray(input.windowTitles) ? input.windowTitles : []),
     input.windowTitle,
   )
-  const deniedTitle = titles.find((t) => isDeniedWindow(t, input.denyTitles))
+  const deniedTitle = teachReplay
+    ? null
+    : titles.find((t) => isDeniedWindow(t, input.denyTitles))
   if (deniedTitle) {
     const short = String(deniedTitle).slice(0, 60)
     return {
@@ -271,7 +275,8 @@ export function evaluateActPolicy(input) {
     }
   }
 
-  const needsConfirm = tier === 'L2' || tier === 'L3'
+  // 教学回放：用户刚演示过，不再二次确认；仍走预算。
+  const needsConfirm = !teachReplay && (tier === 'L2' || tier === 'L3')
   const confirmSig = needsConfirm ? confirmSignature(args, tier) : undefined
   if (needsConfirm && tier === 'L2' && confirmSig && input.remembered?.has(confirmSig)) {
     return { ok: true, tier, needsConfirm: false, confirmSig, budget: budgetInfo }

@@ -16,6 +16,7 @@ import {
   compareFingerprints,
   shouldVerifyAction,
 } from './verify-act.js'
+import { readTeachSecrets } from './teach-store.js'
 
 function buildActions(args) {
   const action = String(args?.action ?? '').trim().toLowerCase()
@@ -44,7 +45,10 @@ function auditArgs(args) {
   for (const k of ['x', 'y', 'x2', 'y2', 'button', 'keys', 'window', 'ms', 'delta']) {
     if (args?.[k] != null) out[k] = args[k]
   }
-  if (args?.text != null) {
+  if (args?.secretRef) {
+    out.secretRef = String(args.secretRef)
+    out.text = '[local-secret]'
+  } else if (args?.text != null) {
     const t = String(args.text)
     out.text = t.length > 80 ? `${t.slice(0, 80)}…` : t
   }
@@ -130,6 +134,29 @@ export function createActTool(options = {}) {
         })
       }
 
+      // 教学敏感输入：secretRef = "<sessionId>/step:N"，正文只从本地 secrets 读，不进模型上下文。
+      if (args?.secretRef && (args.action === 'type' || !args.action)) {
+        const rawRef = String(args.secretRef)
+        const slash = rawRef.indexOf('/')
+        if (slash <= 0) {
+          return finishAudit({
+            text: 'secretRef 格式不对（应为 sessionId/step:N）。',
+            meta: { ok: false, code: 'BAD_SECRET_REF' },
+          })
+        }
+        const sid = rawRef.slice(0, slash)
+        const key = rawRef.slice(slash + 1)
+        const secrets = await readTeachSecrets(options.home, sid)
+        const secretText = secrets?.[key]
+        if (typeof secretText !== 'string') {
+          return finishAudit({
+            text: '本地找不到该教学敏感输入，无法代打。',
+            meta: { ok: false, code: 'SECRET_MISSING' },
+          })
+        }
+        args = { ...args, action: 'type', text: secretText, reason: args.reason || '教学敏感输入（本地）' }
+      }
+
       let actions
       try {
         actions = buildActions(args)
@@ -177,6 +204,12 @@ export function createActTool(options = {}) {
         }
       } catch { /* 策略仍可用缓存 */ }
 
+      const teachReplay = Boolean(args?._teachReplay)
+      if ('_teachReplay' in (args || {})) {
+        const { _teachReplay: _drop, ...rest } = args
+        args = rest
+      }
+
       const decision = evaluateActPolicy({
         args,
         windowTitle,
@@ -186,6 +219,7 @@ export function createActTool(options = {}) {
         budget: options.budget,
         turnKey: options.turnKey?.() ?? 'default',
         remembered,
+        teachReplay,
       })
       tier = decision.tier
       if (decision.windowTitle) windowTitle = decision.windowTitle

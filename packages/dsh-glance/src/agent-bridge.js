@@ -13,6 +13,7 @@ import { isActEnabled } from './settings.js'
 import {
   AGENT_WAKE_PREFIX,
   isComputerTaskIntent,
+  shouldSkipAgentBridge,
 } from './intent.js'
 import { wakeSession, waitAssistantReply, pickSessionId } from './wake-session.js'
 import { glancePersonaBlock } from './persona.js'
@@ -20,6 +21,7 @@ import { glancePersonaBlock } from './persona.js'
 export { AGENT_WAKE_PREFIX, isComputerTaskIntent }
 
 export function shouldWakeAgent(text) {
+  if (shouldSkipAgentBridge(text)) return false
   return isComputerTaskIntent(text)
 }
 

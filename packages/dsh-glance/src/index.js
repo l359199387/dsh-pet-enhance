@@ -36,6 +36,7 @@ import {
 import { createChatBridge } from './chat-bridge.js'
 import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
+import { createTeachBridge } from './teach-bridge.js'
 import { isActEnabled, loadSettings, saveSettings } from './settings.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
@@ -48,7 +49,7 @@ export const name = 'dsh-glance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/glance'
-export const VERSION = '0.1.3'
+export const VERSION = '0.2.0'
 
 const startedAt = Date.now()
 
@@ -335,7 +336,7 @@ function installTools(ctx, log, state) {
         state.tools.push(TOOL_NAME)
         log(`工具已注册：${TOOL_NAME}`)
 
-        disposers.push(scoped.tools.register(createActTool({
+        const actTool = createActTool({
           home: glanceHome(),
           log,
           sidecar: state.sidecar,
@@ -358,7 +359,9 @@ function installTools(ctx, log, state) {
                 : (reason || '这个动作被策略拦住了。'))
             await broadcastToDshPet(text, { duration: 12_000 })
           },
-        })))
+        })
+        state.runAct = (args) => actTool.execute(args)
+        disposers.push(scoped.tools.register(actTool))
         state.tools.push(ACT_TOOL_NAME)
         log(`工具已注册：${ACT_TOOL_NAME}（C2：策略/确认/审计；默认关闭）`)
       } catch (e) {
@@ -439,6 +442,21 @@ function installDshPetBridge(ctx, log, state, disposers) {
       sidecar: () => state.sidecar,
       log,
       ...petHooks,
+    })
+    const teach = createTeachBridge({
+      ctx,
+      home,
+      sidecar: () => state.sidecar,
+      log,
+      confirmGate: state.confirmGate,
+      getPreferredSessionId: () => state.lastSessionId,
+      runAct: (args) => {
+        if (typeof state.runAct === 'function') return state.runAct(args)
+        return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })
+      },
+      onTeaching: (on) => {
+        state.glance.setPet(on ? 'looking' : 'idle')
+      },
     })
 
     const syncLive = () => {
@@ -540,6 +558,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
 
     bridge.start()
     agent.start()
+    teach.start()
     ensureMenu().catch(() => {})
     const timer = setInterval(() => {
       ensureMenu().catch(() => {})
@@ -550,6 +569,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       clearInterval(timer)
       bridge.stop()
       agent.stop()
+      teach.stop()
       live.stop()
       if (registered) clearGlanceMenu().catch(() => {})
     }
@@ -651,6 +671,7 @@ export async function apply(ctx) {
   try {
     const home = glanceHome()
     mkdirSync(join(home, 'episodes'), { recursive: true })
+    mkdirSync(join(home, 'teach'), { recursive: true })
     ensureDesktopToken(home)
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)

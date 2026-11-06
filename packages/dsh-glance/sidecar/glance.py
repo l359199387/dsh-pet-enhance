@@ -703,6 +703,11 @@ def handle_input(req: dict) -> dict:
         return _err("INPUT_FAILED", f"输入失败：{e}")
 
 
+def handle_observe(req: dict) -> dict:
+    from observe_win import handle_observe as _obs
+    return _obs(req)
+
+
 HANDLERS = {
     "hello": handle_hello,
     "capture": handle_capture,
@@ -712,6 +717,7 @@ HANDLERS = {
     "quit": handle_quit,
     "abort": handle_abort,
     "input": handle_input,
+    "observe": handle_observe,
 }
 
 
