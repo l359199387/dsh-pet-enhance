@@ -48,6 +48,7 @@ import {
   deleteLearnedPair,
   getLearnedDetail,
   listLearnedDetails,
+  rateLearnedRun,
   updateLearnedPair,
 } from './learned-manage.js'
 
@@ -307,6 +308,51 @@ async function handle(req, res, connection, log, state) {
     }
     const items = await listLearnedDetails(glanceHome())
     send(res, 200, { ok: true, items })
+    return
+  }
+
+  const learnedRateMatch = route.match(/^\/learned\/([^/]+)\/runs\/([^/]+)\/rate$/)
+  if (learnedRateMatch) {
+    const id = decodeURIComponent(learnedRateMatch[1])
+    const runId = decodeURIComponent(learnedRateMatch[2])
+    if (method !== 'POST') {
+      send(res, 405, { ok: false, rejected: ['只支持 POST'] })
+      return
+    }
+    let raw
+    try {
+      raw = await readBody(req)
+    } catch (e) {
+      send(res, e?.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { ok: false, rejected: [String(e?.message ?? e)] })
+      return
+    }
+    let body
+    try {
+      body = raw ? JSON.parse(raw) : {}
+    } catch {
+      send(res, 400, { ok: false, rejected: ['JSON 无法解析'] })
+      return
+    }
+    const r = await rateLearnedRun(glanceHome(), id, runId, {
+      rating: body.rating,
+      comment: body.comment,
+    }, {
+      ctx: state.hostCtx,
+      log,
+      preferredSessionId: state.lastSessionId || null,
+    })
+    if (!r.ok) {
+      const code = r.reason === 'not-found' || r.reason === 'run-not-found' ? 404 : 400
+      send(res, code, { ok: false, rejected: [r.reason || '评价失败'] })
+      return
+    }
+    send(res, 200, {
+      ok: true,
+      item: r.detail,
+      merged: Boolean(r.merged),
+      mergeReason: r.mergeReason || null,
+      rating: r.rating,
+    })
     return
   }
 

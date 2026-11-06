@@ -37,6 +37,7 @@ import {
   readLearned,
 } from './learned-automation.js'
 import { patchLearnedScheduleMeta } from './learned-manage.js'
+import { appendLearnedRun } from './learned-runs.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
 import {
   attachClickFramesToPlaybook,
@@ -732,6 +733,14 @@ export function createTeachBridge(options) {
    * 优先按 FAST 快捷路径叫醒主会话变通执行；否则再走脚本/看屏。
    * @param {object} playbook
    */
+  async function recordRun(id, info) {
+    try {
+      await appendLearnedRun(options.home, id, info)
+    } catch (e) {
+      log(`写入执行记录失败：${e?.message ?? e}`)
+    }
+  }
+
   async function runPlaybook(playbook) {
     const id = playbook.id
     // 用户再次开口跑自动化：清掉上一轮动作预算，避免「卡在第 2 步」假死
@@ -741,6 +750,7 @@ export function createTeachBridge(options) {
     const learnMeta = await readLearned(options.home, id).catch(() => null)
     const summary = learnMeta?.understanding?.summary || playbook.strategy?.summary || ''
     const fastPlan = learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan || ''
+    const snap = String(summary || '').slice(0, 800)
     // 旧 playbook 里可能残留「wojiaowanle1」等教完了拼音；执行时跳过
     const scriptSteps = (playbook.steps || []).filter((s) => {
       if (s.mode !== 'script') return false
@@ -792,6 +802,12 @@ export function createTeachBridge(options) {
             via: 'smart',
             endedAt: new Date().toISOString(),
           })
+          await recordRun(id, {
+            via: 'smart',
+            ok: true,
+            summary: reply.text,
+            understandingSnapshot: snap,
+          })
           log(`teach：smart 执行完成 ${id}`)
           return
         }
@@ -809,20 +825,31 @@ export function createTeachBridge(options) {
         if (stopped) {
           await broadcastToDshPet('已急停，教学执行中断。', { pet, duration: 8_000 })
           await updateTeachMeta(options.home, id, { status: 'aborted' })
+          await recordRun(id, {
+            via: 'aborted',
+            ok: false,
+            summary: '用户急停，教学执行中断',
+            understandingSnapshot: snap,
+          })
           return
         }
         const r = await runAct(stepToActArgs(scriptSteps[i], id))
         if (!r?.meta?.ok) {
-          await broadcastToDshPet(
-            `脚本第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`,
-            { pet, duration: 12_000 },
-          )
+          const failText = `脚本第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`
+          await broadcastToDshPet(failText, { pet, duration: 12_000 })
           await updateTeachMeta(options.home, id, { status: 'script-failed' })
+          await recordRun(id, {
+            via: 'script-failed',
+            ok: false,
+            summary: failText,
+            understandingSnapshot: snap,
+          })
           return
         }
       }
       if (scriptSteps.length && !glanceSteps.length) {
-        await broadcastToDshPet(`做完了：${clip(playbook.goal, 40)}（全脚本，未叫醒大模型）`, {
+        const doneText = `做完了：${clip(playbook.goal, 40)}（全脚本，未叫醒大模型）`
+        await broadcastToDshPet(doneText, {
           pet,
           duration: 12_000,
         })
@@ -831,6 +858,12 @@ export function createTeachBridge(options) {
           via: 'script-only',
           endedAt: new Date().toISOString(),
         })
+        await recordRun(id, {
+          via: 'script-only',
+          ok: true,
+          summary: doneText,
+          understandingSnapshot: snap,
+        })
         log(`teach：playbook 全脚本完成 ${id}`)
         return
       }
@@ -838,6 +871,12 @@ export function createTeachBridge(options) {
 
     if (!glanceSteps.length) {
       await broadcastToDshPet(`记下了，但没有可执行步。`, { pet, duration: 8_000 })
+      await recordRun(id, {
+        via: 'empty',
+        ok: false,
+        summary: '没有可执行步',
+        understandingSnapshot: snap,
+      })
       return
     }
 
@@ -854,6 +893,12 @@ export function createTeachBridge(options) {
         { pet, duration: 12_000 },
       )
       await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why })
+      await recordRun(id, {
+        via: 'glance-wake-failed',
+        ok: false,
+        summary: `看屏步没叫醒主会话（${why}）`,
+        understandingSnapshot: snap,
+      })
       return
     }
 
@@ -869,16 +914,26 @@ export function createTeachBridge(options) {
         via: 'script+glance',
         endedAt: new Date().toISOString(),
       })
+      await recordRun(id, {
+        via: 'script+glance',
+        ok: true,
+        summary: reply.text,
+        understandingSnapshot: snap,
+      })
     } else {
-      await broadcastToDshPet(
-        reply.reason === 'timeout'
-          ? '看屏步超时了。学习文件和自动化已建好，下次可直接跑。'
-          : '看屏步没文字结果；去主会话看看。学习/自动化已存。',
-        { pet, duration: 12_000 },
-      )
+      const failText = reply.reason === 'timeout'
+        ? '看屏步超时了。学习文件和自动化已建好，下次可直接跑。'
+        : '看屏步没文字结果；去主会话看看。学习/自动化已存。'
+      await broadcastToDshPet(failText, { pet, duration: 12_000 })
       await updateTeachMeta(options.home, id, {
         status: reply.reason === 'timeout' ? 'timeout' : 'no-reply',
         endedAt: new Date().toISOString(),
+      })
+      await recordRun(id, {
+        via: reply.reason === 'timeout' ? 'timeout' : 'no-reply',
+        ok: false,
+        summary: failText,
+        understandingSnapshot: snap,
       })
     }
   }

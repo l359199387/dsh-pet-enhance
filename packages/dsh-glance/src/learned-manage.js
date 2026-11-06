@@ -20,7 +20,18 @@ import {
 import { skillSlugFromId, writeGlanceSkillFile, buildHarnessAutomationPrompt } from './harness-schedule.js'
 import { serviceOf } from './host-ctx.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
-import { buildOwnerNotesMergePrompt, parseMergedSummary } from './learned-merge.js'
+import {
+  buildOwnerNotesMergePrompt,
+  buildRunFeedbackMergePrompt,
+  parseMergedSummary,
+} from './learned-merge.js'
+import {
+  getLearnedRun,
+  listLearnedRuns,
+  normalizeRating,
+  patchLearnedRun,
+  RATING_LABELS,
+} from './learned-runs.js'
 
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -61,6 +72,7 @@ export async function getLearnedDetail(home, id) {
   const task = await readAutomationTask(home, id)
   const playbook = await readAutomationPlaybook(home, id)
   const summary = String(learn.understanding?.summary || '')
+  const runs = await listLearnedRuns(home, id, { limit: 12 })
   return {
     id: learn.id,
     goal: String(learn.goal || task?.goal || playbook?.goal || ''),
@@ -77,6 +89,8 @@ export async function getLearnedDetail(home, id) {
     createdAt: learn.createdAt || task?.createdAt || null,
     updatedAt: learn.updatedAt || task?.updatedAt || learn.createdAt || null,
     stats: learn.understanding?.stats || task?.stats || playbook?.stats || null,
+    runs,
+    runCount: runs.length,
   }
 }
 
@@ -290,6 +304,121 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     ok: true,
     merged: mergeInfo.merged,
     mergeReason: mergeInfo.reason || null,
+    detail: await getLearnedDetail(home, id),
+  }
+}
+
+/**
+ * 对某次执行记录评价，并叫醒模型改正学习理解。
+ * @param {string} home
+ * @param {string} id
+ * @param {string} runId
+ * @param {{ rating: string, comment?: string }} body
+ * @param {{
+ *   ctx?: object,
+ *   log?: Function,
+ *   preferredSessionId?: string | null,
+ *   wake?: Function,
+ *   waitReply?: Function,
+ * }} [opts]
+ */
+export async function rateLearnedRun(home, id, runId, body = {}, opts = {}) {
+  const log = opts.log ?? (() => {})
+  const rating = normalizeRating(body.rating)
+  if (!rating) return { ok: false, reason: 'bad-rating' }
+  const comment = String(body.comment || '').trim().slice(0, 400)
+
+  const learn = await readLearned(home, id)
+  if (!learn) return { ok: false, reason: 'not-found' }
+  const run = await getLearnedRun(home, id, runId)
+  if (!run) return { ok: false, reason: 'run-not-found' }
+
+  const ratingLabel = RATING_LABELS[rating] || rating
+  let merged = false
+  let mergeReason = null
+  let newSummary = ''
+
+  if (opts.ctx) {
+    const wake = opts.wake ?? wakeSession
+    const waitReply = opts.waitReply ?? waitAssistantReply
+    const prompt = buildRunFeedbackMergePrompt({
+      goal: learn.goal,
+      summary: learn.understanding?.summary || '',
+      runSummary: run.summary,
+      via: run.via,
+      ok: run.ok,
+      rating: ratingLabel,
+      comment,
+    })
+    try {
+      const woken = await wake(opts.ctx, {
+        text: prompt,
+        preferredId: opts.preferredSessionId || null,
+        log,
+      })
+      if (!woken.ok) {
+        mergeReason = woken.reason || 'wake-failed'
+        log(`执行评价归纳未叫醒：${mergeReason}`)
+      } else {
+        const reply = await waitReply(opts.ctx, woken.sessionId, { timeoutMs: 90_000 })
+        newSummary = parseMergedSummary(reply.ok ? reply.text : '')
+        if (newSummary) {
+          const now = new Date().toISOString()
+          learn.understanding = {
+            ...(learn.understanding || {}),
+            summary: newSummary,
+          }
+          learn.updatedAt = now
+          const lp = learnedPaths(home, id)
+          const ap = automationPaths(home, id)
+          await writeFile(lp.learn, `${JSON.stringify(learn, null, 2)}\n`, 'utf8')
+          const task = await readAutomationTask(home, id)
+          if (task) {
+            task.updatedAt = now
+            await writeFile(ap.task, `${JSON.stringify(task, null, 2)}\n`, 'utf8')
+          }
+          const playbook = await readAutomationPlaybook(home, id)
+          if (playbook) {
+            playbook.understanding = playbook.understanding || {}
+            playbook.understanding.summary = newSummary
+            if (playbook.strategy) playbook.strategy.summary = newSummary
+            await writeFile(ap.playbook, `${JSON.stringify(playbook, null, 2)}\n`, 'utf8')
+          }
+          try {
+            await writeGlanceSkillFile({
+              goal: learn.goal,
+              learnedId: id,
+              automationId: id,
+              summary: newSummary,
+            })
+          } catch (e) {
+            log(`评价后更新 skill 失败：${e?.message ?? e}`)
+          }
+          merged = true
+        } else {
+          mergeReason = reply.reason || 'empty-summary'
+        }
+      }
+    } catch (e) {
+      mergeReason = String(e?.message ?? e).slice(0, 160)
+      log(`执行评价归纳失败：${mergeReason}`)
+    }
+  } else {
+    mergeReason = 'no-ctx'
+  }
+
+  await patchLearnedRun(home, id, runId, {
+    rating,
+    comment,
+    ratedAt: new Date().toISOString(),
+    refined: merged,
+  })
+
+  return {
+    ok: true,
+    merged,
+    mergeReason,
+    rating,
     detail: await getLearnedDetail(home, id),
   }
 }
