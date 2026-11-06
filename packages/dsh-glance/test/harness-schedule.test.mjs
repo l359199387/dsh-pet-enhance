@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { after, test } from 'node:test'
 import {
   buildHarnessAutomationPrompt,
+  DEFAULT_AFTER_SECONDS,
   registerHarnessAutomation,
   skillSlugFromId,
-  writeGlanceSkillFile,
 } from '../src/harness-schedule.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-hs-'))
@@ -23,20 +23,27 @@ test('prompt 禁止盲打字指引', () => {
     learnedId: 'x',
     skillName: 'glance-learn-x',
   })
-  assert.ok(p.includes('禁止盲'))
+  assert.ok(p.includes('不要加载'))
   assert.ok(p.includes('glance'))
 })
 
-test('registerHarnessAutomation：写 skill + schedule.create 后暂停', async () => {
+test('registerHarnessAutomation：create(sessionId, request) 且用 after_seconds', async () => {
   process.env.DSH_HOME = home
-  const edits = []
+  const calls = []
   const ctx = {
     get(name) {
-      if (name !== 'schedule') return null
-      return {
-        async create() { return { id: 'task-abc' } },
-        async edit(spec) { edits.push(spec); return {} },
+      if (name === 'schedule') {
+        return {
+          async create(sessionId, request) {
+            calls.push({ sessionId, request })
+            return { id: 'schedule-abc', title: request.title, kind: 'after' }
+          },
+        }
       }
+      if (name === 'sessions') {
+        return { list: () => [{ id: 'sess-1', focused: true }] }
+      }
+      return null
     },
   }
   const r = await registerHarnessAutomation(ctx, {
@@ -44,13 +51,35 @@ test('registerHarnessAutomation：写 skill + schedule.create 后暂停', async 
     learnedId: '20261107-014933-4caa90ac',
     automationId: '20261107-014933-4caa90ac',
     summary: 'demo',
+    preferredSessionId: 'sess-preferred',
     log() {},
   })
   assert.equal(r.ok, true)
-  assert.equal(r.scheduleId, 'task-abc')
-  assert.ok(edits.some((e) => e.active === false || e.patch?.active === false))
+  assert.equal(r.scheduleId, 'schedule-abc')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].sessionId, 'sess-preferred')
+  assert.equal(calls[0].request.title, '记录每日的心情')
+  assert.equal(calls[0].request.after_seconds, DEFAULT_AFTER_SECONDS)
+  assert.equal(calls[0].request.timing, undefined)
   const skillPath = join(home, 'skills', r.skillName, 'SKILL.md')
-  const body = readFileSync(skillPath, 'utf8')
-  assert.ok(body.includes('name:'))
-  assert.ok(body.includes('记录每日的心情'))
+  assert.ok(readFileSync(skillPath, 'utf8').includes('记录每日的心情'))
+})
+
+test('无会话时明确失败', async () => {
+  process.env.DSH_HOME = home
+  const r = await registerHarnessAutomation({
+    get(name) {
+      if (name === 'schedule') return { async create() { return { id: 'x' } } }
+      return null
+    },
+  }, {
+    goal: 'x',
+    learnedId: 'id1',
+    automationId: 'id1',
+    summary: '',
+    preferredSessionId: null,
+    log() {},
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no-session-for-schedule')
 })

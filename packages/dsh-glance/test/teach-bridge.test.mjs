@@ -47,8 +47,10 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
       get(name) {
         if (name === 'schedule') {
           return {
-            async create() { schedules.push(1); return { id: 'sched-1' } },
-            async edit(spec) { schedules.push(spec); return {} },
+            async create(sessionId, request) {
+              schedules.push({ sessionId, request })
+              return { id: 'sched-1', title: request.title }
+            },
           }
         }
         return null
@@ -56,6 +58,7 @@ test('教完：关键帧落盘、理解后建对、关实时看屏幕、不自�
     },
     log() {},
     pollChat: false,
+    getPreferredSessionId: () => 'sess-teach',
     capture: async () => ({ png: tinyPng, window: { title: '记事本' } }),
     ensureLiveWatch: async (on) => { liveOps.push(on) },
     attachments: {

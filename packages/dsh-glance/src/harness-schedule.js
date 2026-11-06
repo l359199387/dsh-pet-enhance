@@ -1,8 +1,9 @@
 /**
  * 把小蓝鲸学会的自动化登记到 DeepSeek Harness 的 schedule（自动化任务页）。
  *
- * 默认创建后暂停（active=false），避免教完立刻往会话里灌指令、误动手。
- * 用户可在自动化页「立即运行」或对小蓝鲸说去做。
+ * 宿主真实签名（当前安装版）：
+ *   schedule.create(sessionId, { title, prompt, after_seconds|at|… }, signal?)
+ * 返回 record（含 id）。无 pause API 时用一年后的 after_seconds，避免教完立刻投递。
  *
  * @module src/harness-schedule.js
  */
@@ -11,6 +12,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { serviceOf } from './host-ctx.js'
+import { pickSessionId } from './wake-session.js'
 
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -74,10 +76,8 @@ export async function writeGlanceSkillFile({ goal, learnedId, automationId, summ
   return { name, path }
 }
 
-function nextYearDtstartShanghai() {
-  const y = new Date().getFullYear() + 1
-  return `DTSTART;TZID=Asia/Shanghai:${y}0101T090000\nRRULE:FREQ=YEARLY;COUNT=1`
-}
+/** 一年后才到点，避免教完立刻往会话灌指令；可在自动化页查看/管理。 */
+export const DEFAULT_AFTER_SECONDS = 365 * 24 * 3600
 
 /**
  * @returns {Promise<{ ok: boolean, scheduleId?: string, skillName?: string, reason?: string }>}
@@ -108,7 +108,8 @@ export async function registerHarnessAutomation(ctx, {
     learnedId,
     skillName,
   })
-  const title = clip(`小蓝鲸·${goal || learnedId}`, 120)
+  // 标题用目标；避免奇怪前缀导致校验歧义
+  const title = clip(String(goal || learnedId || '小蓝鲸自动化').trim() || '小蓝鲸自动化', 120)
 
   const schedule = serviceOf(ctx, 'schedule')
   if (!schedule?.create) {
@@ -119,58 +120,33 @@ export async function registerHarnessAutomation(ctx, {
     }
   }
 
+  const sessionId = preferredSessionId || pickSessionId(ctx, null)
+  if (!sessionId) {
+    return {
+      ok: false,
+      skillName,
+      reason: 'no-session-for-schedule',
+    }
+  }
+
+  const request = {
+    title,
+    prompt,
+    after_seconds: DEFAULT_AFTER_SECONDS,
+  }
+
   try {
-    // 服务 API（与工具字段可能不同）：优先 timing；失败再试 rrule 形参
-    let created = null
-    const actor = preferredSessionId || undefined
-    try {
-      created = await schedule.create(
-        {
-          title,
-          prompt,
-          timing: { kind: 'rrule', rrule: nextYearDtstartShanghai() },
-          target: { kind: 'new_once' },
-        },
-        actor,
-      )
-    } catch {
-      created = await schedule.create(
-        {
-          title,
-          prompt,
-          rrule: nextYearDtstartShanghai(),
-          target: 'new_once',
-        },
-        actor,
-      )
-    }
-
+    // 真实签名：create(sessionId, request, signal?) → record
+    const created = await schedule.create(sessionId, request)
     const scheduleId = created?.id || created?.record?.id || created?.task?.id
-    if (scheduleId && typeof schedule.edit === 'function') {
-      try {
-        await schedule.edit(
-          { id: scheduleId, action: 'update', active: false },
-          actor,
-        )
-      } catch {
-        try {
-          await schedule.edit(
-            { id: scheduleId, action: 'update', patch: { active: false } },
-            actor,
-          )
-        } catch (e) {
-          log(`schedule 暂停失败（任务已创建）：${e?.message ?? e}`)
-        }
-      }
-    }
-
     if (!scheduleId) {
       return { ok: false, skillName, reason: 'create-no-id', raw: created }
     }
-    log(`Harness 自动化已登记 ${scheduleId}（已暂停） skill=${skillName}`)
-    return { ok: true, scheduleId: String(scheduleId), skillName }
+    log(`Harness 自动化已登记 ${scheduleId}（after 1y，绑定会话 ${sessionId}） skill=${skillName}`)
+    return { ok: true, scheduleId: String(scheduleId), skillName, sessionId: String(sessionId) }
   } catch (e) {
-    log(`Harness schedule.create 失败：${e?.message ?? e}`)
-    return { ok: false, skillName, reason: String(e?.message ?? e).slice(0, 160) }
+    const msg = String(e?.message ?? e)
+    log(`Harness schedule.create 失败：${msg}`)
+    return { ok: false, skillName, reason: msg.slice(0, 200) }
   }
 }
