@@ -29,20 +29,19 @@ function envelope(shot) {
 }
 
 /**
+ * 直接返回 `ctx.tools.register()` 收的**普通对象**：`defineTool()` 属于宿主内部包，
+ * Host-only bundle 里 import 不到它（`Cannot find package '@deepseek-ai/dsh-tools'`）。
+ * 本机的 billion-context 插件同样是裸注册纯对象，这是宿主支持的形状。
+ *
  * @param {{
- *   defineTool: Function,
  *   home: string,
  *   attachments?: { saveImage?: Function },
  *   log?: (message: string) => void,
  * }} options
  */
-export function createGlanceTool({ defineTool, home, attachments, log } = {}) {
-  if (typeof defineTool !== 'function') throw new TypeError('createGlanceTool 需要 defineTool')
-
-  const spec = glanceToolSpec()
-
-  return defineTool({
-    ...spec,
+export function createGlanceTool({ home, attachments, log } = {}) {
+  return {
+    ...glanceToolSpec(),
     async execute(args, exec) {
       const action = String(args?.action ?? 'see').trim().toLowerCase() || 'see'
       const quality = normalizeQuality(args?.quality)
@@ -106,5 +105,5 @@ export function createGlanceTool({ defineTool, home, attachments, log } = {}) {
 
       return { text, images: [ref], meta }
     },
-  })
+  }
 }

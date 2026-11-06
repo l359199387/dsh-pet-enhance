@@ -21,7 +21,7 @@
 
 ## 硬约束（违反会直接坏）
 
-1. **`parameters` 是「属性名 → 值 schema」映射，不是完整 JSON Schema。** `output.schema` 才是完整 JSON Schema。写反了宿主会报 `unsupported JSON schema: parameters.type must be a value schema object`。
+1. **`parameters` 的形状取决于注册方式。** 走 `defineTool()` 时它是「属性名 → 值 schema」映射，只有 `output.schema` 是完整 JSON Schema；裸注册纯对象时（本项目的做法，见 20）`parameters` 也必须是完整 JSON Schema。写反了宿主会报 `unsupported JSON schema: parameters.type must be a value schema object` 或参数校验永远不生效。
 2. **`ctx.attachments.saveImage` 要 `.call(svc, …)`**，否则丢 `this`。
 3. **图只能作为工具返回值交给模型。** 禁止后台主动往会话推图（自唤醒环）。
 4. **每个注册都必须由 `ctx.effect` / `ctx.on` 拥有并返回 disposer。** 裸 `setInterval`、裸 `spawn`、裸 `addEventListener` 都不允许。
@@ -40,6 +40,8 @@
 17. **中文检索不能直接用 `unicode61` 或 `trigram`。** `unicode61` 把整段中文当一个 token（查「保存」0 命中）；`trigram` 需要 ≥3 字符（2 字查询 0 命中）。用自建 bigram 字段 + `unicode61` + 短语查询（见 `docs/09-memory.md` §7.3）。
 18. **自定义前缀路由（`/api/glance/*`）必须过 `src/trust.js` 的闸门。** 前缀比内核 `/api` 长，不经过内核准入；不设防等于把确认接口交给本机任意进程。服务报错一律 503，绝不放行。
 19. **装插件没有 CLI。** 本机没有 `dsh` 命令，也常常没有 `plugin_manager`：走 GUI「插件 → 从目录安装」，装完检查 `~/.dsh/profiles/desktop/cordis.patch.yml` 与 `node_modules/dsh-glance`。官方文档说本地目录安装是「链接 checkout」而不是拷贝（`Get-Item` 看 `LinkType` 可确认），但宿主是启动时 import 的，**改完源码仍要重启宿主（或重装）才生效**——别拿旧进程验新代码。
+20. **Host-only bundle 不许 import dsh 自带的包（`@deepseek-ai/*`）。** 插件目录里解析不到它们，`import('@deepseek-ai/dsh-tools')` 会抛 `Cannot find package …`，而且失败发生在运行时（A1 第一次安装就这么静默挂了工具）。工具契约直接写成**标准 JSON Schema**：`parameters` 是完整 schema（`required` 是数组），`output.schema` 也是完整 schema，然后 `ctx.tools.register({ name, description, parameters, output, timeoutMs, execute })` 裸注册纯对象。`tools/dev-check.mjs` 会拦住这类 import。
+21. **`/api/glance/*` 在外部浏览器里 401 是正常的。** `/api` 前缀由宿主的 connection 做 cookie 鉴权，cookie 按 authority 绑定（换端口即失效），Electron 窗口之外拿不到。验工具「有没有挂上」不看 `/status`，而是在新会话里让模型真调一次 `glance`。
 
 ## 工具链
 

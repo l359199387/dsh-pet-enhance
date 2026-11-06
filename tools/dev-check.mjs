@@ -8,6 +8,7 @@
  *   3. 所有 .js / .mjs 能过 `node --check`
  *   4. sidecar 的 .py 能过编译（有 python 才查）
  *   5. src 里没有 console.log（硬约束：日志走统一 log()）
+ *   6. 没有 import dsh 自带的 `@deepseek-ai/*`（Host-only bundle 解析不到）
  *
  * 退出码即结论；任何一项红都直接非零。
  *
@@ -121,6 +122,23 @@ function checkConsoleLog() {
   else ok('console.log', '干净')
 }
 
+function checkHostImports() {
+  // 硬约束：Host-only bundle 不 import dsh 自带的包。这些包只在 dsh 自己的解析树里，
+  // 从插件目录 import 会拿到 `Cannot find package '@deepseek-ai/…'`——A1 第一次安装
+  // 就是这么挂的，而且失败发生在运行时，静态门必须提前拦住。
+  const files = walk(PKG).filter((f) => f.endsWith('.js') || f.endsWith('.mjs'))
+  const hits = []
+  for (const file of files) {
+    readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      if (/from\s+['"]@deepseek-ai\//.test(line) || /import\(\s*['"]@deepseek-ai\//.test(line)) {
+        hits.push(`${relative(ROOT, file)}:${i + 1}`)
+      }
+    })
+  }
+  if (hits.length) bad('宿主包 import', `不能 import @deepseek-ai/*：${hits.join('、')}`)
+  else ok('宿主包 import', '没有依赖宿主内部包')
+}
+
 function checkTests() {
   const dir = join(PKG, 'test')
   const files = walk(dir).filter((f) => f.endsWith('.test.mjs') || f.endsWith('.test.js'))
@@ -149,6 +167,7 @@ function main() {
   checkPython()
   checkTests()
   checkConsoleLog()
+  checkHostImports()
 
   const width = Math.max(...results.map((r) => r.name.length))
   for (const r of results) {

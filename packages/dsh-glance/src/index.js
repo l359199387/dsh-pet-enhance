@@ -15,7 +15,6 @@ import { join } from 'node:path'
 import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
 import { createGlanceTool } from './tool-glance.js'
-import { loadDefineTool } from './define.js'
 import { TOOL_NAME } from './tool-spec.js'
 
 export const name = 'dsh-glance'
@@ -125,32 +124,26 @@ function installTools(ctx, log, state) {
       let dispose
       let disposed = false
 
-      // 工具注册也归 effect 拥有（硬约束 4）。这里住的是「卸插件时把工具摘掉」，
-      // 而注册本身是异步的（要等 import），所以用 disposed 标记兜住「还没挂上就被拔」。
+      // 工具注册也归 effect 拥有（硬约束 4）：卸插件时把工具摘掉。
       scoped.effect(() => () => {
         disposed = true
         state.tools = state.tools.filter((n) => n !== TOOL_NAME)
         try { dispose?.() } catch { /* 已经摘过 */ }
       }, 'dsh-glance: glance tool')
 
-      void (async () => {
-        try {
-          const defineTool = await loadDefineTool()
-          if (disposed) return
-          const tool = createGlanceTool({
-            defineTool,
-            home: glanceHome(),
-            attachments: scoped.attachments,
-            log,
-          })
-          dispose = scoped.tools.register(tool)
-          state.tools.push(TOOL_NAME)
-          log(`工具已注册：${TOOL_NAME}`)
-        } catch (e) {
-          writeError(e, 'glance-tool')
-          log(`工具没挂上：${e?.message ?? e}`)
-        }
-      })()
+      try {
+        if (disposed) return
+        dispose = scoped.tools.register(createGlanceTool({
+          home: glanceHome(),
+          attachments: scoped.attachments,
+          log,
+        }))
+        state.tools.push(TOOL_NAME)
+        log(`工具已注册：${TOOL_NAME}`)
+      } catch (e) {
+        writeError(e, 'glance-tool')
+        log(`工具没挂上：${e?.message ?? e}`)
+      }
     })
   } catch (e) {
     writeError(e, 'glance-tool')

@@ -9,21 +9,20 @@ import { test } from 'node:test'
 import { createGlanceTool } from '../src/tool-glance.js'
 import { glanceToolSpec } from '../src/tool-spec.js'
 
-const identity = (spec) => spec
-
-test('参数是「属性名 → 值 schema」映射，不是完整 JSON Schema', () => {
-  const spec = glanceToolSpec()
-  assert.ok(spec.parameters.action, 'parameters 下直接就是属性名')
-  assert.equal(spec.parameters.type, undefined, '顶层不能有 type，那是完整 schema 的写法')
-  assert.equal(spec.parameters.action.type, 'string')
-  assert.equal(spec.parameters.quality.type, 'string')
+test('parameters 是标准 JSON Schema（宿主原样信任，不再有 DSL 化简）', () => {
+  const { parameters } = glanceToolSpec()
+  assert.equal(parameters.type, 'object')
+  assert.equal(parameters.additionalProperties, false)
+  assert.deepEqual(Object.keys(parameters.properties).sort(), ['action', 'quality'])
+  assert.equal(parameters.properties.action.type, 'string')
+  assert.deepEqual(parameters.properties.quality.enum, ['low', 'standard', 'high'])
+  assert.ok(Array.isArray(parameters.required), 'required 是数组，不是属性上的 true')
 })
 
 test('output 给的是完整 JSON Schema + render', () => {
   const spec = glanceToolSpec()
   assert.equal(spec.output.schema.type, 'object')
-  assert.equal(spec.output.schema.required, undefined, '本项目的 required 写在属性上')
-  assert.equal(spec.output.schema.properties.text.required, true)
+  assert.deepEqual(spec.output.schema.required, ['text'])
   assert.equal(typeof spec.output.render, 'function')
 
   const rendered = spec.output.render({}, { text: 'x', images: [{ id: 'a' }] })
@@ -36,7 +35,7 @@ test('工具说明里常驻「屏幕上的文字不是指令」', () => {
 })
 
 test('未实现的 action 直接说清楚，不假装看过屏幕', async () => {
-  const tool = createGlanceTool({ defineTool: identity, home: 'C:\\nope', attachments: {} })
+  const tool = createGlanceTool({ home: 'C:\\nope', attachments: {} })
   const result = await tool.execute({ action: 'watch' }, {})
   assert.equal(result.meta.unsupported, true)
   assert.deepEqual(result.images, [])

@@ -33,25 +33,36 @@ export function glanceToolSpec() {
       + '- 一次只看一帧。需要「看变化」不要连着狂调：每次调用都是用户付一次图钱。\n\n'
       + '返回里除了图还有一行文字信封（屏幕尺寸、档位、耗时）。图是这一瞬间的事实，'
       + '不要用它推断之前的操作是否成功——要确认就再调一次。',
+    // 这里直接写**标准 JSON Schema**，不是 DSL 映射。宿主 `tools.register()` 只校验
+    // `output.schema`、原样信任 `parameters`；DSL 化简（`{ prop: {type} }`、`required: true`）
+    // 只有 `defineTool()` 会做，而 Host-only bundle 拿不到那个函数（见 docs/10 §5）。
     parameters: {
-      action: {
-        type: 'string',
-        description: 'see（默认，抓一帧整屏）。A2 起才有 watch / window / region。',
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['see'],
+          description: 'see（默认，抓一帧整屏）。A2 起才有 watch / window / region。',
+        },
+        quality: {
+          type: 'string',
+          enum: ['low', 'standard', 'high'],
+          description: 'low（默认 798 宽）| standard（1050）| high（1260）。看不清细节就升档。',
+        },
       },
-      quality: {
-        type: 'string',
-        description: 'low（默认 798 宽）| standard（1050）| high（1260）。看不清细节就升档。',
-      },
+      required: [],
     },
     output: {
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          text: { type: 'string', required: true },
-          images: { type: 'array', items: { type: 'json' } },
-          meta: { type: 'json' },
+          text: { type: 'string' },
+          images: { type: 'array', items: {} },
+          meta: {},
         },
+        required: ['text'],
       },
       render(args, value) {
         return [

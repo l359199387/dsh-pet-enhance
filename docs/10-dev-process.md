@@ -120,7 +120,7 @@ packages/dsh-glance/
 2. **装上了但工具没出现** → 看 `~/.dsh/glance-error.log`；`apply` 里任何一次 throw 都会让整行静默失败。
 3. **改了代码没变化** → 宿主持有旧进程：重启宿主（或重装插件）再看。
 4. **安装就失败** → `.plugin-manager/logs/operation-*/pnpm.log`；常见是 `package.json` 里 `dsh.bundle.patch` 路径写错。
-5. **路由 404 / 403** → 403 是 `trust.js` 在正常工作（不是 bug）；404 是前缀没匹配上，检查 `ROUTE_PREFIX` 与 `webServer.register` 的 `path` 是否一致。
+5. **路由 401 / 403 / 404** → 401 是 `/api` 前缀的鉴权门（外部浏览器没有 cookie，属正常，别去改 `trust.js`）；403 是 `trust.js` 在正常工作（不是 bug）；404 是前缀没匹配上，检查 `ROUTE_PREFIX` 与 `webServer.register` 的 `path` 是否一致。
 6. **拔掉后还有东西在跑** → `Get-Process python` 看 sidecar；有残留就是某处注册没走 `ctx.effect`。
 
 ## 8. 回滚与卸载残留检查
@@ -147,7 +147,10 @@ packages/dsh-glance/
 
 | 症状 | 原因 | 出处 |
 |---|---|---|
-| `unsupported JSON schema: parameters.type must be a value schema object` | `parameters` 写成了完整 JSON Schema | 硬约束 1 |
+| `Cannot find package '@deepseek-ai/dsh-tools'` | Host-only bundle import 了宿主自带的包（插件目录里没有它） | 硬约束 20 |
+| `unsupported JSON schema: parameters.type must be a value schema object` | 用 `defineTool` 时把 `parameters` 写成了完整 JSON Schema；裸注册时反过来——必须写完整 JSON Schema | 硬约束 1 / 20 |
+| 工具挂上了但模型调不动 / 参数校验报 schema 错 | `parameters` 留成了 `{ 属性: {type} }` 的 DSL 映射 | 硬约束 20 |
+| `/api/glance/status` 返回 401 | 正常：`/api` 前缀要宿主签发的 cookie，外部浏览器没有 | 07 §13 |
 | `ctx.attachments` 是 undefined / 报错 | 没写进 `inject`；`?.` 挡不住 get 陷阱 | 01 §1.2 |
 | 抓到的图坐标偏一半 | 没开 `SetProcessDPIAware()` | 硬约束 10 |
 | 模型自己叫醒自己 | 从后台往会话推图 | 硬约束 3 |

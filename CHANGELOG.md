@@ -11,10 +11,12 @@
 - 图只随**本次工具结果**返回，不主动推给会话；一次调用一张图。
 - 抓屏失败/超时/取消都会给模型一句人话，宿主不会因此断掉一轮对话。
 - 实测（本机 2560×1440、单显示器、`low` 档）：端到端 500–600ms，其中 PowerShell 启动 + 抓屏 + 缩放 + 编码约 565ms，PNG 约 430KB；同一张图里 DSH 窗口的中文正文清晰可读。
+- 工具不依赖宿主内部包（不再 `import('@deepseek-ai/dsh-tools')`）：那在插件目录里解析不到，会让工具静默挂不上。工具契约直接写成标准 JSON Schema 后裸注册。
 
 ### 骨架与开发流程
 
 - `GET /api/glance/status` 返回 `{ok, name, version, stage, home, uptimeMs, tools}`；装没装、工具挂没挂，一条请求就能看出来。
 - 插件卸载后路由与工具都会被摘掉；`/status` 里 `tools` 随之清空。
-- 新增 `tools/dev-check.mjs`：一条命令跑完「文件齐全 / 清单一致 / `node --check` / Python 编译 / 单测 / 无 `console.log`」。
+- 新增 `tools/dev-check.mjs`：一条命令跑完「文件齐全 / 清单一致 / `node --check` / Python 编译 / 单测 / 无 `console.log` / 不 import 宿主包」。
+- `/api/glance/status` 需要宿主签发的 cookie：外部浏览器直接打开会得到 401，这是正常的（`/api` 前缀有鉴权门），验证要走应用内或新会话。
 - 新增 `docs/10-dev-process.md`：一个切片的八步循环、A1–F4 阶段闸门、故障排查顺序、回滚清单。

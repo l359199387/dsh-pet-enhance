@@ -11,12 +11,9 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { apply, ROUTE_PREFIX } from '../src/index.js'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
 
 let home
 let registered
@@ -24,17 +21,14 @@ let registered
 before(() => {
   home = mkdtempSync(join(tmpdir(), 'glance-test-'))
   process.env.DSH_GLANCE_HOME = home
-  // 单测不去碰 dsh 安装目录里的真 defineTool。
-  process.env.DSH_TOOLS_PATH = join(HERE, 'fixtures', 'fake-tools.mjs')
 })
 
 after(() => {
   delete process.env.DSH_GLANCE_HOME
-  delete process.env.DSH_TOOLS_PATH
   rmSync(home, { recursive: true, force: true })
 })
 
-/** 让异步注册（import + register）跑完。 */
+/** 让注册后的清理钩子都排到队尾（注册本身是同步的，留一点余量）。 */
 async function flush() {
   for (let i = 0; i < 3; i += 1) await new Promise((done) => setTimeout(done, 0))
 }
@@ -104,7 +98,8 @@ test('apply 注册路由与 glance 工具，status 能看到它们', async () =>
 
   assert.equal(ctx._tools.length, 1, 'glance 应该挂上了')
   assert.equal(ctx._tools[0].name, 'glance')
-  assert.equal(ctx._tools[0].definedBy, 'fixture', '必须用宿主给的 defineTool')
+  assert.equal(typeof ctx._tools[0].execute, 'function')
+  assert.equal(ctx._tools[0].output?.schema?.type, 'object', 'register 要收到 JSON Schema')
 
   const res = await call(`${ROUTE_PREFIX}/status`)
   assert.equal(res.status, 200)
