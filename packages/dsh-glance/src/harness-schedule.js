@@ -34,15 +34,12 @@ export function buildHarnessAutomationPrompt({
   learnedId,
   skillName,
   ownerNotes = '',
-  taskSupplement = '',
 }) {
   const notes = String(ownerNotes || '').trim()
-  const supp = String(taskSupplement || '').trim()
   return (
     `执行小蓝鲸已学会的自动化「${clip(goal, 80)}」。`
     + `学习 id=${learnedId}；可用 skill「${skillName}」加载说明。`
     + (notes ? `主人想法：${clip(notes, 400)}。` : '')
-    + (supp ? `任务补充：${clip(supp, 400)}。` : '')
     + '先 glance 看清**当前**屏幕，再按目标用 act。'
     + '不要加载 learned/frames 教学图片（图只用于学习，执行不用）。'
     + '点击坐标只是参考，界面变了要 glance 重找；'

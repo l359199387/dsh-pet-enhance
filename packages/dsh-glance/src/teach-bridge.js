@@ -726,9 +726,15 @@ export function createTeachBridge(options) {
     if (smart) {
       const preferred = options.getPreferredSessionId?.() ?? null
       const learnMeta = await readLearned(options.home, id).catch(() => null)
-      const prompt = buildSmartRunPrompt(playbook, {
+      const prompt = buildSmartRunPrompt({
+        ...playbook,
+        strategy: {
+          ...(playbook.strategy || {}),
+          summary: learnMeta?.understanding?.summary || playbook.strategy?.summary,
+          fastPlan: learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan,
+        },
+      }, {
         ownerNotes: learnMeta?.ownerNotes || playbook.ownerNotes,
-        taskSupplement: learnMeta?.taskSupplement || playbook.taskSupplement,
       })
       await broadcastToDshPet(
         `按快捷思路做「${clip(playbook.goal, 28)}」${playbook.strategy?.fastPlan ? `：${clip(playbook.strategy.fastPlan, 36)}` : ''}…`,

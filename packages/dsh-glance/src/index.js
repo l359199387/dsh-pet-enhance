@@ -340,13 +340,22 @@ async function handle(req, res, connection, log, state) {
       const patch = {}
       if (body.goal != null) patch.goal = body.goal
       if (body.ownerNotes != null) patch.ownerNotes = body.ownerNotes
-      if (body.taskSupplement != null) patch.taskSupplement = body.taskSupplement
-      const r = await updateLearnedPair(glanceHome(), id, patch, { ctx: state.hostCtx, log })
+      const r = await updateLearnedPair(glanceHome(), id, patch, {
+        ctx: state.hostCtx,
+        log,
+        preferredSessionId: state.lastSessionId || null,
+        mergeNotes: body.mergeNotes !== false,
+      })
       if (!r.ok) {
         send(res, r.reason === 'not-found' ? 404 : 400, { ok: false, rejected: [r.reason || '更新失败'] })
         return
       }
-      send(res, 200, { ok: true, item: r.detail })
+      send(res, 200, {
+        ok: true,
+        item: r.detail,
+        merged: Boolean(r.merged),
+        mergeReason: r.mergeReason || null,
+      })
       return
     }
     if (method === 'DELETE') {

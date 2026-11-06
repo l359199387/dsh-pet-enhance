@@ -19,6 +19,8 @@ import {
 } from './learned-automation.js'
 import { skillSlugFromId, writeGlanceSkillFile, buildHarnessAutomationPrompt } from './harness-schedule.js'
 import { serviceOf } from './host-ctx.js'
+import { wakeSession, waitAssistantReply } from './wake-session.js'
+import { buildOwnerNotesMergePrompt, parseMergedSummary } from './learned-merge.js'
 
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -58,12 +60,15 @@ export async function getLearnedDetail(home, id) {
   if (!learn) return null
   const task = await readAutomationTask(home, id)
   const playbook = await readAutomationPlaybook(home, id)
+  const summary = String(learn.understanding?.summary || '')
   return {
     id: learn.id,
     goal: String(learn.goal || task?.goal || playbook?.goal || ''),
     ownerNotes: String(learn.ownerNotes || task?.ownerNotes || ''),
-    taskSupplement: String(learn.taskSupplement || task?.taskSupplement || ''),
-    summary: String(learn.understanding?.summary || ''),
+    /** 小蓝鲸学习理解（只读展示；保存主人想法后由模型归纳更新） */
+    understanding: summary,
+    summary,
+    fastPlan: String(learn.understanding?.fastPlan || ''),
     scheduled: Boolean(learn.scheduled || task?.scheduled),
     scheduleId: learn.scheduleId || task?.scheduleId || null,
     scheduleSessionId: learn.scheduleSessionId || task?.scheduleSessionId || null,
@@ -130,8 +135,15 @@ export async function patchLearnedScheduleMeta(home, id, meta = {}) {
 /**
  * @param {string} home
  * @param {string} id
- * @param {{ goal?: string, ownerNotes?: string, taskSupplement?: string }} patch
- * @param {{ ctx?: object, log?: Function }} [opts]
+ * @param {{ goal?: string, ownerNotes?: string }} patch
+ * @param {{
+ *   ctx?: object,
+ *   log?: Function,
+ *   preferredSessionId?: string | null,
+ *   wake?: Function,
+ *   waitReply?: Function,
+ *   mergeNotes?: boolean,
+ * }} [opts]
  */
 export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
   const log = opts.log ?? (() => {})
@@ -142,7 +154,8 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     return { ok: false, reason: 'not-found' }
   }
 
-  const now = new Date().toISOString()
+  const prevNotes = String(learn.ownerNotes || '')
+  let now = new Date().toISOString()
   if (patch.goal != null) {
     const goal = String(patch.goal).trim().slice(0, 200)
     if (!goal) return { ok: false, reason: 'empty-goal' }
@@ -150,15 +163,12 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     task.goal = goal
     if (playbook) playbook.goal = goal
   }
+  let notesChanged = false
   if (patch.ownerNotes != null) {
     const notes = String(patch.ownerNotes).slice(0, 4000)
+    notesChanged = notes !== prevNotes
     learn.ownerNotes = notes
     task.ownerNotes = notes
-  }
-  if (patch.taskSupplement != null) {
-    const supp = String(patch.taskSupplement).slice(0, 4000)
-    learn.taskSupplement = supp
-    task.taskSupplement = supp
   }
   learn.updatedAt = now
   task.updatedAt = now
@@ -171,7 +181,6 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     await writeFile(ap.playbook, `${JSON.stringify(playbook, null, 2)}\n`, 'utf8')
   }
 
-  // 刷新 index 目标
   for (const indexPath of [lp.index, ap.index]) {
     const list = await readIndex(indexPath)
     const next = list.map((row) => (
@@ -180,7 +189,63 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     await writeIndex(indexPath, next)
   }
 
-  // 重写 skill 描述
+  /** @type {{ merged?: boolean, reason?: string }} */
+  const mergeInfo = { merged: false }
+
+  // 主人想法有变且非空 → 叫醒模型归纳进学习理解
+  const shouldMerge = opts.mergeNotes !== false
+    && notesChanged
+    && String(learn.ownerNotes || '').trim()
+    && opts.ctx
+
+  if (shouldMerge) {
+    const wake = opts.wake ?? wakeSession
+    const waitReply = opts.waitReply ?? waitAssistantReply
+    const prompt = buildOwnerNotesMergePrompt({
+      goal: learn.goal,
+      summary: learn.understanding?.summary || '',
+      ownerNotes: learn.ownerNotes,
+    })
+    try {
+      const woken = await wake(opts.ctx, {
+        text: prompt,
+        preferredId: opts.preferredSessionId || null,
+        log,
+      })
+      if (!woken.ok) {
+        mergeInfo.reason = woken.reason || 'wake-failed'
+        log(`归纳学习理解未叫醒：${mergeInfo.reason}`)
+      } else {
+        const reply = await waitReply(opts.ctx, woken.sessionId, { timeoutMs: 90_000 })
+        const merged = parseMergedSummary(reply.ok ? reply.text : '')
+        if (merged) {
+          learn.understanding = {
+            ...(learn.understanding || {}),
+            summary: merged,
+          }
+          now = new Date().toISOString()
+          learn.updatedAt = now
+          task.updatedAt = now
+          await writeFile(lp.learn, `${JSON.stringify(learn, null, 2)}\n`, 'utf8')
+          await writeFile(ap.task, `${JSON.stringify(task, null, 2)}\n`, 'utf8')
+          if (playbook) {
+            playbook.understanding = playbook.understanding || {}
+            playbook.understanding.summary = merged
+            if (playbook.strategy) playbook.strategy.summary = merged
+            await writeFile(ap.playbook, `${JSON.stringify(playbook, null, 2)}\n`, 'utf8')
+          }
+          mergeInfo.merged = true
+        } else {
+          mergeInfo.reason = reply.reason || 'empty-summary'
+          log(`归纳学习理解无 SUMMARY：${mergeInfo.reason}`)
+        }
+      }
+    } catch (e) {
+      mergeInfo.reason = String(e?.message ?? e).slice(0, 160)
+      log(`归纳学习理解失败：${mergeInfo.reason}`)
+    }
+  }
+
   try {
     await writeGlanceSkillFile({
       goal: learn.goal,
@@ -192,7 +257,6 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     log(`更新 skill 失败：${e?.message ?? e}`)
   }
 
-  // 有定时则尽力改 Harness 标题/提示（不碰 timing）
   const scheduleId = learn.scheduleId || task.scheduleId
   const sessionId = learn.scheduleSessionId || task.scheduleSessionId
   if (scheduleId && opts.ctx) {
@@ -200,15 +264,12 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     if (schedule?.update) {
       const title = clip(learn.goal.startsWith('小蓝鲸') ? learn.goal : `小蓝鲸｜${learn.goal}`, 120)
       const skillName = learn.skillName || skillSlugFromId(id)
-      let prompt = buildHarnessAutomationPrompt({
+      const prompt = buildHarnessAutomationPrompt({
         goal: learn.goal,
         learnedId: id,
         skillName,
+        ownerNotes: learn.ownerNotes,
       })
-      const notes = String(learn.ownerNotes || '').trim()
-      const supp = String(learn.taskSupplement || '').trim()
-      if (notes) prompt += `主人想法：${clip(notes, 400)}。`
-      if (supp) prompt += `任务补充：${clip(supp, 400)}。`
       try {
         await schedule.update({
           id: scheduleId,
@@ -222,7 +283,12 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
     }
   }
 
-  return { ok: true, detail: await getLearnedDetail(home, id) }
+  return {
+    ok: true,
+    merged: mergeInfo.merged,
+    mergeReason: mergeInfo.reason || null,
+    detail: await getLearnedDetail(home, id),
+  }
 }
 
 /**

@@ -37,24 +37,37 @@ async function seed(id, goal = '记录心情') {
   })
 }
 
-test('list / update：改 goal 与想法补充', async () => {
+test('list / update：改 goal 与主人想法；有想法时归纳理解', async () => {
   const id = 'learn-upd-1'
   await seed(id, '旧目标')
   let list = await listLearnedDetails(home)
   assert.ok(list.some((x) => x.id === id))
 
+  const wakes = []
   const r = await updateLearnedPair(home, id, {
     goal: '新目标',
-    ownerNotes: '希望简短',
-    taskSupplement: '写到桌面日记',
+    ownerNotes: '希望简短，写到桌面日记',
+  }, {
+    ctx: { get() { return null } },
+    async wake(_ctx, opts) {
+      wakes.push(opts.text)
+      return { ok: true, sessionId: 's1' }
+    },
+    async waitReply() {
+      return { ok: true, text: 'SUMMARY: 记录心情时写到桌面日记，表述简短。' }
+    },
   })
   assert.equal(r.ok, true)
+  assert.equal(r.merged, true)
   assert.equal(r.detail.goal, '新目标')
-  assert.equal(r.detail.ownerNotes, '希望简短')
-  assert.equal(r.detail.taskSupplement, '写到桌面日记')
+  assert.equal(r.detail.ownerNotes, '希望简短，写到桌面日记')
+  assert.match(r.detail.understanding, /桌面日记/)
+  assert.equal(wakes.length, 1)
+  assert.match(wakes[0], /主人新补充的想法/)
 
   const detail = await getLearnedDetail(home, id)
   assert.equal(detail.goal, '新目标')
+  assert.match(detail.understanding, /桌面日记/)
   const idx = await listLearnedIndex(home)
   assert.equal(idx.find((x) => x.id === id)?.goal, '新目标')
 })

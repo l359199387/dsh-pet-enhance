@@ -358,97 +358,168 @@ window.__ModuleLoader__.load({
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 16px 20px 24px;
+  padding: 20px 24px 28px;
   color: var(--dsw-alias-label-primary, #e8eaed);
-  background: var(--dsw-alias-bg-layer-1, transparent);
+  background:
+    radial-gradient(1200px 400px at 10% -10%, rgba(59,130,246,.12), transparent 55%),
+    var(--dsw-alias-bg-layer-1, transparent);
   box-sizing: border-box;
 }
+.dg-learn-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
 .dg-learn-page h1 {
-  margin: 0 0 4px;
-  font: 600 18px/1.3 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+  margin: 0 0 6px;
+  font: 650 22px/1.25 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+  letter-spacing: .02em;
 }
 .dg-learn-page .dg-learn-sub {
-  margin: 0 0 16px;
+  margin: 0;
+  max-width: 42em;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--dsw-alias-label-secondary, #9aa3b2);
 }
-.dg-learn-list { flex: 1; overflow: auto; min-height: 0; }
-.dg-learn-empty {
-  padding: 24px 8px;
-  color: var(--dsw-alias-label-secondary, #9aa3b2);
-  font-size: 13px;
-}
-.dg-learn-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.08));
-}
-.dg-learn-row-title { font-weight: 600; font-size: 14px; }
-.dg-learn-row-meta {
+.dg-learn-count {
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #9aa3b2);
-  margin-top: 4px;
-  white-space: pre-wrap;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.06));
+}
+.dg-learn-list {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 2px;
+}
+.dg-learn-empty {
+  padding: 36px 12px;
+  text-align: center;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.dg-learn-card {
+  border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.08));
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2, #1a1f2a) 88%, transparent);
+}
+.dg-learn-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dg-learn-row-title {
+  font-weight: 650;
+  font-size: 15px;
+  line-height: 1.35;
 }
 .dg-learn-badge {
   display: inline-block;
   margin-left: 8px;
-  padding: 1px 6px;
-  border-radius: 4px;
+  vertical-align: middle;
+  padding: 2px 8px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.06));
+  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.2));
   color: var(--dsw-alias-label-secondary, #9aa3b2);
 }
 .dg-learn-badge.is-on {
   color: var(--dsw-alias-brand-primary, #60a5fa);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #3b82f6) 18%, transparent);
 }
-.dg-learn-actions { display: flex; gap: 8px; align-items: start; }
+.dg-learn-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.18));
+}
+.dg-learn-block-label {
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: none;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+  margin-bottom: 6px;
+}
+.dg-learn-block-body {
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: var(--dsw-alias-label-primary, #e8eaed);
+}
+.dg-learn-block.is-muted .dg-learn-block-body {
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
 .dg-learn-actions button,
 .dg-learn-editor button {
   cursor: pointer;
   border: 0;
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 7px 12px;
   font-size: 12px;
   background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.08));
   color: var(--dsw-alias-label-primary, #e8eaed);
 }
+.dg-learn-actions button:hover { filter: brightness(1.08); }
 .dg-learn-actions button.danger { color: #f87171; }
 .dg-learn-editor {
-  margin-top: 8px;
-  grid-column: 1 / -1;
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.04));
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.08));
 }
 .dg-learn-editor label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
+.dg-learn-editor .hint {
+  font-size: 11px;
+  opacity: .85;
+  margin-top: -2px;
 }
 .dg-learn-editor input,
 .dg-learn-editor textarea {
   border: 1px solid var(--dsw-alias-stroke-subtle, rgba(255,255,255,.12));
-  border-radius: 6px;
-  padding: 8px 10px;
-  font: 13px/1.4 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: 13px/1.45 var(--dsw-alias-font-sans, ui-sans-serif, system-ui, sans-serif);
   color: var(--dsw-alias-label-primary, #e8eaed);
-  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.2));
+  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.22));
   resize: vertical;
 }
-.dg-learn-editor-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.dg-learn-editor-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.dg-learn-editor .status {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #9aa3b2);
+}
 .dg-learn-editor button.primary {
   background: var(--dsw-alias-brand-primary, #3b82f6);
   color: #fff;
 }
+.dg-learn-err { color: #f87171; font-size: 13px; margin: 0 0 10px; }
 `
 
     function readPos() {
@@ -1132,8 +1203,9 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(true)
       const [error, setError] = useState('')
       const [editingId, setEditingId] = useState(null)
-      const [draft, setDraft] = useState({ goal: '', ownerNotes: '', taskSupplement: '' })
+      const [draft, setDraft] = useState({ goal: '', ownerNotes: '' })
       const [busy, setBusy] = useState(false)
+      const [status, setStatus] = useState('')
 
       const reload = useCallback(async () => {
         setLoading(true)
@@ -1155,29 +1227,39 @@ window.__ModuleLoader__.load({
 
       const startEdit = (item) => {
         setEditingId(item.id)
+        setStatus('')
         setDraft({
           goal: item.goal || '',
           ownerNotes: item.ownerNotes || '',
-          taskSupplement: item.taskSupplement || '',
         })
       }
 
       const saveEdit = async () => {
         if (!editingId || busy) return
         setBusy(true)
+        setError('')
+        setStatus('保存中…若补充了想法，小蓝鲸会归纳进学习理解')
         try {
           const res = await fetch(`${API}/learned/${encodeURIComponent(editingId)}`, {
             method: 'PATCH',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(draft),
+            body: JSON.stringify({
+              goal: draft.goal,
+              ownerNotes: draft.ownerNotes,
+              mergeNotes: true,
+            }),
           })
           const body = await res.json().catch(() => ({}))
           if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || '保存失败')
+          setStatus(body.merged
+            ? '已保存，学习理解已根据主人想法更新'
+            : (body.mergeReason ? `已保存（未更新理解：${body.mergeReason}）` : '已保存'))
           setEditingId(null)
           await reload()
         } catch (e) {
           setError(String(e?.message || e))
+          setStatus('')
         } finally {
           setBusy(false)
         }
@@ -1204,82 +1286,105 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const understandingOf = (item) => item.understanding || item.summary || ''
+
       return h('div', { className: 'dg-learn-page' },
-        h('h1', null, '我学会的'),
-        h('p', { className: 'dg-learn-sub' },
-          '小蓝鲸教完后落在本地的学习条目。可改目标、补充主人想法与任务说明；删除会清本地文件并去掉对应定时任务。',
+        h('div', { className: 'dg-learn-head' },
+          h('div', null,
+            h('h1', null, '我学会的'),
+            h('p', { className: 'dg-learn-sub' },
+              '先看小蓝鲸怎么理解这件事，再在下方补充你的想法并保存——它会把想法归纳进学习理解。删除会清本地文件与对应定时。',
+            ),
+          ),
+          !loading ? h('div', { className: 'dg-learn-count' }, `${items.length} 条`) : null,
         ),
-        error ? h('p', { className: 'dg-learn-empty', style: { color: '#f87171' } }, error) : null,
+        error ? h('p', { className: 'dg-learn-err' }, error) : null,
+        status && !editingId ? h('p', { className: 'dg-learn-sub' }, status) : null,
         loading ? h('p', { className: 'dg-learn-empty' }, '加载中…') : null,
         !loading && !items.length
-          ? h('p', { className: 'dg-learn-empty' }, '还没有学会的条目。打开「实时看屏幕」教一遍，点「我教完了」就会出现在这里。')
+          ? h('p', { className: 'dg-learn-empty' },
+            '还没有学会的条目。',
+            h('br'),
+            '打开「实时看屏幕」教一遍，点「我教完了」就会出现在这里。')
           : null,
         h('div', { className: 'dg-learn-list' },
-          items.map((item) => h('div', { key: item.id, className: 'dg-learn-row' },
-            h('div', null,
-              h('div', { className: 'dg-learn-row-title' },
-                item.goal || item.id,
-                h('span', {
-                  className: `dg-learn-badge${item.scheduled ? ' is-on' : ''}`,
-                }, item.scheduled ? (item.timingLabel || '已定时') : '不定时'),
-              ),
-              h('div', { className: 'dg-learn-row-meta' },
-                [
-                  item.ownerNotes ? `想法：${String(item.ownerNotes).slice(0, 80)}` : '',
-                  item.taskSupplement ? `补充：${String(item.taskSupplement).slice(0, 80)}` : '',
-                  !item.ownerNotes && !item.taskSupplement ? '尚未补充主人想法 / 任务说明' : '',
-                ].filter(Boolean).join('\n'),
-              ),
-            ),
-            h('div', { className: 'dg-learn-actions' },
-              h('button', {
-                type: 'button',
-                disabled: busy,
-                onClick: () => startEdit(item),
-              }, editingId === item.id ? '编辑中' : '编辑/补充'),
-              h('button', {
-                type: 'button',
-                className: 'danger',
-                disabled: busy,
-                onClick: () => removeItem(item),
-              }, '删除'),
-            ),
-            editingId === item.id
-              ? h('div', { className: 'dg-learn-editor' },
-                h('label', null, '目标标题',
-                  h('input', {
-                    value: draft.goal,
-                    onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
-                  }),
+          items.map((item) => {
+            const understanding = understandingOf(item)
+            const open = editingId === item.id
+            return h('article', { key: item.id, className: 'dg-learn-card' },
+              h('div', { className: 'dg-learn-card-top' },
+                h('div', { className: 'dg-learn-row-title' },
+                  item.goal || item.id,
+                  h('span', {
+                    className: `dg-learn-badge${item.scheduled ? ' is-on' : ''}`,
+                  }, item.scheduled ? (item.timingLabel || '已定时') : '不定时'),
                 ),
-                h('label', null, '主人想法',
-                  h('textarea', {
-                    rows: 3,
-                    placeholder: '你希望它怎么理解这件事、有哪些偏好…',
-                    value: draft.ownerNotes,
-                    onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
-                  }),
-                ),
-                h('label', null, '任务补充',
-                  h('textarea', {
-                    rows: 3,
-                    placeholder: '执行时额外注意什么、成功标准、例外情况…',
-                    value: draft.taskSupplement,
-                    onChange: (e) => setDraft((d) => ({ ...d, taskSupplement: e.target.value })),
-                  }),
-                ),
-                h('div', { className: 'dg-learn-editor-actions' },
-                  h('button', { type: 'button', disabled: busy, onClick: () => setEditingId(null) }, '取消'),
+                h('div', { className: 'dg-learn-actions' },
                   h('button', {
                     type: 'button',
-                    className: 'primary',
-                    disabled: busy || !String(draft.goal || '').trim(),
-                    onClick: saveEdit,
-                  }, busy ? '保存中…' : '保存'),
+                    disabled: busy,
+                    onClick: () => (open ? setEditingId(null) : startEdit(item)),
+                  }, open ? '收起' : '编辑'),
+                  h('button', {
+                    type: 'button',
+                    className: 'danger',
+                    disabled: busy,
+                    onClick: () => removeItem(item),
+                  }, '删除'),
                 ),
-              )
-              : null,
-          )),
+              ),
+              h('div', { className: `dg-learn-block${understanding ? '' : ' is-muted'}` },
+                h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解'),
+                h('div', { className: 'dg-learn-block-body' },
+                  understanding || '（教完后会写在这里；你补充想法并保存后，会据此更新）',
+                ),
+              ),
+              !open && item.ownerNotes
+                ? h('div', { className: 'dg-learn-block is-muted' },
+                  h('div', { className: 'dg-learn-block-label' }, '主人想法'),
+                  h('div', { className: 'dg-learn-block-body' }, item.ownerNotes),
+                )
+                : null,
+              open
+                ? h('div', { className: 'dg-learn-editor' },
+                  h('label', null, '目标标题',
+                    h('input', {
+                      value: draft.goal,
+                      onChange: (e) => setDraft((d) => ({ ...d, goal: e.target.value })),
+                    }),
+                  ),
+                  h('div', { className: 'dg-learn-block' },
+                    h('div', { className: 'dg-learn-block-label' }, '小蓝鲸的学习理解（只读 · 保存想法后自动更新）'),
+                    h('div', { className: 'dg-learn-block-body' },
+                      understanding || '尚无理解，保存主人想法后会生成/更新。',
+                    ),
+                  ),
+                  h('label', null,
+                    '主人想法',
+                    h('span', { className: 'hint' },
+                      '不知道它怎么想？先看上方理解，再写下你的偏好、约束或纠正；点保存后会合并进去。',
+                    ),
+                    h('textarea', {
+                      rows: 4,
+                      placeholder: '例如：心情笔记要写到桌面「每日心情」文件夹；语气轻松一点…',
+                      value: draft.ownerNotes,
+                      onChange: (e) => setDraft((d) => ({ ...d, ownerNotes: e.target.value })),
+                    }),
+                  ),
+                  h('div', { className: 'dg-learn-editor-actions' },
+                    status ? h('span', { className: 'status' }, status) : h('span', { className: 'status' }, ''),
+                    h('button', { type: 'button', disabled: busy, onClick: () => setEditingId(null) }, '取消'),
+                    h('button', {
+                      type: 'button',
+                      className: 'primary',
+                      disabled: busy || !String(draft.goal || '').trim(),
+                      onClick: saveEdit,
+                    }, busy ? '归纳中…' : '保存'),
+                  ),
+                )
+                : null,
+            )
+          }),
         ),
       )
     }
