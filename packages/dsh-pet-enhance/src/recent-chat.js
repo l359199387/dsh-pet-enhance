@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { latestGlancePngPath, latestWatchPngPath } from './chat-bridge.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -250,7 +250,8 @@ export async function materializeAttachment(home, attachmentId) {
   if (!existsSync(dest)) {
     await writeFile(dest, await readFile(src))
   }
-  return `./recent-chat-assets/${name}`
+  // 绝对 file://，避免部分浏览器对 file 页相对子路径拦图
+  return pathToFileURL(dest).href
 }
 
 async function materializeLocalPng(home, filePath, name) {
@@ -260,7 +261,7 @@ async function materializeLocalPng(home, filePath, name) {
   const dest = join(assets, name)
   try {
     await writeFile(dest, await readFile(filePath))
-    return `./recent-chat-assets/${name}`
+    return pathToFileURL(dest).href
   } catch {
     return null
   }
