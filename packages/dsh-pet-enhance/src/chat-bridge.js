@@ -86,9 +86,10 @@ export function followUpPrompt(userText, shot) {
 export function followUpWatchPrompt(userText, result) {
   const silent = result?.silent ? '屏幕基本没变。' : `变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
   const sheets = Number(result?.mosaicCount) || 1
+  const delivered = Number(result?.deliveredSheets) || sheets
   const layout = `${result?.cols || '?'}×${result?.rows || '?'}`
   const sheetBit = sheets > 1
-    ? `${result?.framesKept ?? 0} 帧→${sheets} 张拼图（${layout} 起，自上而下按时间）。`
+    ? `${result?.framesKept ?? 0} 帧→共 ${sheets} 张拼图（附图为最近 ${delivered} 张，${layout}）。`
     : `${result?.framesKept ?? 0} 帧→一张 ${layout} 拼图。`
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
@@ -139,6 +140,17 @@ export function createChatBridge(options) {
     else if (r.skipped) log('chat-bridge episode 跳过（敏感窗口）')
   }
 
+  async function tryChatWithPng(prompt, png) {
+    return chatWithDshPet(prompt, {
+      pet,
+      attachment: {
+        mediaType: 'image/png',
+        data: png.toString('base64'),
+      },
+      timeoutMs: 120_000,
+    })
+  }
+
   async function deliverShot(userText, shot, t0, promptBuilder = followUpPrompt) {
     if (!shot?.png || !Buffer.isBuffer(shot.png)) {
       await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
@@ -153,14 +165,19 @@ export function createChatBridge(options) {
     }
 
     const prompt = promptBuilder(userText, shot)
-    const chat = await chatWithDshPet(prompt, {
-      pet,
-      attachment: {
-        mediaType: 'image/png',
-        data: shot.png.toString('base64'),
-      },
-      timeoutMs: 120_000,
-    })
+    let chat = await tryChatWithPng(prompt, shot.png)
+    let usedFallbackSheet = false
+
+    // 叠图过大时 dsh-pet 会 fetch failed；用单张 sheet 再试一次
+    if ((!chat.ok || chat.data?.ok === false)
+      && Buffer.isBuffer(shot.fallbackPng)
+      && shot.fallbackPng.length > 0
+      && shot.fallbackPng !== shot.png) {
+      const reason0 = chat.data?.reason || chat.error || `http-${chat.status}`
+      log(`chat-bridge 附图失败（${reason0}），改用单张 sheet 重试…`)
+      chat = await tryChatWithPng(prompt, shot.fallbackPng)
+      usedFallbackSheet = true
+    }
 
     if (!chat.ok || chat.data?.ok === false) {
       const reason = chat.data?.reason || chat.error || `http-${chat.status}`
@@ -168,9 +185,10 @@ export function createChatBridge(options) {
       log(`chat-bridge 附图对话失败：${msg}`)
       const fallback = shot.silent != null
         ? (
-          `我盯了约 ${shot.elapsedSec ?? '?'} 秒，留 ${shot.framesKept ?? 0} 帧`
-          + `（${shot.width}×${shot.height}）。`
-          + (shot.silent ? '屏幕基本没变。' : '')
+          `盯完了约 ${shot.elapsedSec ?? '?'}s，留 ${shot.framesKept ?? 0} 帧`
+          + `（${shot.width}×${shot.height}）`
+          + (shot.silent ? '，屏幕基本没变' : '')
+          + `。附图对话失败（${reason}）；请打开 cache/watch-latest.png 看拼图。`
         )
         : (() => {
           const screen = shot.screen?.w && shot.screen?.h
@@ -184,7 +202,7 @@ export function createChatBridge(options) {
             + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
           )
         })()
-      await broadcastToDshPet(fallback, { pet, duration: 14_000 })
+      await broadcastToDshPet(fallback, { pet, duration: 18_000 })
       await remember({
         userText,
         shot,
@@ -199,7 +217,10 @@ export function createChatBridge(options) {
     const reply = typeof chat.data?.text === 'string' ? chat.data.text : ''
     lastContent = prompt
     lastTs = Date.now()
-    log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
+    log(
+      `chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`
+      + (usedFallbackSheet ? '〔单张重试〕' : ''),
+    )
     await remember({
       userText,
       shot,
@@ -272,18 +293,27 @@ export function createChatBridge(options) {
       }
 
       const sheetN = result.mosaicCount || sheetPngs.length || 1
+      const delivered = result.deliveredSheets || Math.min(sheetN, 2)
+      const skipBit = result.skippedSheets > 0
+        ? `（共 ${sheetN} 张，对话附最近 ${delivered} 张；其余在 cache/watch-latest-*.png）`
+        : ''
       await broadcastToDshPet(
         (result.silent
           ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧 / ${sheetN} 张拼图）。`
           : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧，拼成 ${sheetN} 张（${result.cols || '?'}×${result.rows || '?'}）。`)
+        + skipBit
         + (saved
-          ? ' 拼图在对话面板最底下（滚到底）；也可打开文件夹里的 watch-latest.png。双击桌宠是开/关对话，不是会话列表。'
-          : ' 拼图在对话面板最底下，请滚到底看。'),
-        { pet, duration: 14_000 },
+          ? ' 拼图马上送到对话面板（请滚到底）；也可打开 cache/watch-latest.png。'
+          : ' 拼图马上送到对话面板，请滚到底看。'),
+        { pet, duration: 16_000 },
       )
 
+      const lastSheetPng = sheetPngs.length
+        ? sheetPngs[sheetPngs.length - 1]
+        : result.png
       const shot = {
         png: result.png,
+        fallbackPng: lastSheetPng,
         width: result.width,
         height: result.height,
         quality: result.quality,
@@ -293,8 +323,12 @@ export function createChatBridge(options) {
         elapsedSec: result.elapsedSec,
         framesKept: result.framesKept,
         mosaicCount: sheetN,
+        deliveredSheets: delivered,
+        skippedSheets: result.skippedSheets || 0,
         tokens: result.tokens,
         maxScore: result.maxScore,
+        cols: result.cols,
+        rows: result.rows,
       }
       await deliverShot(userText, shot, t0, (text, s) => followUpWatchPrompt(text, s))
     } finally {

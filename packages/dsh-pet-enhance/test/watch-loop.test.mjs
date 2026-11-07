@@ -70,3 +70,7 @@ test('用户发言清零', () => {
 test('默认 maxAutonomousWakes=8', () => {
   assert.equal(WATCH_DEFAULTS.maxAutonomousWakes, 8)
 })
+
+test('对话附图最多 2 张 sheet', () => {
+  assert.equal(WATCH_DEFAULTS.maxDeliverSheets, 2)
+})

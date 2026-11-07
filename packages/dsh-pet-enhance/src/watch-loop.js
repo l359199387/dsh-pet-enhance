@@ -17,6 +17,11 @@ export const WATCH_DEFAULTS = Object.freeze({
   maxAutonomousWakes: 8,
   /** 管道内总留帧上限（see-now pipeline maxFrames 量级） */
   maxFrames: 40,
+  /**
+   * 交给对话附图的最多几张 sheet。中途封箱可能很多；全叠成一张会到 4k+ 高，
+   * dsh-pet 附图 fetch 会挂（实测 798×4928 → chat-failed）。磁盘仍保存全部分张。
+   */
+  maxDeliverSheets: 2,
 })
 
 /** 与 see-now region 封箱对齐 */
@@ -364,14 +369,23 @@ export async function runWatch(options = {}) {
 
   const silent = maxScore < 2 && allReasons.every((r) => r === 'first' || r === 'floor')
   const expected = CANVAS_BY_QUALITY[quality] || CANVAS_BY_QUALITY.low
+  const maxDeliver = clampInt(
+    options.maxDeliverSheets,
+    1,
+    4,
+    WATCH_DEFAULTS.maxDeliverSheets,
+  )
+  // 对话只附最近几张；太早的 sheet 仍在 pngs / 磁盘分张里
+  const deliverSheets = mosaics.slice(-maxDeliver)
+  const skippedSheets = Math.max(0, mosaics.length - deliverSheets.length)
 
-  let deliverPng = mosaics[0]?.png
-  let deliverW = mosaics[0]?.width || expected.w
-  let deliverH = mosaics[0]?.height || expected.h
-  if (mosaics.length > 1) {
+  let deliverPng = deliverSheets[0]?.png
+  let deliverW = deliverSheets[0]?.width || expected.w
+  let deliverH = deliverSheets[0]?.height || expected.h
+  if (deliverSheets.length > 1) {
     try {
       const stacked = await sidecar.call('stack', {
-        pngs: mosaics.map((m) => m.png.toString('base64')),
+        pngs: deliverSheets.map((m) => m.png.toString('base64')),
         gap: 8,
       }, 30_000)
       if (stacked?.ok && stacked.png) {
@@ -380,25 +394,36 @@ export async function runWatch(options = {}) {
         deliverH = Number(stacked.h) || deliverH
       }
     } catch (e) {
-      log(`watch 叠图失败，回退首张：${e?.message ?? e}`)
+      log(`watch 叠图失败，回退最近一张：${e?.message ?? e}`)
+      const last = deliverSheets[deliverSheets.length - 1]
+      deliverPng = last?.png
+      deliverW = last?.width || deliverW
+      deliverH = last?.height || deliverH
     }
   }
 
-  const tokens = mosaics.reduce((sum, m) => sum + (m.tokens || 0), 0)
+  if (skippedSheets > 0) {
+    log(`watch 交付裁切：共 ${mosaics.length} 张 sheet，对话只附最近 ${deliverSheets.length} 张`)
+  }
+
+  const tokens = deliverSheets.reduce((sum, m) => sum + (m.tokens || 0), 0)
   const elapsedSec = Math.round((Date.now() - started) / 1000)
+  const lastSheet = deliverSheets[deliverSheets.length - 1] || mosaics[0]
 
   return {
     png: deliverPng,
     pngs: mosaics.map((m) => m.png),
     mosaics,
     mosaicCount: mosaics.length,
+    deliveredSheets: deliverSheets.length,
+    skippedSheets,
     width: deliverW,
     height: deliverH,
     quality,
     tokens,
-    expectedTokens: expected.tokens * mosaics.length,
-    cols: mosaics[0]?.cols || 1,
-    rows: mosaics[0]?.rows || 1,
+    expectedTokens: expected.tokens * deliverSheets.length,
+    cols: lastSheet?.cols || 1,
+    rows: lastSheet?.rows || 1,
     framesKept: globalKeep,
     samples,
     maxScore,
