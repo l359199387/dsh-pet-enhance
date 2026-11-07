@@ -561,11 +561,7 @@ export async function findPlaybookForQuery(home, query) {
   const list = await listPlaybookIndex(home)
   if (!list.length) return null
 
-  // 执行口令统一走 intent.RUN_AUTOMATION_RE
-  if (isRunAutomationIntent(query)) {
-    return readPlaybook(home, list[0].id)
-  }
-
+  // 先按 goal 打分；无命中且是执行口令时才取最新
   let best = null
   let bestScore = 0
   for (const row of list) {
@@ -581,6 +577,11 @@ export async function findPlaybookForQuery(home, query) {
       best = row
     }
   }
-  if (!best || bestScore < 2) return null
-  return readPlaybook(home, best.id)
+  if (best && bestScore >= 2) {
+    return readPlaybook(home, best.id)
+  }
+  if (isRunAutomationIntent(query)) {
+    return readPlaybook(home, list[0].id)
+  }
+  return null
 }

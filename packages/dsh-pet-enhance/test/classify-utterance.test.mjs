@@ -3,19 +3,30 @@ import { test } from 'node:test'
 import {
   buildClassifyPrompt,
   CLASSIFY_PREFIX,
+  classifyMode,
   classifyUtterance,
+  formatLearnedGoalsForClassify,
   isSkillStatusQuestion,
   localClassify,
   parseClassifyLabel,
   regexClassifyFallback,
 } from '../src/classify-utterance.js'
 
-test('buildClassifyPrompt：极短、带分流前缀、禁工具', () => {
-  const p = buildClassifyPrompt('帮我把记事本最小化')
+test('buildClassifyPrompt：带分流前缀、禁工具、含已学会列表', () => {
+  const p = buildClassifyPrompt('帮我把记事本最小化', {
+    learnedGoals: ['记录每日心情', '看看B站'],
+  })
   assert.ok(p.startsWith(CLASSIFY_PREFIX))
-  assert.ok(p.includes('禁止工具'))
+  assert.ok(p.includes('禁止'))
   assert.ok(p.includes('帮我把记事本最小化'))
-  assert.ok(p.length < 280)
+  assert.match(p, /记录每日心情/)
+  assert.match(p, /看看B站/)
+  assert.match(p, /不必固定口令/)
+})
+
+test('formatLearnedGoalsForClassify', () => {
+  assert.match(formatLearnedGoalsForClassify([]), /暂无/)
+  assert.match(formatLearnedGoalsForClassify(['A', 'B']), /「A」/)
 })
 
 test('parseClassifyLabel：抽标签', () => {
@@ -25,7 +36,7 @@ test('parseClassifyLabel：抽标签', () => {
   assert.equal(parseClassifyLabel(''), null)
 })
 
-test('localClassify：「学会了吗」是 chat，不是 task', () => {
+test('localClassify 兜底：明确口令仍可用', () => {
   assert.equal(localClassify('你学会记录心情了吗?'), 'chat')
   assert.equal(localClassify('会不会保存文件'), 'chat')
   assert.equal(isSkillStatusQuestion('你学会记录心情了吗?'), true)
@@ -33,26 +44,50 @@ test('localClassify：「学会了吗」是 chat，不是 task', () => {
   assert.equal(localClassify('今天天气真好'), 'chat')
   assert.equal(localClassify('看一眼桌面'), 'glance')
   assert.equal(localClassify('盯着屏幕看 60 秒'), 'glance')
-  assert.equal(localClassify('陪看一会儿'), 'glance')
   assert.equal(localClassify('我教你一下保存'), 'teach')
   assert.equal(localClassify('教完了'), 'teach_end')
   assert.equal(localClassify('把窗口最小化'), 'task')
   assert.equal(localClassify('执行一下记录每日心情'), 'task')
-  assert.equal(localClassify('去记录一下每日心情'), 'task')
-  assert.equal(localClassify('去看看B站'), 'task')
-  assert.equal(localClassify('继续去看看B站'), 'task')
-  assert.equal(localClassify('再做一次'), 'task')
   assert.equal(localClassify('用你学会的去刷B站'), 'task')
-  assert.equal(localClassify('我教过你和豆包聊天'), 'task')
-  assert.equal(localClassify('去看我学会的东西然后执行'), 'task')
   assert.equal(localClassify('新开一个窗口聊天'), 'new_session')
-  assert.equal(localClassify('开个新会话'), 'new_session')
   assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_end')
 })
 
-test('classifyUtterance：默认不 wake，走 local（即使用 ctx）', async () => {
+test('classifyUtterance：默认优先模型分流', async () => {
+  const prev = process.env.DSH_PET_ENHANCE_CLASSIFY
+  delete process.env.DSH_PET_ENHANCE_CLASSIFY
+  assert.equal(classifyMode(), 'llm')
+  let woke = 0
+  const r = await classifyUtterance({ fake: true }, '按上次学的帮我和豆包闲聊几句', {
+    learnedGoals: ['与豆包姐姐聊天'],
+    wake: async (_ctx, opts) => {
+      woke += 1
+      assert.match(opts.text, /与豆包姐姐聊天/)
+      assert.match(opts.text, /禁止调用任何工具/)
+      return { ok: true, sessionId: 's' }
+    },
+    waitReply: async () => ({ ok: true, text: 'task' }),
+  })
+  assert.equal(r.label, 'task')
+  assert.equal(r.via, 'llm')
+  assert.equal(woke, 1)
+  if (prev === undefined) delete process.env.DSH_PET_ENHANCE_CLASSIFY
+  else process.env.DSH_PET_ENHANCE_CLASSIFY = prev
+})
+
+test('classifyUtterance：模型失败回落 local', async () => {
+  const r = await classifyUtterance({ fake: true }, '看一眼桌面', {
+    mode: 'llm',
+    wake: async () => ({ ok: false, reason: 'no-session' }),
+  })
+  assert.equal(r.label, 'glance')
+  assert.equal(r.via, 'local')
+})
+
+test('classifyUtterance：mode=local 不叫醒', async () => {
   let woke = 0
   const r = await classifyUtterance({ fake: true }, '你学会记录心情了吗?', {
+    mode: 'local',
     wake: async () => {
       woke += 1
       return { ok: true, sessionId: 's' }

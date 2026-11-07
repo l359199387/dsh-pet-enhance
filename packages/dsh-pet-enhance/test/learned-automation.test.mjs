@@ -43,6 +43,9 @@ test('学习文件与自动化同 id 一一对应', async () => {
   assert.equal(byLoose?.id, 'pair-1')
   const byLearnedPhrase = await findAutomationForQuery(home, '用你学会的保存心情')
   assert.equal(byLearnedPhrase?.id, 'pair-1')
+  // 模型判 task 后：无固定口令也能靠 goal 命中
+  const byNatural = await findAutomationForQuery(home, '帮我去保存一下心情笔记')
+  assert.equal(byNatural?.id, 'pair-1')
 })
 
 test('口语「继续去看看B站」能匹配教学 goal', async () => {

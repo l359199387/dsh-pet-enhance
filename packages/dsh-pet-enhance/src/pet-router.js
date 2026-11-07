@@ -156,12 +156,27 @@ export function createPetRouter(options) {
   /**
    * @param {string} userText
    */
+  async function loadLearnedGoals() {
+    if (!options.home) return []
+    try {
+      const list = await listLearnedIndex(options.home)
+      return (list || [])
+        .slice(0, 12)
+        .map((r) => String(r.goal || '').trim())
+        .filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
   async function route(userText) {
     const teaching = Boolean(options.teachBridge?.isTeaching?.())
     const preferredId = options.getPreferredSessionId?.() ?? null
+    const learnedGoals = teaching ? [] : await loadLearnedGoals()
     const { label, via } = await classify(options.ctx, userText, {
       teaching,
       preferredId,
+      learnedGoals,
       log,
     })
 

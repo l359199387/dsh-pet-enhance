@@ -1,10 +1,8 @@
 /**
- * 极低成本话语分流：闲聊 / 看屏 / 教学 / 收束 / 干活。
+ * 话语分流：闲聊 / 看屏 / 教学 / 收束 / 干活 / 新开窗。
  *
- * 默认走本地启发式（0 token，不叫醒主会话）。
- * 禁止把分流提示 followup 进带工具的主会话——否则会当任务去 click（已踩坑）。
- *
- * 可选：注入无工具的 `complete(prompt)`；仅当 `DSH_PET_ENHANCE_CLASSIFY=wake` 才允许危险的主会话叫醒。
+ * 默认识图用短提示让模型只回一个标签（可扩展，不必为每条学会技能加口令）。
+ * 失败再回落本地启发式。禁止指望主会话「带工具分流」——提示里写死禁工具。
  *
  * @module src/classify-utterance.js
  */
@@ -36,7 +34,7 @@ export const CLASSIFY_LABELS = Object.freeze([
 
 const LABEL_SET = new Set(CLASSIFY_LABELS)
 
-/** 仅「问会不会」；不含「我教过你去做…」这类执行口令。 */
+/** 仅「问会不会」；不含「去做你学会的…」这类执行口令。 */
 const SKILL_STATUS_RE = new RegExp(
   [
     '学会.{0,24}(?:了吗|了没|了嘛|了没呀|了\\?|了？)',
@@ -47,25 +45,42 @@ const SKILL_STATUS_RE = new RegExp(
 )
 
 /**
- * @param {string} userText
- * @param {{ teaching?: boolean }} [opts]
+ * @param {string[] | null | undefined} goals
+ * @param {number} [limit]
  */
-export function buildClassifyPrompt(userText, { teaching = false } = {}) {
-  const clipped = String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 100)
+export function formatLearnedGoalsForClassify(goals, limit = 12) {
+  const list = (Array.isArray(goals) ? goals : [])
+    .map((g) => String(g ?? '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, limit)
+  if (!list.length) return '（暂无已学会条目）'
+  return list.map((g, i) => `${i + 1}.「${g.slice(0, 36)}」`).join('；')
+}
+
+/**
+ * @param {string} userText
+ * @param {{ teaching?: boolean, learnedGoals?: string[] }} [opts]
+ */
+export function buildClassifyPrompt(userText, { teaching = false, learnedGoals = [] } = {}) {
+  const clipped = String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
   if (teaching) {
     return (
       `${CLASSIFY_PREFIX}`
-      + '当前在教学模式。只输出一个标签，禁止工具与解释：'
+      + '当前在教学模式。只输出一个标签词，禁止工具与解释：'
       + 'teach_end=教完了/去做/照着做；chat=其他。'
       + `用户：「${clipped}」`
     )
   }
+  const learned = formatLearnedGoalsForClassify(learnedGoals)
   return (
     `${CLASSIFY_PREFIX}`
-    + '只输出一个标签词，禁止工具与解释。'
-    + 'chat=闲聊问候或询问是否学会；glance=看屏幕/截图/盯着看一会儿；'
-    + 'teach=用户要演示教你；teach_end=演示结束要你照做；'
-    + 'task=要你操作电脑或执行已学会的；new_session=新开聊天窗口/新会话。'
+    + '只输出一个标签词，禁止调用任何工具，禁止解释。'
+    + 'chat=闲聊问候，或只问「会不会/学会了吗」而不是现在去做；'
+    + 'glance=看屏幕/截图/盯着看一会儿；'
+    + 'teach=用户要演示教你；teach_end=演示结束；'
+    + 'task=要你现在操作电脑，或执行下面已学会的某件事（说法可任意，不必固定口令）；'
+    + 'new_session=新开聊天窗口/新会话。'
+    + `已学会：${learned}。`
     + `用户：「${clipped}」`
   )
 }
@@ -88,7 +103,7 @@ export function parseClassifyLabel(reply) {
   if (/(?:看(?:一?眼|看)|截图|桌面|屏幕|盯着|陪看|watch)/.test(raw) && !/点|输入|关掉|最小化/.test(raw)) {
     return 'glance'
   }
-  if (/干活|任务|操作|点击|输入|学会的|教过你/.test(raw)) return 'task'
+  if (/干活|任务|操作|点击|输入|执行|去做/.test(raw)) return 'task'
   if (/闲聊|问候|学会了吗|会不会/.test(raw)) return 'chat'
   return null
 }
@@ -97,13 +112,12 @@ export function parseClassifyLabel(reply) {
 export function isSkillStatusQuestion(text) {
   const s = String(text ?? '').trim()
   if (!s) return false
-  // 执行口令 / 新开窗优先，不进状态问答
   if (isRunAutomationIntent(s) || isNewSessionIntent(s)) return false
   return SKILL_STATUS_RE.test(s)
 }
 
 /**
- * 本地分流（主路径，0 token）。
+ * 本地分流（兜底）：只认极明确口令；闲聊 vs 干活主要交给模型。
  * @param {string} text
  * @param {{ teaching?: boolean }} [opts]
  */
@@ -117,11 +131,9 @@ export function localClassify(text, { teaching = false } = {}) {
   if (isTeachEndIntent(s)) return 'teach_end'
   if (isTeachStartIntent(s)) return 'teach'
   if (isNewSessionIntent(s)) return 'new_session'
-  // 「用你学会的 / 我教过你…」先于「学会了吗」
-  if (isRunAutomationIntent(s)) return 'task'
-  // 「学会了吗 / 会不会」问状态，避免被「保存」等 task 粗筛误伤
   if (isSkillStatusQuestion(s)) return 'chat'
-  if (isComputerTaskIntent(s)) return 'task'
+  // 兜底：仍认一批执行/操作口令，避免模型失败时全变闲聊
+  if (isRunAutomationIntent(s) || isComputerTaskIntent(s)) return 'task'
   if (isGlanceIntent(s)) return 'glance'
   return 'chat'
 }
@@ -141,17 +153,21 @@ export function isClassifyEcho(text) {
   )
 }
 
-/** 默认 local；wake 仅显式开启（会污染主会话，不推荐）。 */
-function classifyMode() {
+/**
+ * 默认 llm（模型判）；local=只启发式；可用环境变量覆盖。
+ * @returns {'llm' | 'local'}
+ */
+export function classifyMode() {
   const v = String(
-    process.env.DSH_PET_ENHANCE_CLASSIFY || process.env.DSH_GLANCE_CLASSIFY || 'local',
+    process.env.DSH_PET_ENHANCE_CLASSIFY || process.env.DSH_GLANCE_CLASSIFY || 'llm',
   ).trim().toLowerCase()
   if (v === '0' || v === 'false' || v === 'off' || v === 'no' || v === 'local' || v === 'regex') {
     return 'local'
   }
-  if (v === 'wake' || v === 'llm' || v === 'session') return 'wake'
-  if (v === '1' || v === 'true' || v === 'yes') return 'local' // 旧默认曾误用 wake，现一律 local
-  return 'local'
+  if (v === 'wake' || v === 'llm' || v === 'session' || v === 'model' || v === '1' || v === 'true' || v === 'yes') {
+    return 'llm'
+  }
+  return 'llm'
 }
 
 /**
@@ -160,11 +176,13 @@ function classifyMode() {
  * @param {{
  *   teaching?: boolean,
  *   preferredId?: string | null,
+ *   learnedGoals?: string[],
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
  *   complete?: (prompt: string) => Promise<string | null | undefined>,
  *   timeoutMs?: number,
  *   log?: (m: string) => void,
+ *   mode?: 'llm' | 'local',
  * }} [opts]
  * @returns {Promise<{ label: string, via: 'llm' | 'regex' | 'inject' | 'local', raw?: string }>}
  */
@@ -176,9 +194,12 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     return { label: 'chat', via: 'local' }
   }
 
-  const prompt = buildClassifyPrompt(text, { teaching })
+  const prompt = buildClassifyPrompt(text, {
+    teaching,
+    learnedGoals: opts.learnedGoals,
+  })
 
-  // 无工具注入（测试 / 将来接小模型）
+  // 无工具注入（测试 / 外接小模型）
   if (typeof opts.complete === 'function') {
     try {
       const raw = await opts.complete(prompt)
@@ -189,30 +210,38 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     }
   }
 
-  // 显式才允许叫醒主会话（默认关闭：会触发工具、浪费 token）
-  if (classifyMode() === 'wake' && ctx) {
+  const mode = opts.mode || classifyMode()
+
+  // 模型分流：短超时；失败回落本地
+  if (mode === 'llm' && ctx) {
     const wake = opts.wake ?? wakeSession
     const waitReply = opts.waitReply ?? waitAssistantReply
     try {
       const woken = await wake(ctx, {
         text: prompt,
         preferredId: opts.preferredId ?? null,
+        log,
       })
       if (woken.ok && woken.sessionId) {
         const reply = await waitReply(ctx, woken.sessionId, {
-          timeoutMs: opts.timeoutMs ?? 20_000,
-          pollMs: 400,
+          timeoutMs: opts.timeoutMs ?? 12_000,
+          pollMs: 350,
         })
         if (reply.ok && reply.text) {
           const label = parseClassifyLabel(reply.text)
           if (label) {
-            log(`classify → ${label}（wake）`)
+            log(`classify → ${label}（llm）`)
             return { label, via: 'llm', raw: reply.text }
           }
+          log(`classify llm 回复无法解析：${String(reply.text).slice(0, 60)}`)
+        } else {
+          log(`classify llm 无回复：${reply.reason || 'timeout'}`)
         }
+      } else {
+        log(`classify llm 叫醒失败：${woken.reason || 'unknown'}`)
       }
     } catch (e) {
-      log(`classify wake 异常：${e?.message ?? e}`)
+      log(`classify llm 异常：${e?.message ?? e}`)
     }
   }
 

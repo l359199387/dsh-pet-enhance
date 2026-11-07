@@ -6,6 +6,7 @@
 
 import { classifyUtterance } from './classify-utterance.js'
 import { isWatchIntent, parseWatchSeconds } from './intent.js'
+import { listLearnedIndex } from './learned-automation.js'
 import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
@@ -75,9 +76,21 @@ export async function runChatGate(options) {
   const preferredId = options.getPreferredSessionId?.() ?? null
   const classify = options.classify ?? classifyUtterance
   const log = options.log ?? (() => {})
+  /** @type {string[]} */
+  let learnedGoals = []
+  if (!teaching && options.home) {
+    try {
+      const list = await listLearnedIndex(options.home)
+      learnedGoals = (list || [])
+        .slice(0, 12)
+        .map((r) => String(r.goal || '').trim())
+        .filter(Boolean)
+    } catch { /* ignore */ }
+  }
   const { label, via } = await classify(options.ctx, text, {
     teaching,
     preferredId,
+    learnedGoals,
     log,
   })
 

@@ -298,29 +298,7 @@ export async function findLearnedForQuery(home, query) {
     return learn
   }
 
-  // 执行口令统一走 intent.RUN_AUTOMATION_RE，不在此再抄一份关键词表
-  if (isRunAutomationIntent(query)) {
-    // 若话里还带了目标关键词，优先精确匹配；否则取最新可用
-    let hinted = null
-    let hintedScore = 0
-    for (const row of list) {
-      const score = scoreGoalAgainstQuery(row.goal, q)
-      if (score > hintedScore) {
-        hintedScore = score
-        hinted = row
-      }
-    }
-    if (hinted && hintedScore >= 2) {
-      const learn = await usable(hinted.id)
-      if (learn) return learn
-    }
-    for (const row of list) {
-      const learn = await usable(row.id)
-      if (learn) return learn
-    }
-    return null
-  }
-
+  // 主路径：按 goal 打分（模型判 task 后不依赖固定口令）
   let best = null
   let bestScore = 0
   for (const row of list) {
@@ -330,8 +308,18 @@ export async function findLearnedForQuery(home, query) {
       best = row
     }
   }
-  if (!best || bestScore < 2) return null
-  return usable(best.id)
+  if (best && bestScore >= 2) {
+    return usable(best.id)
+  }
+
+  // 无明确目标时：仅「再做一次」类执行口令才回落最新一条
+  if (isRunAutomationIntent(query)) {
+    for (const row of list) {
+      const learn = await usable(row.id)
+      if (learn) return learn
+    }
+  }
+  return null
 }
 
 export async function findAutomationForQuery(home, query) {
