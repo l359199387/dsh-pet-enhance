@@ -193,6 +193,16 @@ export async function captureViaSidecar({
   }
 
   const helloScreen = sidecar.getHello?.()?.screen
+  const rect = Array.isArray(resp.rect) && resp.rect.length >= 4
+    ? resp.rect.map(Number)
+    : (resp.capture && resp.capture.w != null
+      ? [
+        Number(resp.capture.x) || 0,
+        Number(resp.capture.y) || 0,
+        (Number(resp.capture.x) || 0) + (Number(resp.capture.w) || 0),
+        (Number(resp.capture.y) || 0) + (Number(resp.capture.h) || 0),
+      ]
+      : null)
   return {
     png,
     width: Number(resp.w) || 0,
@@ -205,6 +215,8 @@ export async function captureViaSidecar({
     window: resp.window ?? null,
     active: resp.active ?? null,
     cursor: resp.cursor ?? null,
+    rect,
+    capture: resp.capture ?? null,
     candidates: undefined,
   }
 }

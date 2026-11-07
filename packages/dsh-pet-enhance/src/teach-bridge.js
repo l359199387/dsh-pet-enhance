@@ -922,6 +922,17 @@ export function createTeachBridge(options) {
         onSession: options.onSession,
         log,
       })
+      if (prepared.fresh && prepared.sessionId) {
+        await broadcastToDshPet('已新开干净会话来执行（完全权限·标准·low）…', {
+          pet,
+          duration: 6_000,
+        })
+      } else if (!prepared.fresh) {
+        await broadcastToDshPet('新开会话失败，改用当前会话执行…', {
+          pet,
+          duration: 6_000,
+        })
+      }
       const prompt = buildSmartRunPrompt({
         ...playbook,
         strategy: {
@@ -933,7 +944,7 @@ export function createTeachBridge(options) {
         ownerNotes: learnMeta?.ownerNotes || playbook.ownerNotes,
       })
       await broadcastToDshPet(
-        `按快捷思路做「${clip(playbook.goal, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
+        `按变通思路做「${clip(playbook.goal, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
         { pet, duration: 10_000 },
       )
       const woken = await wake(options.ctx, {

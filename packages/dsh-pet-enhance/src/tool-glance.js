@@ -13,6 +13,7 @@
 import { captureFrame, normalizeQuality, parseRegion } from './capture.js'
 import { glanceToolSpec } from './tool-spec.js'
 import { runWatch, createWakeBudget, WATCH_DEFAULTS } from './watch-loop.js'
+import { buildGlanceMap, formatCoordHint } from './coords.js'
 
 function failureText(error) {
   const code = error?.code
@@ -39,7 +40,7 @@ function failureText(error) {
   return `抓屏失败：${error?.message ?? error}`
 }
 
-function envelope(shot) {
+function envelope(shot, map = null) {
   const bits = []
   if (shot.window?.title) {
     bits.push(`窗口「${shot.window.title}」`)
@@ -57,7 +58,11 @@ function envelope(shot) {
   bits.push(`${shot.quality} 档`)
   bits.push(`${shot.ms}ms`)
   bits.push(shot.engine || 'unknown')
-  return bits.join(' · ')
+  let text = bits.join(' · ')
+  if (map) {
+    text += `\n${formatCoordHint(map)}`
+  }
+  return text
 }
 
 function watchEnvelope(result) {
@@ -88,6 +93,7 @@ function watchEnvelope(result) {
  *   onLooking?: () => void,
  *   onIdle?: () => void,
  *   wakeBudget?: ReturnType<typeof createWakeBudget>,
+ *   onGlanceMap?: (map: import('./coords.js').GlanceMap | null) => void,
  * }} options
  */
 export function createGlanceTool({
@@ -98,6 +104,7 @@ export function createGlanceTool({
   onLooking,
   onIdle,
   wakeBudget,
+  onGlanceMap,
 } = {}) {
   const wakes = wakeBudget ?? createWakeBudget(WATCH_DEFAULTS.maxAutonomousWakes)
 
@@ -328,7 +335,10 @@ export function createGlanceTool({
       }
       try { onIdle?.() } catch { /* ignore */ }
 
-      let text = envelope(shot)
+      const map = buildGlanceMap(shot, { region })
+      try { onGlanceMap?.(map) } catch { /* ignore */ }
+
+      let text = envelope(shot, map)
       if (wantZoom || hasRegion) {
         text += wantZoom
           ? '\n说明：这是局部高清特写（zoom）；看清后再 act，勿对糊图瞎猜。'
@@ -349,6 +359,8 @@ export function createGlanceTool({
         active: shot.active,
         cursor: shot.cursor,
         zoom: Boolean(wantZoom || hasRegion),
+        map,
+        rect: shot.rect ?? null,
       }
 
       const saveImage = attachments?.saveImage

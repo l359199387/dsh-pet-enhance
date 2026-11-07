@@ -18,6 +18,70 @@ import {
 } from './verify-act.js'
 import { readTeachSecrets } from './teach-store.js'
 import { c3MaybeNoopHint } from './c3-task.js'
+import { mapImageToScreen, maybeRemapImageCoordsAsScreen } from './coords.js'
+
+/**
+ * 把图内坐标 / 误把缩略图当屏幕坐标 换算成物理像素。
+ * @param {object} args
+ * @param {import('./coords.js').GlanceMap | null | undefined} map
+ */
+export function resolveActCoords(args, map) {
+  const next = { ...args }
+  let remapped = false
+  let fromImage = false
+
+  if (next.imageX != null && next.imageY != null && map) {
+    const m = mapImageToScreen(next.imageX, next.imageY, map)
+    if (m.mapped) {
+      next.x = m.x
+      next.y = m.y
+      fromImage = true
+      remapped = true
+    }
+  } else if (next.x != null && next.y != null && map) {
+    const m = maybeRemapImageCoordsAsScreen(next.x, next.y, map)
+    if (m.remapped) {
+      next.x = m.x
+      next.y = m.y
+      remapped = true
+    }
+  }
+
+  if (next.imageX2 != null && next.imageY2 != null && map) {
+    const m = mapImageToScreen(next.imageX2, next.imageY2, map)
+    if (m.mapped) {
+      next.x2 = m.x
+      next.y2 = m.y
+      remapped = true
+    }
+  }
+
+  return { args: next, remapped, fromImage }
+}
+
+/**
+ * 确认框/桌宠会抢焦点：点击类动作前尽量把目标窗拉回前台。
+ * @param {object} args
+ * @param {string | null | undefined} windowTitle
+ * @param {boolean} needsRefocus
+ */
+export function prependFocusIfNeeded(actions, windowTitle, needsRefocus) {
+  if (!needsRefocus || !Array.isArray(actions) || !actions.length) return actions
+  const kind = String(actions[0]?.kind || '')
+  const pointy = ['move', 'click', 'double_click', 'right_click', 'drag', 'type', 'key', 'scroll'].includes(kind)
+  if (!pointy) return actions
+  const title = String(windowTitle || '').trim()
+  if (!title) return actions
+  // 桌宠自己不要 focus
+  if (/dsh-pet|桌宠/i.test(title)) return actions
+  // 用标题里更稳的片段（「小蓝鲸问候 - 豆包」→「豆包」）
+  let match = title
+  const dash = title.lastIndexOf(' - ')
+  if (dash > 0 && dash < title.length - 3) {
+    match = title.slice(dash + 3).trim() || title
+  }
+  return [{ kind: 'focus', window: match }, ...actions]
+}
 
 function buildActions(args) {
   const action = String(args?.action ?? '').trim().toLowerCase()
@@ -74,6 +138,7 @@ function auditArgs(args) {
  *   denyTitles?: string[],
  *   onConfirmAsk?: (summary: string) => void | Promise<void>,
  *   onPolicyDeny?: (info: { code?: string, reason?: string, userBubble?: string, tier?: string }) => void | Promise<void>,
+ *   getLastGlanceMap?: () => import('./coords.js').GlanceMap | null,
  * }} options
  */
 export function createActTool(options = {}) {
@@ -91,6 +156,7 @@ export function createActTool(options = {}) {
       let maybeNoop = false
       let windowTitle = null
       let screen = null
+      let coordRemapped = false
 
       const finishAudit = async (result) => {
         try {
@@ -133,6 +199,15 @@ export function createActTool(options = {}) {
           text: '输入需要 Python sidecar，当前不可用。',
           meta: { ok: false, code: 'SIDECAR_DOWN' },
         })
+      }
+
+      // 坐标：优先 imageX/imageY；若模型把缩略图坐标当屏幕坐标也自动换算。
+      const glanceMap = options.getLastGlanceMap?.() ?? null
+      const resolved = resolveActCoords(args, glanceMap)
+      args = resolved.args
+      coordRemapped = resolved.remapped
+      if (coordRemapped) {
+        log(`act 坐标已换算 → (${args.x},${args.y})${resolved.fromImage ? ' [imageX/Y]' : ' [auto]'}`)
       }
 
       // 教学敏感输入：secretRef = "<sessionId>/step:N"，正文只从本地 secrets 读，不进模型上下文。
@@ -293,11 +368,24 @@ export function createActTool(options = {}) {
         }
 
         const kind = actions[0].kind
+        // 确认框/桌宠抢焦点后，点击会落到错误窗口——先 focus 再动手
+        const focusHint = args?.window
+          || glanceMap?.windowTitle
+          || windowTitle
+        const skipFocus = kind === 'focus'
+          || (kind === 'key' && /^(win|meta|cmd)(\+|\$|$)/i.test(String(args?.keys || '').trim()))
+        const needsRefocus = !skipFocus && (
+          Boolean(confirmed)
+          || Boolean(args?.window)
+          || Boolean(glanceMap?.windowTitle)
+        )
+        const actionsOut = prependFocusIfNeeded(actions, focusHint, needsRefocus)
+
         if (shouldVerifyAction(kind)) {
           beforeHash = await captureScreenFingerprint(sidecar)
         }
 
-        const resp = await sidecar.call('input', { actions }, 120_000)
+        const resp = await sidecar.call('input', { actions: actionsOut }, 120_000)
         if (resp?.aborted || resp?.error?.code === 'FAILSAFE' || resp?.cause === 'failsafe') {
           return finishAudit({
             text: '用户把光标甩到左上角，已急停。不要重试。',
@@ -352,8 +440,11 @@ export function createActTool(options = {}) {
 
         const cur = resp.cursor ? `${resp.cursor.x},${resp.cursor.y}` : '?'
         const warn = maybeNoop ? ` ${c3MaybeNoopHint()}` : ''
+        const remapNote = coordRemapped
+          ? `（已把图内坐标换算为屏幕 (${args.x},${args.y})）`
+          : ''
         return finishAudit({
-          text: `已执行 ${kind}（${Date.now() - t0}ms），光标现在 (${cur})。${warn}`,
+          text: `已执行 ${kind}（${Date.now() - t0}ms），光标现在 (${cur})。${remapNote}${warn}`,
           meta: {
             ok: true,
             action: kind,
@@ -367,6 +458,9 @@ export function createActTool(options = {}) {
             before: beforeHash,
             after: afterHash,
             budget: decision.budget,
+            remapped: coordRemapped,
+            x: args?.x,
+            y: args?.y,
             reason: args?.reason ? String(args.reason).slice(0, 200) : undefined,
           },
         })

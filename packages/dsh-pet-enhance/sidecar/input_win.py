@@ -25,6 +25,7 @@ MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_MIDDLEDOWN = 0x0020
 MOUSEEVENTF_MIDDLEUP = 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_VIRTUALDESK = 0x4000
 MOUSEEVENTF_ABSOLUTE = 0x8000
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
@@ -98,6 +99,18 @@ def screen_size() -> tuple[int, int]:
     return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
 
 
+def virtual_screen() -> tuple[int, int, int, int]:
+    """返回 (vx, vy, vw, vh)：虚拟桌面原点与宽高（多屏含负坐标）。"""
+    vw = int(user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
+    vh = int(user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+    vx = int(user32.GetSystemMetrics(76))  # SM_XVIRTUALSCREEN
+    vy = int(user32.GetSystemMetrics(77))  # SM_YVIRTUALSCREEN
+    if vw <= 0 or vh <= 0:
+        w, h = screen_size()
+        return 0, 0, max(w, 2), max(h, 2)
+    return vx, vy, max(vw, 2), max(vh, 2)
+
+
 def near_origin(x: int, y: int, tol: int = 2) -> bool:
     return x <= tol and y <= tol
 
@@ -108,12 +121,14 @@ def _send(*inputs: INPUT) -> int:
 
 
 def _move_abs(x: int, y: int) -> None:
-    sw, sh = screen_size()
-    sw = max(sw, 2)
-    sh = max(sh, 2)
-    ax = int(max(0, min(sw - 1, x)) * 65535 / (sw - 1))
-    ay = int(max(0, min(sh - 1, y)) * 65535 / (sh - 1))
-    mi = MOUSEINPUT(ax, ay, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, 0)
+    # 绝对坐标必须按虚拟桌面归一化，并带 VIRTUALDESK；否则多屏/缩放时会偏一大截。
+    vx, vy, vw, vh = virtual_screen()
+    nx = int(max(vx, min(vx + vw - 1, x)))
+    ny = int(max(vy, min(vy + vh - 1, y)))
+    ax = int((nx - vx) * 65535 / (vw - 1))
+    ay = int((ny - vy) * 65535 / (vh - 1))
+    flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+    mi = MOUSEINPUT(ax, ay, 0, flags, 0, 0)
     _send(INPUT(type=INPUT_MOUSE, mi=mi))
 
 

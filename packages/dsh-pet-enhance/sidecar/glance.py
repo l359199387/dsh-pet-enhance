@@ -624,6 +624,15 @@ def handle_capture(req: dict) -> dict:
         "scoreReady": score_val is not None,
         "masked": masked_titles,
     }
+    if capture_rect is not None:
+        # 物理像素抓取框 [x1,y1,x2,y2]，供图内坐标换算回屏幕
+        out["rect"] = [int(capture_rect[0]), int(capture_rect[1]), int(capture_rect[2]), int(capture_rect[3])]
+        out["capture"] = {
+            "x": int(capture_rect[0]),
+            "y": int(capture_rect[1]),
+            "w": int(capture_rect[2] - capture_rect[0]),
+            "h": int(capture_rect[3] - capture_rect[1]),
+        }
     if meta_window is not None:
         out["window"] = meta_window
     return out

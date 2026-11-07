@@ -136,9 +136,10 @@ export function buildSmartRunPrompt(playbook, extras = {}) {
     + '界面每天都可能变：图标/窗口位置以**当前屏幕**为准。'
     + '**不要机械复刻**教学点击；**禁止**按教学记录的绝对像素坐标盲点；先 `glance` 找目标再 `act`。'
     + '打开应用：按名称找桌面/任务栏/开始菜单；聊天内容用自然语言表达意图，勿复打教学时的拼音碎片。'
+    + '聊天 App：先**新建对话/新会话**再聊，不要沿用旧会话标题（如「小蓝鲸问候」），除非主人点名。'
     + '看不清小字/图标：对目标区域再调 `glance({action:"zoom", region:"x,y,w,h"})` 或 `quality:"high"`，'
-    + '**禁止对着糊图瞎猜乱点**。'
-    + '先 glance 看清再 act；一次 act 一个动作。'
+    + '**禁止对着糊图瞎猜乱点**。坐标用 glance 信封里的换算，或 `act({imageX,imageY})`，禁止把缩略图坐标直接当屏幕坐标。'
+    + '先 glance 看清再 act；一次 act 一个动作；发完再 glance 确认是否发出。'
     + buildC3DisciplineBlock({ includeScenario: false })
     + '一两句汇报。'
     + (playbook?.id ? `（learnedId=${playbook.id}）` : '')

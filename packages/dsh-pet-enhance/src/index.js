@@ -654,6 +654,7 @@ function installTools(ctx, log, state) {
         }
         state.attachments = scoped.attachments
         state.wakeBudget = state.wakeBudget || createWakeBudget()
+        state.lastGlanceMap = null
         state.glanceTool = createGlanceTool({
           home: glanceHome(),
           attachments: scoped.attachments,
@@ -662,6 +663,7 @@ function installTools(ctx, log, state) {
           onLooking: petHooks.onLooking,
           onIdle: petHooks.onIdle,
           wakeBudget: state.wakeBudget,
+          onGlanceMap: (map) => { state.lastGlanceMap = map },
         })
         disposers.push(scoped.tools.register(state.glanceTool))
         state.tools.push(TOOL_NAME)
@@ -680,6 +682,7 @@ function installTools(ctx, log, state) {
           turnKey: () => state.lastSessionId || 'default',
           getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
           getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
+          getLastGlanceMap: () => state.lastGlanceMap,
           onConfirmAsk: async () => {
             // 可见性：confirmGate.onPending → 说话气泡 + 右键「好/不要」；头顶 UI 仍由 overlay / Helper 补丁负责。
           },

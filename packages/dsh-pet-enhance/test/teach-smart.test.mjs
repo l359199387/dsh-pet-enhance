@@ -53,6 +53,8 @@ test('buildSmartRunPrompt 含快捷路径与变通/高清纪律', () => {
   assert.match(p, /不要机械复刻/)
   assert.match(p, /zoom/)
   assert.match(p, /糊图/)
+  assert.match(p, /新建对话|新会话/)
+  assert.match(p, /imageX|缩略图/)
   assert.match(p, /动手纪律·C3/)
 })
 
