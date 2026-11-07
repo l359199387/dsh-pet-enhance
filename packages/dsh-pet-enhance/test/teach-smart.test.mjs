@@ -43,7 +43,7 @@ test('mergeTeachQuestions 去重且保留必问', () => {
   assert.ok(m.some((q) => q.code === 'window'))
 })
 
-test('buildSmartRunPrompt 含快捷路径', () => {
+test('buildSmartRunPrompt 含快捷路径与变通/高清纪律', () => {
   const p = buildSmartRunPrompt({
     id: 'x',
     goal: '进B站',
@@ -51,21 +51,24 @@ test('buildSmartRunPrompt 含快捷路径', () => {
   })
   assert.match(p, /bilibili/)
   assert.match(p, /不要机械复刻/)
+  assert.match(p, /zoom/)
+  assert.match(p, /糊图/)
   assert.match(p, /动手纪律·C3/)
 })
 
-test('shouldUseSmartRun：replay / 拒绝变通 → false；有 FAST 才 true', () => {
+test('shouldUseSmartRun：有目标或步骤一律变通', () => {
   assert.equal(
     shouldUseSmartRun({
+      goal: '进豆包',
       approach: 'replay',
       strategy: { approach: 'replay', summary: '很长理解', fastPlan: '' },
     }, {
       understanding: { approach: 'replay', summary: '很长理解', denied: ['fast-ok'] },
     }),
-    false,
+    true,
   )
   assert.equal(
-    shouldUseSmartRun({ approach: 'smart', strategy: { summary: '有理解无FAST' } }),
+    shouldUseSmartRun({ approach: 'smart', strategy: { summary: '有理解无FAST' }, steps: [{ mode: 'glance' }] }),
     true,
   )
   assert.equal(
@@ -73,7 +76,7 @@ test('shouldUseSmartRun：replay / 拒绝变通 → false；有 FAST 才 true', 
     false,
   )
   assert.equal(
-    shouldUseSmartRun({ strategy: { fastPlan: '打开网址' } }),
+    shouldUseSmartRun({ goal: '打开网址', strategy: { fastPlan: '打开网址' } }),
     true,
   )
 })

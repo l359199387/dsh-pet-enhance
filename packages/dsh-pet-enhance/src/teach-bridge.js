@@ -745,6 +745,7 @@ export function createTeachBridge(options) {
     )
     await updateTeachMeta(options.home, id, { status: 'understanding' })
     const digested = await digestWithFrames(id, goal, narrative, steps)
+    // 一律变通执行（界面位置会变）；「不要」某条 FAST 只清掉该快捷路径，不改成死回放
     playbook.strategy = {
       approach: 'smart',
       summary: digested.summary || narrative,
@@ -758,18 +759,17 @@ export function createTeachBridge(options) {
       fastPlan: digested.fastPlan,
     })
 
-    // 点「不要」的偏好：不强行变通时收紧 fastPlan
     let fastPlan = digested.fastPlan || ''
-    if (clarified.denied?.includes('fast-ok') || clarified.denied?.includes('adapt')) {
+    if (clarified.denied?.includes('fast-ok')) {
       fastPlan = ''
       playbook.strategy = {
         ...(playbook.strategy || {}),
-        approach: 'replay',
+        approach: 'smart',
         fastPlan: '',
         summary: digested.summary || narrative,
       }
-      playbook.approach = 'replay'
     }
+    playbook.approach = 'smart'
 
     // 3) 关键帧落入 learned/<id>/frames（仅学习用）
     let frameMeta = { count: 0, files: [] }
@@ -912,7 +912,7 @@ export function createTeachBridge(options) {
       return true
     })
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
-    // 仅明确 smart / 有 FAST 且用户未拒绝变通时才叫醒模型；有 summary ≠ 可以乱点
+    // 一律变通：有目标/步骤就叫醒模型按当前屏幕达成（失败再回落本地回放）
     const smart = shouldUseSmartRun(playbook, learnMeta)
 
     if (smart) {

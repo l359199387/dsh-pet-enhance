@@ -108,40 +108,19 @@ export function mergeTeachQuestions(base, mandatory) {
 
 /**
  * 是否走「叫醒模型变通」路径。
- * 用户明确点「不要」变通 / approach=replay 时必须本地回放，不能因有 summary 就 smart。
+ * 一律变通：图标/窗口位置会变，禁止死回放教学坐标。
  *
  * @param {object} playbook
- * @param {object | null | undefined} [learnMeta]
+ * @param {object | null | undefined} [_learnMeta]
  */
-export function shouldUseSmartRun(playbook, learnMeta = null) {
-  const denied = [
-    ...(Array.isArray(learnMeta?.understanding?.denied) ? learnMeta.understanding.denied : []),
-    ...(Array.isArray(playbook?.strategy?.denied) ? playbook.strategy.denied : []),
-    ...(Array.isArray(playbook?.understanding?.denied) ? playbook.understanding.denied : []),
-  ].map((x) => String(x || ''))
-  if (denied.includes('fast-ok') || denied.includes('adapt')) return false
-
-  const approach = String(
-    learnMeta?.understanding?.approach
-    || playbook?.approach
-    || playbook?.strategy?.approach
-    || playbook?.understanding?.approach
-    || '',
-  ).trim().toLowerCase()
-  if (approach === 'replay') return false
-
-  const fastPlan = String(
-    learnMeta?.understanding?.fastPlan
-    || playbook?.strategy?.fastPlan
-    || '',
-  ).trim()
-  if (approach === 'smart') return true
-  // 有明确快捷路径才 smart；仅有理解摘要不够格（否则 replay 也会被抬成乱点）
-  return Boolean(fastPlan)
+export function shouldUseSmartRun(playbook, _learnMeta = null) {
+  const goal = String(playbook?.goal || '').trim()
+  const steps = Array.isArray(playbook?.steps) ? playbook.steps.length : 0
+  return Boolean(goal || steps)
 }
 
 /**
- * 执行时叫醒主会话的智能提示（优先快捷路径）。
+ * 执行时叫醒主会话：按目标变通达成（界面可变）。
  * @param {{ goal?: string, strategy?: { fastPlan?: string, summary?: string }, id?: string }} playbook
  */
 export function buildSmartRunPrompt(playbook, extras = {}) {
@@ -150,13 +129,16 @@ export function buildSmartRunPrompt(playbook, extras = {}) {
   const summary = String(playbook?.strategy?.summary || playbook?.understanding?.summary || '').slice(0, 300)
   const notes = String(extras.ownerNotes || playbook?.ownerNotes || '').trim().slice(0, 400)
   return (
-    `【小蓝鲸交办】执行已学会的自动化「${goal}」。`
-    + (summary ? `学习理解：${summary}。` : '')
+    `【小蓝鲸交办·必须变通】执行已学会的自动化「${goal}」。`
+    + (summary ? `学习理解（目标与意图，不是坐标脚本）：${summary}。` : '')
     + (notes ? `主人想法：${notes}。` : '')
-    + (fast
-      ? `优先按快捷路径做：${fast}。不要机械复刻教学时的每一次点击坐标；`
-      : '请拆解目标，用电脑最快方式达成（网址/文件/快捷键优先于逐步点鼠标）；')
-    + '先 glance 看清当前屏幕再 act。'
+    + (fast ? `若仍适用可参考快捷路径：${fast}。` : '')
+    + '界面每天都可能变：图标/窗口位置以**当前屏幕**为准。'
+    + '**不要机械复刻**教学点击；**禁止**按教学记录的绝对像素坐标盲点；先 `glance` 找目标再 `act`。'
+    + '打开应用：按名称找桌面/任务栏/开始菜单；聊天内容用自然语言表达意图，勿复打教学时的拼音碎片。'
+    + '看不清小字/图标：对目标区域再调 `glance({action:"zoom", region:"x,y,w,h"})` 或 `quality:"high"`，'
+    + '**禁止对着糊图瞎猜乱点**。'
+    + '先 glance 看清再 act；一次 act 一个动作。'
     + buildC3DisciplineBlock({ includeScenario: false })
     + '一两句汇报。'
     + (playbook?.id ? `（learnedId=${playbook.id}）` : '')

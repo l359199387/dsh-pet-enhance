@@ -15,10 +15,10 @@ test('parameters 是标准 JSON Schema（宿主原样信任，不再有 DSL 化�
   assert.equal(parameters.additionalProperties, false)
   assert.deepEqual(
     Object.keys(parameters.properties).sort(),
-    ['action', 'frames', 'quality', 'region', 'seconds', 'window'],
+    ['action', 'frames', 'maxWaitSec', 'preferFrames', 'quality', 'region', 'seconds', 'window'],
   )
   assert.equal(parameters.properties.action.type, 'string')
-  assert.deepEqual(parameters.properties.action.enum, ['see', 'watch'])
+  assert.deepEqual(parameters.properties.action.enum, ['see', 'watch', 'zoom'])
   assert.deepEqual(parameters.properties.quality.enum, ['low', 'standard', 'high'])
   assert.equal(parameters.properties.window.type, 'string')
   assert.equal(parameters.properties.region.type, 'string')
@@ -51,10 +51,64 @@ test('未知 action 直接说清楚，不假装看过屏幕', async () => {
   assert.match(result.text, /see/)
 })
 
-test('工具说明含 watch 与叫醒预算提示', () => {
+test('工具说明含 watch / zoom 与叫醒预算提示', () => {
   assert.match(glanceToolSpec().description, /watch/)
+  assert.match(glanceToolSpec().description, /zoom/)
+  assert.match(glanceToolSpec().description, /糊图/)
   assert.match(glanceToolSpec().description, /叫醒预算/)
   assert.equal(glanceToolSpec().timeoutMs, 900_000)
+})
+
+test('zoom 缺 region/window 时明确失败', async () => {
+  const tool = createGlanceTool({ home: 'C:\\nope', attachments: {} })
+  const result = await tool.execute({ action: 'zoom' }, {})
+  assert.equal(result.meta.ok, false)
+  assert.match(result.text, /region|window/)
+  assert.deepEqual(result.images, [])
+})
+
+test('有 region 未写 quality 时默认 high；zoom 同理', async () => {
+  const png1x1 = Buffer.from(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
+    + '0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
+    'hex',
+  )
+  /** @type {object[]} */
+  const calls = []
+  const sidecar = {
+    async call(method, params) {
+      calls.push({ method, params })
+      return {
+        ok: true,
+        png: png1x1.toString('base64'),
+        w: 200,
+        h: 100,
+        ms: 1,
+      }
+    },
+    isAlive: () => true,
+  }
+  const attachments = {
+    async saveImage({ name }) {
+      return { id: `img-${name}`, name }
+    },
+  }
+  const tool = createGlanceTool({ home: 'C:\\nope', attachments, sidecar })
+
+  const withRegion = await tool.execute({ region: '10,20,100,80' }, {})
+  assert.equal(withRegion.meta.ok, true)
+  assert.equal(withRegion.meta.quality, 'high')
+  assert.equal(withRegion.meta.zoom, true)
+  assert.match(withRegion.text, /高清/)
+
+  const zoomed = await tool.execute({ action: 'zoom', region: '10,20,100,80' }, {})
+  assert.equal(zoomed.meta.ok, true)
+  assert.equal(zoomed.meta.action, 'zoom')
+  assert.equal(zoomed.meta.quality, 'high')
+  assert.match(zoomed.text, /特写|糊图/)
+
+  assert.equal(calls.length, 2)
+  assert.ok(calls.every((c) => c.method === 'capture' && c.params?.max_width === 1260))
 })
 
 test('watch 无 sidecar 时明确失败', async () => {

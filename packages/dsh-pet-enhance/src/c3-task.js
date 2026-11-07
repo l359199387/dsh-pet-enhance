@@ -34,7 +34,8 @@ export function buildC3DisciplineBlock(opts = {}) {
   const includeScenario = opts.includeScenario !== false
   const lines = [
     '【动手纪律·C3】',
-    '1. 看不清就先 `glance`；一次 `act` 只做一个动作；关键步（打开/输入/保存/关闭）后应再 `glance` 确认。坐标必须用 glance 返回的物理像素，勿凭记忆估点。',
+    '1. 看不清就先 `glance`；一次 `act` 只做一个动作；关键步（打开/输入/保存/关闭）后应再 `glance` 确认。坐标必须用**当次** glance 看到的物理像素，勿凭记忆或教学旧坐标估点。',
+    '1b. 整屏糊、小字/图标看不清：对目标区域 `glance({action:"zoom", region:"x,y,w,h"})`（默认高清）或 `quality:"high"`；**禁止对着糊图瞎猜乱点**。',
     `2. 若 act 回报「可能没生效」或 glance 显示没变化：同一意图最多再试 ${C3_STEP_RETRY} 次；仍失败则停，用一两句说明卡在哪，不要换花样连点。`,
     '3. 用户急停、甩光标到左上角、点「不要」、或预算用尽 → 立刻停，不要重试。',
     `4. 本轮动作宜 ≤ ${C3_MAX_ACTIONS}；优先快捷键/对话框，少盲点坐标。`,

@@ -111,14 +111,35 @@ export function createGlanceTool({
       return wakes.status()
     },
     async execute(args, exec) {
-      const action = String(args?.action ?? 'see').trim().toLowerCase() || 'see'
-      const quality = normalizeQuality(args?.quality)
+      const rawAction = String(args?.action ?? 'see').trim().toLowerCase() || 'see'
+      let action = rawAction
       const window = args?.window
       const region = args?.region
+      const hasRegion = Boolean(String(region ?? '').trim())
+      const hasWindow = Boolean(String(window ?? '').trim())
+      const qualityExplicit = args?.quality != null && String(args.quality).trim() !== ''
+      const wantZoom = rawAction === 'zoom'
+
+      // zoom = 区域/窗口高清特写；未写 quality 时默认 high
+      if (wantZoom) {
+        if (!hasRegion && !hasWindow) {
+          return {
+            text: 'zoom 需要 region:"x,y,w,h"（物理像素）或 window:"标题片段"，用于看清局部。',
+            images: [],
+            meta: { ok: false, error: { code: 'BAD_REQUEST', message: 'zoom-needs-region-or-window' }, action: 'zoom' },
+          }
+        }
+        action = 'see'
+      }
+
+      // 局部特写默认 high；整屏 see 仍默认 low
+      const quality = normalizeQuality(
+        qualityExplicit ? args.quality : ((wantZoom || hasRegion) ? 'high' : 'low'),
+      )
 
       if (action !== 'see' && action !== 'watch') {
         return {
-          text: `目前只会 action:"see" | "watch"（收到 "${action}"）。`,
+          text: `目前只会 action:"see" | "watch" | "zoom"（收到 "${action}"）。`,
           images: [],
           meta: { ok: false, unsupported: true, action, quality },
         }
@@ -307,10 +328,15 @@ export function createGlanceTool({
       }
       try { onIdle?.() } catch { /* ignore */ }
 
-      const text = envelope(shot)
+      let text = envelope(shot)
+      if (wantZoom || hasRegion) {
+        text += wantZoom
+          ? '\n说明：这是局部高清特写（zoom）；看清后再 act，勿对糊图瞎猜。'
+          : '\n说明：指定了区域，已按高清档抓取（未显式写 quality 时默认 high）。'
+      }
       const meta = {
         ok: true,
-        action: 'see',
+        action: wantZoom ? 'zoom' : 'see',
         quality: shot.quality,
         width: shot.width,
         height: shot.height,
@@ -322,6 +348,7 @@ export function createGlanceTool({
         window: shot.window,
         active: shot.active,
         cursor: shot.cursor,
+        zoom: Boolean(wantZoom || hasRegion),
       }
 
       const saveImage = attachments?.saveImage
