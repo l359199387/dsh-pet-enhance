@@ -10,6 +10,7 @@ import {
   displayContent,
   extractPetMessages,
   recentChatHtmlPath,
+  shouldShowTimeChip,
 } from '../src/recent-chat.js'
 
 test('attachmentObjectPath 按 sha256 前两字符分目录', () => {
@@ -33,24 +34,23 @@ test('displayContent 去掉身份尾巴并截断', () => {
   assert.ok(s.length <= 21)
 })
 
-test('displayContent 看屏注入突出用户原话', () => {
+test('displayContent 看屏注入只留用户原话', () => {
   const s = displayContent(
     '【小蓝鲸已附上刚才的画面】用户刚说「看一眼桌面」。我已抓到整屏。\n\n[身份] x',
   )
-  assert.match(s, /^「看一眼桌面」/)
-  assert.ok(!s.includes('[身份]'))
+  assert.equal(s, '看一眼桌面')
 })
 
-test('buildRecentChatHtml 写出带转义与附图的本地页', async () => {
+test('shouldShowTimeChip 间隔约 5 分钟', () => {
+  assert.equal(shouldShowTimeChip(0, 1000), true)
+  assert.equal(shouldShowTimeChip(1000, 1000 + 4 * 60 * 1000), false)
+  assert.equal(shouldShowTimeChip(1000, 1000 + 5 * 60 * 1000), true)
+})
+
+test('buildRecentChatHtml 写出微信式气泡与头像', async () => {
   const home = await mkdtemp(join(tmpdir(), 'recent-chat-'))
   try {
     const memPath = join(home, 'memory.json')
-    const attDir = join(home, 'att')
-    await mkdir(attDir, { recursive: true })
-    const pngPath = join(attDir, 'shot.png')
-    await writeFile(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-
-    // 用真实 attachment 路径不便；无图消息仍应生成 HTML，并转义 XSS
     await writeFile(memPath, JSON.stringify({
       main: {
         main: {
@@ -74,7 +74,11 @@ test('buildRecentChatHtml 写出带转义与附图的本地页', async () => {
     const html = await readFile(r.path, 'utf8')
     assert.ok(html.includes('&lt;script&gt;'))
     assert.ok(html.includes('嗨 &amp; 好'))
-    assert.ok(html.includes('小蓝鲸 · 最近'))
+    assert.ok(html.includes('class="row me"'))
+    assert.ok(html.includes('class="row pet"'))
+    assert.ok(html.includes('class="bubble"'))
+    assert.ok(html.includes('avatar-me.svg'))
+    assert.ok(existsSync(join(home, 'cache', 'recent-chat-assets', 'avatar-me.svg')))
   } finally {
     await rm(home, { recursive: true, force: true })
   }
