@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  FULL_ACCESS_PERMISSION,
+  STANDARD_AGENT_PRESET,
+  DEFAULT_REASONING_EFFORT,
   applySessionPermissionPreset,
+  applySessionReasoningEffort,
   applyStandardTranscriptMode,
   extractCreatedSessionId,
   findWorkspaceForSession,
   openNewWorkspaceSession,
+  prepareFreshRunSession,
   readSessionPermissionPreset,
 } from '../src/session-spawn.js'
 
@@ -52,19 +57,35 @@ test('findWorkspaceForSession / 权限读写', () => {
   assert.equal(applyStandardTranscriptMode(ctx), true)
 })
 
-test('openNewWorkspaceSession：复制权限并切新 id', async () => {
+test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () => {
   const sessions = new Map([['old', { id: 'old' }]])
-  const perms = new Map([[sessions.get('old'), 'danger-full-access']])
+  const perms = new Map([[sessions.get('old'), 'workspace-write']])
+  const selections = []
   let modes = []
+  let createReq = null
   const ctx = {
     get(name) {
       if (name === 'sessionController') {
         return {
           async create(req) {
+            createReq = req
             assert.equal(req.workspaceId, 'ws1')
+            assert.equal(req.agentPreset, STANDARD_AGENT_PRESET)
             const neu = { id: 'new' }
             sessions.set('new', neu)
             return { agent: { id: 'new' } }
+          },
+          async resolveAgent(id) {
+            const session = sessions.get(String(id))
+            return {
+              agent: {
+                session,
+                model: {
+                  current: () => ({ provider: 'deepseek', model: 'deepseek-chat' }),
+                  select: (sel) => { selections.push(sel) },
+                },
+              },
+            }
           },
         }
       }
@@ -99,11 +120,62 @@ test('openNewWorkspaceSession：复制权限并切新 id', async () => {
   }, { preferredId: 'old' })
   assert.equal(r.ok, true)
   assert.equal(r.sessionId, 'new')
-  assert.equal(r.permission, 'danger-full-access')
+  assert.equal(r.permission, FULL_ACCESS_PERMISSION)
   assert.equal(r.permissionCopied, true)
   assert.equal(r.modeStandard, true)
+  assert.equal(r.agentPreset, STANDARD_AGENT_PRESET)
+  assert.equal(r.reasoningEffort, DEFAULT_REASONING_EFFORT)
+  assert.equal(r.reasoningApplied, true)
   assert.equal(r.revealed, true)
+  assert.deepEqual(createReq?.agentPreset, STANDARD_AGENT_PRESET)
   assert.deepEqual(modes, ['standard'])
   assert.deepEqual(opened, ['new'])
-  assert.equal(readSessionPermissionPreset(ctx, 'new'), 'danger-full-access')
+  assert.equal(readSessionPermissionPreset(ctx, 'new'), FULL_ACCESS_PERMISSION)
+  assert.deepEqual(selections.at(-1), {
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    reasoningEffort: 'low',
+  })
+})
+
+test('prepareFreshRunSession：失败时回落旧会话', async () => {
+  const sessions = new Map([['old', { id: 'old' }]])
+  const ctx = {
+    get(name) {
+      if (name === 'sessionController') {
+        return {
+          async create() { throw new Error('boom') },
+        }
+      }
+      if (name === 'sessions') {
+        return {
+          get: (id) => sessions.get(String(id)) || null,
+          list: () => [...sessions.values()],
+        }
+      }
+      if (name === 'workspaceRegistry') {
+        return { list: () => [{ id: 'ws1', sessionIds: ['old'] }] }
+      }
+      return null
+    },
+  }
+  const r = await prepareFreshRunSession(ctx, { preferredId: 'old', log() {} })
+  assert.equal(r.fresh, false)
+  assert.equal(r.sessionId, 'old')
+})
+
+test('applySessionReasoningEffort：无 model 时 false', async () => {
+  const ctx = {
+    get(name) {
+      if (name === 'sessionController') {
+        return {
+          async resolveAgent() {
+            return { agent: { model: { current: () => null } } }
+          },
+        }
+      }
+      return null
+    },
+  }
+  assert.equal(await applySessionReasoningEffort(ctx, 'x', 'low'), false)
 })

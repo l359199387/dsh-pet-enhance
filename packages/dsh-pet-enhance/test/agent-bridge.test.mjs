@@ -84,6 +84,7 @@ test('act 关闭时只冒泡提示，不叫醒', async () => {
     petMemoryPath,
     intervalMs: 60_000,
     log() {},
+    prepareSession: async () => ({ sessionId: 'fresh-1', fresh: true }),
     wake: async (...args) => { wakes.push(args); return { ok: true, sessionId: 's1' } },
     waitReply: async () => ({ ok: true, text: '好了' }),
   })
@@ -131,9 +132,10 @@ test('act 开启后叫醒并回灌气泡', async () => {
     intervalMs: 60_000,
     log() {},
     getPreferredSessionId: () => 'sess-9',
+    prepareSession: async () => ({ sessionId: 'fresh-9', fresh: true }),
     wake: async (_ctx, opts) => {
       wakes.push(opts)
-      return { ok: true, sessionId: 'sess-9' }
+      return { ok: true, sessionId: 'fresh-9' }
     },
     waitReply: async () => ({ ok: true, text: '已经点了确定。' }),
   })
@@ -142,7 +144,8 @@ test('act 开启后叫醒并回灌气泡', async () => {
   await bridge.tick()
   assert.equal(wakes.length, 1)
   assert.ok(String(wakes[0].text).includes('帮我点一下确定'))
-  assert.equal(wakes[0].preferredId, 'sess-9')
+  assert.equal(wakes[0].sessionId, 'fresh-9')
+  assert.equal(wakes[0].preferredId, 'fresh-9')
   assert.ok(bubbles.some((t) => String(t).includes('已经点了确定')))
   const mem = JSON.parse(readFileSync(petMemoryPath, 'utf8'))
   assert.match(mem.main.main.messages.at(-1).content, /已经点了确定/)

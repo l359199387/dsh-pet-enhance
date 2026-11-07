@@ -152,9 +152,14 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
     attachments: {
       async saveImage() { return { id: 'att-1' } },
     },
+    prepareSession: async () => ({ sessionId: 'fresh-teach', fresh: true }),
     wake: async (_ctx, opts) => {
-      wakes.push({ images: opts.images?.length || 0, text: opts.text })
-      return { ok: true, sessionId: 's1' }
+      wakes.push({
+        images: opts.images?.length || 0,
+        text: opts.text,
+        sessionId: opts.sessionId,
+      })
+      return { ok: true, sessionId: opts.sessionId || 's1' }
     },
     waitReply: async () => ({ ok: true, text: 'OK: 保存记事本里的内容' }),
     sidecar: {

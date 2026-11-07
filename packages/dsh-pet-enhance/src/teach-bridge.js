@@ -53,6 +53,7 @@ import { digestEvidenceCount } from './teach-digest.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
+import { prepareFreshRunSession } from './session-spawn.js'
 import {
   buildSmartRunPrompt,
   buildTeachFollowupQuestions,
@@ -290,6 +291,7 @@ function stepToActArgs(step, sessionId) {
  *   onSession?: (sessionId: string) => void,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
+ *   prepareSession?: typeof prepareFreshRunSession,
  *   pollChat?: boolean,
  *   onTeaching?: (on: boolean) => void,
  * }} options
@@ -303,6 +305,7 @@ export function createTeachBridge(options) {
   const pollChat = options.pollChat !== false
   const wake = options.wake ?? wakeSession
   const waitReply = options.waitReply ?? waitAssistantReply
+  const prepareSession = options.prepareSession ?? prepareFreshRunSession
 
   let timer = null
   let observeTimer = null
@@ -514,10 +517,16 @@ export function createTeachBridge(options) {
     if (!shouldAttachTeachDigestImages(steps)) {
       log('teach digest：键入为主，跳过附图，仅文字理解')
       const preferred = options.getPreferredSessionId?.() ?? null
+      const prepared = await prepareSession(options.ctx, {
+        preferredId: preferred,
+        onSession: options.onSession,
+        log,
+      })
       const prompt = buildTeachDigestPrompt(runGoal, narrative, [])
       const woken = await wake(options.ctx, {
         text: prompt,
-        preferredId: preferred,
+        sessionId: prepared.sessionId || undefined,
+        preferredId: prepared.sessionId || preferred,
         log,
       })
       if (!woken.ok) {
@@ -554,13 +563,19 @@ export function createTeachBridge(options) {
     }
 
     const preferred = options.getPreferredSessionId?.() ?? null
+    const prepared = await prepareSession(options.ctx, {
+      preferredId: preferred,
+      onSession: options.onSession,
+      log,
+    })
     // 默认最多 1 张 2×2（MAX_DIGEST_SHEETS 已随 budget=4 变为 1）
     const maxImages = Math.min(1, MAX_DIGEST_SHEETS, Math.max(1, imgs.length))
     const imageList = imgs.slice(0, maxImages)
     const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
     const woken = await wake(options.ctx, {
       text: prompt,
-      preferredId: preferred,
+      sessionId: prepared.sessionId || undefined,
+      preferredId: prepared.sessionId || preferred,
       images: imageList,
       attachments: options.attachments,
       maxImages,
@@ -881,6 +896,11 @@ export function createTeachBridge(options) {
 
     if (smart) {
       const preferred = options.getPreferredSessionId?.() ?? null
+      const prepared = await prepareSession(options.ctx, {
+        preferredId: preferred,
+        onSession: options.onSession,
+        log,
+      })
       const prompt = buildSmartRunPrompt({
         ...playbook,
         strategy: {
@@ -895,7 +915,11 @@ export function createTeachBridge(options) {
         `按快捷思路做「${clip(playbook.goal, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
         { pet, duration: 10_000 },
       )
-      const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        sessionId: prepared.sessionId || undefined,
+        preferredId: prepared.sessionId || preferred,
+      })
       if (!woken.ok) {
         await broadcastToDshPet(
           `快捷路径没叫醒主会话（${woken.reason || 'unknown'}），我改按记录步骤试…`,
@@ -1009,10 +1033,19 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 仅 glance：短提示叫醒
+    // 仅 glance：短提示叫醒（新开干净会话）
     const preferred = options.getPreferredSessionId?.() ?? null
+    const prepared = await prepareSession(options.ctx, {
+      preferredId: preferred,
+      onSession: options.onSession,
+      log,
+    })
     const prompt = buildTeachGlancePrompt(playbook)
-    const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
+    const woken = await wake(options.ctx, {
+      text: prompt,
+      sessionId: prepared.sessionId || undefined,
+      preferredId: prepared.sessionId || preferred,
+    })
     if (!woken.ok) {
       const why = woken.reason || 'unknown'
       await sayConclusionToPet(

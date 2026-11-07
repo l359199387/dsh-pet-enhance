@@ -17,6 +17,7 @@ import {
   shouldSkipAgentBridge,
 } from './intent.js'
 import { wakeSession, waitAssistantReply, pickSessionId } from './wake-session.js'
+import { prepareFreshRunSession } from './session-spawn.js'
 import { glancePersonaBlock } from './persona.js'
 import {
   buildC3DisciplineBlock,
@@ -74,6 +75,7 @@ function clipBubble(text, max = 160) {
  *   isActEnabled?: (home: string) => boolean,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
+ *   prepareSession?: typeof prepareFreshRunSession,
  *   pollChat?: boolean,
  *   onActing?: () => void,
  *   onIdle?: () => void,
@@ -89,6 +91,7 @@ export function createAgentBridge(options) {
   const actOn = options.isActEnabled ?? isActEnabled
   const wake = options.wake ?? wakeSession
   const waitReply = options.waitReply ?? waitAssistantReply
+  const prepareSession = options.prepareSession ?? prepareFreshRunSession
   const pollChat = options.pollChat !== false
   let timer = null
   let stopped = false
@@ -111,11 +114,32 @@ export function createAgentBridge(options) {
       try { options.resetActBudget?.() } catch { /* ignore */ }
       const preferred = options.getPreferredSessionId?.() ?? null
       // 与 i18n bubble.taskTakeover 对齐：任务走插件，闲聊留给 dsh-pet（进度不落盘）
-      await broadcastToDshPet('这事我来办——去主会话看屏幕再动手…', { pet, duration: 8_000 })
+      await broadcastToDshPet('这事我来办——新开干净会话再动手…', { pet, duration: 8_000 })
       try { options.onActing?.() } catch { /* ignore */ }
 
+      const prepared = await prepareSession(options.ctx, {
+        preferredId: preferred,
+        onSession: options.onSession,
+        log,
+      })
+      if (!prepared.sessionId) {
+        await sayConclusionToPet(
+          '我开不出新会话，也找不到可叫醒的主会话。请先在 Harness 里打开一个对话，再说一遍。',
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
+        )
+        log('agent-bridge：无可用会话')
+        return
+      }
+      if (prepared.fresh) {
+        log(`agent-bridge：已新开会话 ${prepared.sessionId}（full-access / standard / low）`)
+      }
+
       const prompt = buildAgentWakePrompt(userText)
-      const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        sessionId: prepared.sessionId,
+        preferredId: prepared.sessionId,
+      })
       if (!woken.ok) {
         const why = woken.reason || 'unknown'
         await sayConclusionToPet(

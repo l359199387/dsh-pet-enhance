@@ -1090,13 +1090,15 @@ async function openOwnerWorkspaceSession(state, log) {
   }
   state.lastSessionId = r.sessionId
   state.lastAgentSessionId = r.sessionId
-  const perm = r.permission
-    ? (r.permissionCopied
-      ? `权限已对齐上一窗（${r.permission}）`
-      : `权限复制未成功（上一窗 ${r.permission}）`)
-    : '上一窗无明确权限可复制'
+  const perm = r.permissionCopied
+    ? `权限 ${r.permission || 'danger-full-access'}`
+    : `权限未写上（目标 ${r.permission || 'danger-full-access'}）`
+  const effort = r.reasoningEffort
+    ? (r.reasoningApplied ? `推理 ${r.reasoningEffort}` : `推理 ${r.reasoningEffort} 未写上`)
+    : '推理未指定'
   await sayConclusionToPet(
-    `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。${perm}；模式默认标准。之后交办走这个窗。`,
+    `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。`
+    + `${perm}；模式 standard；${effort}。之后交办走这个窗。`,
     { duration: 14_000 },
   )
   return r
