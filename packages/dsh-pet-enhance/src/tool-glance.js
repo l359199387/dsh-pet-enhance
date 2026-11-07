@@ -66,7 +66,7 @@ function watchEnvelope(result) {
     `watch ${result.elapsedSec}s`,
     `${result.framesKept} 帧（采样 ${result.samples}）`,
     sheets > 1
-      ? `${sheets} 张拼图（${result.cols}×${result.rows}）`
+      ? `${sheets} 张分图（${result.cols}×${result.rows}）`
       : `${result.cols}×${result.rows}`,
     `→ ${result.width}×${result.height}`,
     `${result.quality} 档 · ~${result.tokens} token`,
@@ -195,6 +195,15 @@ export function createGlanceTool({
         if (result.silent) {
           text += '\n说明：这段时间屏幕基本没变；图里是兜底帧，不是密集操作回放。'
         }
+        const deliverN = Array.isArray(result.deliverPngs) && result.deliverPngs.length
+          ? result.deliverPngs.length
+          : (result.deliveredSheets || result.mosaicCount || 1)
+        if (deliverN > 1) {
+          text += `\n附图为按时间顺序的 ${deliverN} 张拼图（分张，未叠成一张）；请按图序理解变化。`
+        }
+        if (result.skippedSheets > 0) {
+          text += `\n（共封 ${result.mosaicCount} 张，只交最近 ${deliverN} 张以免刷屏。）`
+        }
         text += `\n叫醒 ${gate.wakes}/${gate.max}（用户说话会清零；连续无人回应满额会停）。`
 
         const meta = {
@@ -223,9 +232,12 @@ export function createGlanceTool({
           }
         }
 
-        const pngs = Array.isArray(result.pngs) && result.pngs.length
-          ? result.pngs
-          : (result.png ? [result.png] : [])
+        // 分张交给模型（与对话路径一致）；优先 deliverPngs
+        const pngs = Array.isArray(result.deliverPngs) && result.deliverPngs.length
+          ? result.deliverPngs
+          : (Array.isArray(result.pngs) && result.pngs.length
+            ? result.pngs
+            : (result.png ? [result.png] : []))
         /** @type {object[]} */
         const images = []
         try {

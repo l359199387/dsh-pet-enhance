@@ -18,10 +18,10 @@ export const WATCH_DEFAULTS = Object.freeze({
   /** 管道内总留帧上限（see-now pipeline maxFrames 量级） */
   maxFrames: 40,
   /**
-   * 交给对话附图的最多几张 sheet。中途封箱可能很多；全叠成一张会到 4k+ 高，
-   * dsh-pet 附图 fetch 会挂（实测 798×4928 → chat-failed）。磁盘仍保存全部分张。
+   * 交给对话 / 模型的最多几张 sheet（分张送，不再竖向叠图）。
+   * 超出部分仍落盘为 watch-latest-*.png，只是不进对话以免刷屏与爆 token。
    */
-  maxDeliverSheets: 2,
+  maxDeliverSheets: 6,
 })
 
 /** 与 see-now region 封箱对齐 */
@@ -372,53 +372,34 @@ export async function runWatch(options = {}) {
   const maxDeliver = clampInt(
     options.maxDeliverSheets,
     1,
-    4,
+    8,
     WATCH_DEFAULTS.maxDeliverSheets,
   )
-  // 对话只附最近几张；太早的 sheet 仍在 pngs / 磁盘分张里
+  // 分张交付（不叠图）：对话 / 模型各收一张；磁盘仍保留全部 sheet
   const deliverSheets = mosaics.slice(-maxDeliver)
   const skippedSheets = Math.max(0, mosaics.length - deliverSheets.length)
-
-  let deliverPng = deliverSheets[0]?.png
-  let deliverW = deliverSheets[0]?.width || expected.w
-  let deliverH = deliverSheets[0]?.height || expected.h
-  if (deliverSheets.length > 1) {
-    try {
-      const stacked = await sidecar.call('stack', {
-        pngs: deliverSheets.map((m) => m.png.toString('base64')),
-        gap: 8,
-      }, 30_000)
-      if (stacked?.ok && stacked.png) {
-        deliverPng = Buffer.from(String(stacked.png), 'base64')
-        deliverW = Number(stacked.w) || deliverW
-        deliverH = Number(stacked.h) || deliverH
-      }
-    } catch (e) {
-      log(`watch 叠图失败，回退最近一张：${e?.message ?? e}`)
-      const last = deliverSheets[deliverSheets.length - 1]
-      deliverPng = last?.png
-      deliverW = last?.width || deliverW
-      deliverH = last?.height || deliverH
-    }
-  }
+  const lastSheet = deliverSheets[deliverSheets.length - 1] || mosaics[0]
 
   if (skippedSheets > 0) {
-    log(`watch 交付裁切：共 ${mosaics.length} 张 sheet，对话只附最近 ${deliverSheets.length} 张`)
+    log(`watch 交付裁切：共 ${mosaics.length} 张 sheet，对话分张附最近 ${deliverSheets.length} 张`)
   }
 
   const tokens = deliverSheets.reduce((sum, m) => sum + (m.tokens || 0), 0)
   const elapsedSec = Math.round((Date.now() - started) / 1000)
-  const lastSheet = deliverSheets[deliverSheets.length - 1] || mosaics[0]
 
   return {
-    png: deliverPng,
+    /** 兼容旧调用方：默认等于最后一张 sheet */
+    png: lastSheet?.png,
+    /** 全部分张（含未送进对话的） */
     pngs: mosaics.map((m) => m.png),
+    /** 将送进对话 / 模型的分张（时间序） */
+    deliverPngs: deliverSheets.map((m) => m.png),
     mosaics,
     mosaicCount: mosaics.length,
     deliveredSheets: deliverSheets.length,
     skippedSheets,
-    width: deliverW,
-    height: deliverH,
+    width: lastSheet?.width || expected.w,
+    height: lastSheet?.height || expected.h,
     quality,
     tokens,
     expectedTokens: expected.tokens * deliverSheets.length,
