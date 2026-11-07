@@ -8,8 +8,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { listDshPetRoots } from './patch-dsh-pet-click.js'
 
-export const CONFIRM_PATCH_MARK = 'dsh-pet-enhance:confirm-bubble-v3'
+export const CONFIRM_PATCH_MARK = 'dsh-pet-enhance:confirm-bubble-v4'
 export const CONFIRM_SCRIPT_NAME = 'pet-enhance-confirm.js'
+/** 旧版 glance 确认脚本（打已废弃的 /api/glance）。 */
+export const LEGACY_GLANCE_CONFIRM_MARK = 'dsh-glance:confirm-bubble'
+export const LEGACY_GLANCE_CONFIRM_SCRIPT = 'glance-confirm.js'
 /** Helper 穿透兜底：动手锁文件存在时强制 ignore，避免自动化把桌宠顶掉。 */
 export const ACT_SHIELD_PATCH_MARK = 'dsh-pet-enhance:act-shield-v2'
 
@@ -30,13 +33,64 @@ const WINDOWS_POINTER_REPLACEMENT = [
   '      } catch (_peActErr) { /* ignore */ }',
 ].join('\n')
 
-const HTML_NEEDLE = '    <script src="./sprite/menu.js"></script>\n    <script src="./events.js"></script>'
-const HTML_REPLACEMENT = [
-  '    <script src="./sprite/menu.js"></script>',
+const HTML_INJECT = [
   `    <!-- ${CONFIRM_PATCH_MARK} -->`,
   `    <script src="./sprite/${CONFIRM_SCRIPT_NAME}"></script>`,
-  '    <script src="./events.js"></script>',
 ].join('\n')
+
+/**
+ * 把确认脚本挂进 Helper index.html；兼容旧 glance-confirm 与「menu→events」直连。
+ * @param {string} raw
+ * @returns {{ text: string, reason: string, changed: boolean }}
+ */
+export function patchHelperConfirmHtml(raw) {
+  const src = String(raw ?? '')
+  if (src.includes(CONFIRM_PATCH_MARK) && src.includes(CONFIRM_SCRIPT_NAME)) {
+    return { text: src, reason: 'already-patched', changed: false }
+  }
+
+  // 旧 glance / 旧 enhance 标记：整段替换成 v4
+  const legacyBlock = new RegExp(
+    String.raw`(?:[ \t]*<!--\s*(?:dsh-glance:confirm-bubble[^>]*|dsh-pet-enhance:confirm-bubble[^>]*)\s*-->\s*\n)?[ \t]*<script src="\./sprite/(?:glance-confirm|pet-enhance-confirm)\.js"></script>\s*\n?`,
+    'g',
+  )
+  if (legacyBlock.test(src) || src.includes(LEGACY_GLANCE_CONFIRM_SCRIPT) || src.includes('dsh-pet-enhance:confirm-bubble')) {
+    legacyBlock.lastIndex = 0
+    let next = src.replace(legacyBlock, '')
+    // 插在 menu.js 之后、events.js 之前
+    if (next.includes('<script src="./sprite/menu.js"></script>')) {
+      next = next.replace(
+        '<script src="./sprite/menu.js"></script>',
+        `<script src="./sprite/menu.js"></script>\n${HTML_INJECT}`,
+      )
+      return { text: next, reason: 'migrated-legacy', changed: true }
+    }
+  }
+
+  if (src.includes('<script src="./sprite/menu.js"></script>\n    <script src="./events.js"></script>')) {
+    return {
+      text: src.replace(
+        '<script src="./sprite/menu.js"></script>\n    <script src="./events.js"></script>',
+        `<script src="./sprite/menu.js"></script>\n${HTML_INJECT}\n    <script src="./events.js"></script>`,
+      ),
+      reason: 'patched',
+      changed: true,
+    }
+  }
+
+  if (src.includes('<script src="./sprite/menu.js"></script>')) {
+    return {
+      text: src.replace(
+        '<script src="./sprite/menu.js"></script>',
+        `<script src="./sprite/menu.js"></script>\n${HTML_INJECT}`,
+      ),
+      reason: 'patched-after-menu',
+      changed: true,
+    }
+  }
+
+  return { text: src, reason: 'needle-not-found', changed: false }
+}
 
 const INPUT_BUSY_NEEDLE = [
   '  inputBusy() {',
@@ -351,22 +405,12 @@ export function applyDshPetConfirmPatches(options = {}) {
     results.push({ path: scriptFile, reason: scriptWrite.reason, changed: scriptWrite.changed })
 
     if (existsSync(html)) {
-      let raw = readFileSync(html, 'utf8')
-      if (raw.includes(CONFIRM_PATCH_MARK) && raw.includes(CONFIRM_SCRIPT_NAME)) {
-        results.push({ path: html, reason: 'already-patched', changed: false })
-      } else if (raw.includes('dsh-pet-enhance:confirm-bubble') && raw.includes(CONFIRM_SCRIPT_NAME)) {
-        writeFileSync(
-          html,
-          raw.replace(/dsh-pet-enhance:confirm-bubble(?!-v\d)/g, CONFIRM_PATCH_MARK),
-          'utf8',
-        )
-        results.push({ path: html, reason: 'upgraded-v2', changed: true })
-      } else if (raw.includes(HTML_NEEDLE)) {
-        writeFileSync(html, raw.replace(HTML_NEEDLE, HTML_REPLACEMENT), 'utf8')
-        results.push({ path: html, reason: 'patched', changed: true })
-      } else {
-        results.push({ path: html, reason: 'needle-not-found', changed: false })
+      const raw = readFileSync(html, 'utf8')
+      const patched = patchHelperConfirmHtml(raw)
+      if (patched.changed) {
+        writeFileSync(html, patched.text, 'utf8')
       }
+      results.push({ path: html, reason: patched.reason, changed: patched.changed })
     } else {
       results.push({ path: html, reason: 'missing', changed: false })
     }

@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import {
+  ackForLabel,
+  runChatGate,
+  shouldTakeoverChat,
+} from '../src/chat-gate.js'
+import {
+  CHAT_GATE_PATCH_MARK,
+  patchChatWithPetSource,
+} from '../src/patch-dsh-pet-chat-gate.js'
+import {
+  CONFIRM_PATCH_MARK,
+  CONFIRM_SCRIPT_NAME,
+  patchHelperConfirmHtml,
+} from '../src/patch-dsh-pet-confirm.js'
+
+test('shouldTakeoverChat：任务/看屏/教学接管，闲聊不接管', () => {
+  assert.equal(shouldTakeoverChat('task'), true)
+  assert.equal(shouldTakeoverChat('glance'), true)
+  assert.equal(shouldTakeoverChat('teach'), true)
+  assert.equal(shouldTakeoverChat('chat'), false)
+})
+
+test('ackForLabel 含任务接手', () => {
+  assert.match(ackForLabel('task', 'zh'), /这事我来办/)
+})
+
+test('runChatGate：task 接管并 markHandled', async () => {
+  const handled = []
+  const tasks = []
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '打开记事本写下今天日期再保存',
+    classify: async () => ({ label: 'task', via: 'test' }),
+    agentBridge: { handleTask: async (t) => { tasks.push(t) } },
+    markHandled: (c) => handled.push(c),
+  })
+  assert.equal(result.takeover, true)
+  assert.equal(result.label, 'task')
+  assert.match(result.ack, /这事我来办/)
+  assert.deepEqual(handled, ['打开记事本写下今天日期再保存'])
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(tasks.length, 1)
+})
+
+test('runChatGate：chat 不接管', async () => {
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '今天天气怎么样',
+    classify: async () => ({ label: 'chat', via: 'test' }),
+  })
+  assert.equal(result.takeover, false)
+})
+
+test('patchHelperConfirmHtml：迁移旧 glance-confirm', () => {
+  const raw = [
+    '    <script src="./sprite/menu.js"></script>',
+    '    <!-- dsh-glance:confirm-bubble-v2 -->',
+    '    <script src="./sprite/glance-confirm.js"></script>',
+    '    <script src="./events.js"></script>',
+    '',
+  ].join('\n')
+  const p = patchHelperConfirmHtml(raw)
+  assert.equal(p.changed, true)
+  assert.ok(p.text.includes(CONFIRM_PATCH_MARK))
+  assert.ok(p.text.includes(CONFIRM_SCRIPT_NAME))
+  assert.ok(!p.text.includes('glance-confirm.js'))
+})
+
+test('patchChatWithPetSource：插入闸门标记', () => {
+  const raw = [
+    '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',
+    '\t\tconst generated = await generateChat({',
+    '\t\t\tctx,',
+  ].join('\n')
+  const p = patchChatWithPetSource(raw)
+  assert.equal(p.changed, true)
+  assert.ok(p.text.includes(CHAT_GATE_PATCH_MARK))
+  assert.ok(p.text.includes('/api/pet-enhance/chat-gate'))
+  const again = patchChatWithPetSource(p.text)
+  assert.equal(again.changed, false)
+})

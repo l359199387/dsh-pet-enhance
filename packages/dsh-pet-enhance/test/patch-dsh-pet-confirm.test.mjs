@@ -75,3 +75,26 @@ test('applyDshPetConfirmPatches 写入脚本并改 html/input/renderer', () => {
   const b = applyDshPetConfirmPatches({ roots: [root], token: 'tokentokentoken12' })
   assert.ok(b.results.every((r) => !r.changed || r.reason === 'unchanged' || r.reason === 'already-patched'))
 })
+
+test('applyDshPetConfirmPatches 能迁移旧 glance-confirm.html', () => {
+  const root2 = mkdtempSync(join(tmpdir(), 'glance-confirm-legacy-'))
+  const helper = join(root2, 'runtime', 'electron-helper')
+  const sprite = join(helper, 'sprite')
+  mkdirSync(sprite, { recursive: true })
+  writeFileSync(join(helper, 'index.html'), [
+    '    <script src="./sprite/menu.js"></script>',
+    '    <!-- dsh-glance:confirm-bubble-v2 -->',
+    '    <script src="./sprite/glance-confirm.js"></script>',
+    '    <script src="./events.js"></script>',
+    '',
+  ].join('\n'), 'utf8')
+  writeFileSync(join(sprite, 'input.js'), 'ok\n', 'utf8')
+  writeFileSync(join(helper, 'renderer.js'), 'ok\n', 'utf8')
+  const a = applyDshPetConfirmPatches({ roots: [root2], token: 'tokentokentoken12' })
+  assert.equal(a.ok, true)
+  const html = readFileSync(join(helper, 'index.html'), 'utf8')
+  assert.ok(html.includes(CONFIRM_SCRIPT_NAME))
+  assert.ok(html.includes(CONFIRM_PATCH_MARK))
+  assert.ok(!html.includes('glance-confirm.js'))
+  rmSync(root2, { recursive: true, force: true })
+})

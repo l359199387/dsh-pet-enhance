@@ -43,6 +43,7 @@ function lastUserMessage(messages) {
  *   },
  *   classify?: typeof classifyUtterance,
  *   getPreferredSessionId?: () => string | null,
+ *   wasHandledByChatGate?: (user: { content: string, ts: number }) => boolean,
  * }} options
  */
 export function createPetRouter(options) {
@@ -191,6 +192,11 @@ export function createPetRouter(options) {
     lastTs = user.ts
     lastContent = user.content
     if (isClassifyEcho(user.content)) return
+    // chat-gate 已接手的任务/看屏/教学，避免 pet-router 再跑一遍
+    if (options.wasHandledByChatGate?.(user)) {
+      log(`pet-router：跳过（chat-gate 已接手）← ${user.content.slice(0, 40)}`)
+      return
+    }
 
     busy = true
     try {

@@ -37,6 +37,8 @@ import { getLocale, isActEnabled, loadSettings, saveSettings } from './settings.
 import { localeTables, menuLabelVariants, t } from './i18n.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
+import { applyDshPetChatGatePatches } from './patch-dsh-pet-chat-gate.js'
+import { runChatGate } from './chat-gate.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { c3BudgetExceededBubble } from './c3-task.js'
@@ -181,6 +183,57 @@ async function handle(req, res, connection, log, state) {
       locale,
       tables: localeTables(),
     })
+    return
+  }
+
+  if (route === '/chat-gate') {
+    if (method !== 'POST') {
+      send(res, 405, { ok: false, rejected: ['只支持 POST'] })
+      return
+    }
+    let raw
+    try {
+      raw = await readBody(req)
+    } catch (e) {
+      send(res, e?.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { ok: false, rejected: [String(e?.message ?? e)] })
+      return
+    }
+    let body
+    try {
+      body = raw ? JSON.parse(raw) : {}
+    } catch {
+      send(res, 400, { ok: false, rejected: ['JSON 无法解析'] })
+      return
+    }
+    const text = String(body?.text ?? '').trim()
+    if (!text) {
+      send(res, 200, { ok: true, takeover: false, label: 'chat' })
+      return
+    }
+    if (!state.chatGateReady) {
+      // 桥未就绪：不接管，避免丢消息
+      send(res, 200, { ok: true, takeover: false, label: 'chat', via: 'bridge-not-ready' })
+      return
+    }
+    try {
+      const result = await runChatGate({
+        ctx: state.chatGateCtx || {},
+        home: glanceHome(),
+        text,
+        log,
+        chatBridge: state.chatBridge,
+        agentBridge: state.agentBridge,
+        teachBridge: state.teachBridge,
+        getPreferredSessionId: () => state.lastSessionId,
+        markHandled: (content) => {
+          state.chatGateHandled = { content: String(content), at: Date.now() }
+        },
+      })
+      send(res, 200, result)
+    } catch (e) {
+      log(`chat-gate 失败：${e?.message ?? e}`)
+      send(res, 200, { ok: true, takeover: false, label: 'chat', via: 'error' })
+    }
     return
   }
 
@@ -604,26 +657,27 @@ function installDshPetBridge(ctx, log, state, disposers) {
     setDshPetBaseUrl(origin)
     log(`dsh-pet bridge origin=${origin}`)
 
-    // 桌面独立窗：网页点不到 → 双击开对话 + 头顶确认气泡补丁，并请 Helper 重载。
+    // 桌面独立窗：双击开对话 + 头顶确认；chatWithPet 闸门抑制任务抢答。
     try {
       const token = ensureDesktopToken(glanceHome())
       const clickPatched = applyDshPetClickPatches()
       const confirmPatched = applyDshPetConfirmPatches({ token })
-      const all = [...clickPatched.results, ...confirmPatched.results]
+      const chatGatePatched = applyDshPetChatGatePatches()
+      const all = [...clickPatched.results, ...confirmPatched.results, ...chatGatePatched.results]
       const hit = all.filter((r) => r.changed || r.reason === 'already-patched' || r.reason === 'unchanged')
       if (hit.length) {
-        log(`dsh-pet 桌面补丁：${hit.map((r) => r.reason).join(', ')}`)
+        log(`dsh-pet 补丁：${hit.map((r) => `${r.reason}`).join(', ')}`)
       }
       if (all.some((r) => r.changed)) {
         callDshPet('/reload', { method: 'POST', timeoutMs: 5_000 })
           .then((r) => {
-            if (r.ok) log('已请求重载 dsh-pet 桌面 Helper（对话/确认补丁生效）')
+            if (r.ok) log('已请求重载 dsh-pet 桌面 Helper（确认/对话补丁生效）')
             else log(`重载桌面 Helper 未成功：${r.error || r.status || JSON.stringify(r.data)}`)
           })
           .catch((e) => log(`重载桌面 Helper 异常：${e?.message ?? e}`))
       }
     } catch (e) {
-      log(`dsh-pet 桌面补丁失败：${e?.message ?? e}`)
+      log(`dsh-pet 补丁失败：${e?.message ?? e}`)
     }
 
     let stopped = false
@@ -696,6 +750,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
       },
     })
     state.teachBridge = teach
+    state.chatBridge = bridge
+    state.agentBridge = agent
+    state.chatGateCtx = ctx
+    state.chatGateReady = true
     const router = createPetRouter({
       ctx,
       home,
@@ -704,6 +762,12 @@ function installDshPetBridge(ctx, log, state, disposers) {
       agentBridge: agent,
       teachBridge: teach,
       getPreferredSessionId: () => state.lastSessionId,
+      wasHandledByChatGate: (user) => {
+        const h = state.chatGateHandled
+        if (!h?.content) return false
+        if (h.content !== user.content) return false
+        return Date.now() - Number(h.at || 0) < 90_000
+      },
     })
 
     const syncLive = () => {
@@ -732,15 +796,10 @@ function installDshPetBridge(ctx, log, state, disposers) {
       return false
     }
 
-    /** 挂起确认：刷新「好/不要」菜单项 + 说话气泡（头顶 UI 可能在桌面窗/网页另一处）。 */
+    /** 挂起确认：只刷新右键「好/不要」；头顶按钮由 Helper 确认补丁负责，不另发说话冒泡。 */
     state.onConfirmPending = (pending) => {
       pushMenu().catch(() => {})
-      if (!pending?.id) return
-      const summary = String(pending.summary || '').trim().slice(0, 120) || '需要确认'
-      broadcastToDshPet(
-        t(locale, 'bubble.confirmAsk', { summary }),
-        { duration: 50_000 },
-      ).catch(() => {})
+      void pending
     }
     state.onLocaleChange = async (nextLocale) => {
       locale = String(nextLocale || locale)
@@ -950,6 +1009,12 @@ export async function apply(ctx) {
     rememberedConfirms: new Set(),
     confirmGate: null,
     onConfirmPending: null,
+    chatGateReady: false,
+    chatGateHandled: null,
+    chatGateCtx: null,
+    chatBridge: null,
+    agentBridge: null,
+    teachBridge: null,
     _windowAt: 0,
     _dshPetAt: 0,
     _dshPet: { available: false, pets: [] },

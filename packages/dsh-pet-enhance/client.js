@@ -1329,30 +1329,9 @@ window.__ModuleLoader__.load({
           )
           : null)
 
-      // 已装 dsh-pet：不抢形象；双击 → 原生「对话」弹窗；备援钮发 Ctrl+Shift+L。
+      // 已装 dsh-pet：完全让位给小蓝鲸；不渲染「对话」备援钮，确认只走宠物头顶（Helper 补丁）。
       if (proxy) {
-        const dock = clampDockPos()
-        return h(
-          Fragment,
-          null,
-          h(
-            'div',
-            {
-              ref: rootRef,
-              className: 'dg-root',
-              'data-mode': 'dock',
-              style: { left: `${dock.x}px`, top: `${dock.y}px` },
-            },
-            h('button', {
-              type: 'button',
-              className: 'dg-dock',
-              title: '打开 dsh-pet 对话（同 Ctrl+Shift+L / 右键「对话」）',
-              'aria-label': '打开桌宠对话',
-              onClick: () => openDshPetNativeChat('global'),
-            }, '对话'),
-          ),
-          confirmCard,
-        )
+        return null
       }
 
       return h(
