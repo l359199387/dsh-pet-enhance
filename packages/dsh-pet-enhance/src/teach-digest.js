@@ -1,5 +1,5 @@
 /**
- * 教学 digest 省 token：变化分去重 + 多帧拼一张再喂模型。
+ * 教学 digest 省 token：变化分去重 + 按 4 帧拆成多张 2×2 拼图再喂模型。
  * 本地盘上的逐帧仍全留；只压缩「理解那一次」的附图成本。
  *
  * @module src/teach-digest.js
@@ -9,8 +9,10 @@ import { formatMouseButtonLabel } from './teach-store.js'
 
 /** 连续两帧变化分低于此值视为重复（与选帧 dupMin 同口径）。 */
 export const DIGEST_DEDUP_MIN = 8
-/** 拼图最多格数（= 喂模型前抽样上限）。 */
+/** 喂模型前抽样上限（可拆成多张 2×2）。 */
 export const DIGEST_MOSAIC_MAX = 8
+/** 每张拼图最多几格（与 mosaic.MAX_FRAMES / 盯屏 2×2 对齐）。 */
+export const DIGEST_SHEET_FRAMES = 4
 export const DIGEST_MOSAIC_QUALITY = 'low'
 const CLICK_CROP_SIZE = 400
 
@@ -66,7 +68,6 @@ export async function dedupeDigestItems(items, opts = {}) {
     }
 
     if (score < minScore) {
-      // 重复：优先留下有点击/滑轮元数据的那张
       const prevEvidence = Boolean(prev.click || prev.scroll)
       const curEvidence = Boolean(cur.click || cur.scroll)
       if (!prevEvidence && curEvidence) {
@@ -80,13 +81,82 @@ export async function dedupeDigestItems(items, opts = {}) {
   return out
 }
 
+/** 按每张上限切成多批（默认 4 → 多张 2×2）。 */
+export function chunkFramesForSheets(frames, sheetSize = DIGEST_SHEET_FRAMES) {
+  const list = Array.isArray(frames) ? frames : []
+  const size = Math.max(1, Math.trunc(Number(sheetSize) || DIGEST_SHEET_FRAMES))
+  const out = []
+  for (let i = 0; i < list.length; i += size) {
+    out.push(list.slice(i, i + size))
+  }
+  return out
+}
+
 /**
- * 均匀抽样 → 去重 → 拼图。失败则退回多图列表。
+ * @param {object[]} batch
+ * @param {number} indexBase 全局格号起点（0-based）
+ * @param {number} sheetIndex 0-based
+ * @param {number} sheetTotal
+ * @param {string} quality
+ * @param {{ call: Function }} sidecar
+ * @param {(m: string) => void} log
+ */
+async function composeOneSheet(batch, indexBase, sheetIndex, sheetTotal, quality, sidecar, log) {
+  const labels = batch.map((f, i) => cellLabel(f, indexBase + i))
+  const resp = await sidecar.call('mosaic', {
+    quality,
+    frames: batch.map((f, i) => ({
+      png: f.png.toString('base64'),
+      label: labels[i],
+    })),
+  }, 30_000)
+  if (!resp?.ok || !resp.png) {
+    log(`teach-digest 拼图#${sheetIndex + 1} 失败：${resp?.error?.message || 'no-png'}`)
+    return null
+  }
+  const png = Buffer.from(String(resp.png), 'base64')
+  const cells = batch.map((f, i) => ({
+    index: indexBase + i + 1,
+    label: labels[i],
+    role: f.role,
+    reason: f.reason,
+    file: f.file,
+    window: f.window,
+    click: f.click,
+    scroll: f.scroll,
+    imageW: f.imageW,
+    imageH: f.imageH,
+  }))
+  const n = sheetIndex + 1
+  const file = sheetTotal > 1 ? `digest-mosaic-${n}of${sheetTotal}.png` : 'digest-mosaic.png'
+  return {
+    role: 'mosaic',
+    reason: 'digest-mosaic',
+    file,
+    name: file,
+    png,
+    mosaic: true,
+    sheetIndex: n,
+    sheetTotal,
+    cells,
+    sourceCount: batch.length,
+    width: Number(resp.w) || null,
+    height: Number(resp.h) || null,
+    cols: Number(resp.cols) || null,
+    rows: Number(resp.rows) || null,
+    quality,
+    tokensHint: quality === 'low' ? 222 : undefined,
+  }
+}
+
+/**
+ * 均匀抽样 → 去重 → 按 4 帧拆成多张 2×2。失败则退回多图列表。
  * @param {object[]} frameList
  * @param {{
  *   readPng: (frame: object) => Promise<Buffer | null>,
  *   sidecar?: { call: Function } | null,
  *   limit?: number,
+ *   sheetSize?: number,
  *   quality?: string,
  *   log?: (m: string) => void,
  * }} options
@@ -94,6 +164,7 @@ export async function dedupeDigestItems(items, opts = {}) {
  */
 export async function buildTeachDigestImages(frameList, options) {
   const limit = options.limit ?? DIGEST_MOSAIC_MAX
+  const sheetSize = options.sheetSize ?? DIGEST_SHEET_FRAMES
   const quality = options.quality ?? DIGEST_MOSAIC_QUALITY
   const log = options.log ?? (() => {})
   const picked = sampleFramesForDigest(frameList, limit)
@@ -112,57 +183,43 @@ export async function buildTeachDigestImages(frameList, options) {
   })
   if (!deduped.length) return []
 
-  // 无 sidecar 或仅 1 格：仍可单张交图（1 格也走 mosaic 锁 token 表）
   if (!options.sidecar || typeof options.sidecar.call !== 'function') {
     return deduped
   }
 
+  const batches = chunkFramesForSheets(deduped, sheetSize)
+  /** @type {object[]} */
+  const sheets = []
+  let indexBase = 0
   try {
-    const labels = deduped.map((f, i) => cellLabel(f, i))
-    const resp = await options.sidecar.call('mosaic', {
-      quality,
-      frames: deduped.map((f, i) => ({
-        png: f.png.toString('base64'),
-        label: labels[i],
-      })),
-    }, 30_000)
-    if (!resp?.ok || !resp.png) {
-      log(`teach-digest 拼图失败，退回多图：${resp?.error?.message || 'no-png'}`)
-      return deduped
+    for (let s = 0; s < batches.length; s += 1) {
+      const batch = batches[s]
+      const sheet = await composeOneSheet(
+        batch,
+        indexBase,
+        s,
+        batches.length,
+        quality,
+        options.sidecar,
+        log,
+      )
+      if (!sheet) {
+        log('teach-digest 拼图失败，退回多图')
+        return deduped
+      }
+      sheets.push(sheet)
+      indexBase += batch.length
     }
-    const png = Buffer.from(String(resp.png), 'base64')
-    const cells = deduped.map((f, i) => ({
-      index: i + 1,
-      label: labels[i],
-      role: f.role,
-      reason: f.reason,
-      file: f.file,
-      window: f.window,
-      click: f.click,
-      scroll: f.scroll,
-      imageW: f.imageW,
-      imageH: f.imageH,
-    }))
-    return [{
-      role: 'mosaic',
-      reason: 'digest-mosaic',
-      file: 'digest-mosaic.png',
-      name: 'digest-mosaic.png',
-      png,
-      mosaic: true,
-      cells,
-      sourceCount: deduped.length,
-      width: Number(resp.w) || null,
-      height: Number(resp.h) || null,
-      cols: Number(resp.cols) || null,
-      rows: Number(resp.rows) || null,
-      quality,
-      tokensHint: quality === 'low' ? 222 : undefined,
-    }]
   } catch (e) {
     log(`teach-digest 拼图异常，退回多图：${e?.message ?? e}`)
     return deduped
   }
+
+  log(
+    `teach-digest 拼图完成：${deduped.length} 帧 → ${sheets.length} 张`
+    + `（每张最多 ${sheetSize} 格）`,
+  )
+  return sheets
 }
 
 function cellLabel(frame, index) {
@@ -179,45 +236,67 @@ function cellLabel(frame, index) {
  */
 export function describeDigestImagesForPrompt(images) {
   if (!images?.length) return ''
-  if (images.length === 1 && images[0].mosaic && Array.isArray(images[0].cells)) {
-    return describeMosaicForPrompt(images[0])
+  const mosaics = images.filter((img) => img?.mosaic && Array.isArray(img.cells))
+  if (mosaics.length === images.length && mosaics.length > 0) {
+    return describeMosaicSheetsForPrompt(mosaics)
   }
-  // 与旧 describeClickFramesForPrompt 同形，避免循环依赖处再 import
   return describeMultiForPrompt(images)
 }
 
-function describeMosaicForPrompt(mosaic) {
+function describeMosaicSheetsForPrompt(mosaics) {
+  const totalCells = mosaics.reduce(
+    (n, m) => n + (Number(m.sourceCount) || m.cells?.length || 0),
+    0,
+  )
+  const sheetN = mosaics.length
   const lines = [
-    `附图是 1 张拼图（${mosaic.cols || '?'}×${mosaic.rows || '?'}，约 ${mosaic.tokensHint || '222'} token），`
-    + `内含 ${mosaic.sourceCount || mosaic.cells.length} 格证据；请按「格号」看，不要把整张当单一截图。`,
+    sheetN > 1
+      ? `附图共 ${sheetN} 张拼图（按时间顺序，多为 2×2，合计约 ${sheetN * 222} token），`
+        + `内含 ${totalCells} 格证据；请按「图号 + 格号」看，不要把某张当单一截图。`
+      : `附图是 1 张拼图（${mosaics[0].cols || '?'}×${mosaics[0].rows || '?'}，约 ${mosaics[0].tokensHint || '222'} token），`
+        + `内含 ${totalCells} 格证据；请按「格号」看，不要把整张当单一截图。`,
   ]
-  for (const cell of mosaic.cells) {
-    const tag = `格${cell.index}「${cell.label}」`
-    if (cell.role === 'click' && cell.click) {
-      const c = cell.click
-      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const btn = formatMouseButtonLabel(c.button)
-      const act = c.action === 'double_click' ? `${btn}双击` : `${btn}点击`
+  for (const mosaic of mosaics) {
+    const sheetTag = sheetN > 1 ? `图${mosaic.sheetIndex || 1}/${sheetN}` : null
+    if (sheetTag) {
       lines.push(
-        `${tag}：步骤#${c.eventI} ${act}；请在**本格内**看坐标 (${c.imageX},${c.imageY})，`
-        + `原小图 ${size}（勿用整屏坐标、勿用拼图全局坐标）`
-        + (cell.window ? ` @「${String(cell.window).slice(0, 40)}」` : ''),
+        `${sheetTag}（${mosaic.cols || '?'}×${mosaic.rows || '?'}，${mosaic.sourceCount || mosaic.cells.length} 格）：`,
       )
-    } else if (cell.role === 'scroll' && cell.scroll) {
-      const c = cell.scroll
-      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const phase = c.phase === 'start' ? '滚动开始' : '滚动结束'
-      const axis = c.horizontal ? '横向' : '纵向'
-      lines.push(
-        `${tag}：步骤#${c.eventI} 滑轮${axis}${phase} δ=${c.delta || 0}；`
-        + `光标在**本格内** (${c.imageX},${c.imageY})，原小图 ${size}`
-        + (cell.window ? ` @「${String(cell.window).slice(0, 40)}」` : ''),
-      )
-    } else {
-      lines.push(`${tag}：上下文/${cell.reason || cell.role}（辅助，非点击落点）`)
+    }
+    for (const cell of mosaic.cells) {
+      lines.push(formatCellLine(cell, sheetTag))
     }
   }
   return lines.join('\n')
+}
+
+function formatCellLine(cell, sheetTag) {
+  const tag = sheetTag
+    ? `${sheetTag}·格${cell.index}「${cell.label}」`
+    : `格${cell.index}「${cell.label}」`
+  if (cell.role === 'click' && cell.click) {
+    const c = cell.click
+    const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+    const btn = formatMouseButtonLabel(c.button)
+    const act = c.action === 'double_click' ? `${btn}双击` : `${btn}点击`
+    return (
+      `${tag}：步骤#${c.eventI} ${act}；请在**本格内**看坐标 (${c.imageX},${c.imageY})，`
+      + `原小图 ${size}（勿用整屏坐标、勿用拼图全局坐标）`
+      + (cell.window ? ` @「${String(cell.window).slice(0, 40)}」` : '')
+    )
+  }
+  if (cell.role === 'scroll' && cell.scroll) {
+    const c = cell.scroll
+    const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
+    const phase = c.phase === 'start' ? '滚动开始' : '滚动结束'
+    const axis = c.horizontal ? '横向' : '纵向'
+    return (
+      `${tag}：步骤#${c.eventI} 滑轮${axis}${phase} δ=${c.delta || 0}；`
+      + `光标在**本格内** (${c.imageX},${c.imageY})，原小图 ${size}`
+      + (cell.window ? ` @「${String(cell.window).slice(0, 40)}」` : '')
+    )
+  }
+  return `${tag}：上下文/${cell.reason || cell.role}（辅助，非点击落点）`
 }
 
 function describeMultiForPrompt(images) {
@@ -260,11 +339,15 @@ function describeMultiForPrompt(images) {
   return lines.join('\n')
 }
 
-/** digest 实际「证据格数」（拼图时用 cells，否则用张数）。 */
+/** digest 实际「证据格数」（拼图时累加 cells，否则用张数）。 */
 export function digestEvidenceCount(images) {
   if (!images?.length) return 0
-  if (images.length === 1 && images[0].mosaic) {
-    return Number(images[0].sourceCount) || images[0].cells?.length || 1
+  const mosaics = images.filter((img) => img?.mosaic)
+  if (mosaics.length === images.length && mosaics.length > 0) {
+    return mosaics.reduce(
+      (n, m) => n + (Number(m.sourceCount) || m.cells?.length || 0),
+      0,
+    )
   }
   return images.length
 }

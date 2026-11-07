@@ -514,7 +514,7 @@ export function createFrameRecorder(options) {
   }
 
   /**
-   * 专供 digest：均匀抽样 → 变化分去重 → 拼成 1 张（省 token）。
+   * 专供 digest：均匀抽样 → 变化分去重 → 按 4 帧拆成多张 2×2（省 token）。
    * 拼图失败时退回最多 `limit` 张分图。
    */
   async function loadDigestImages(limit = MAX_DIGEST_IMAGES) {

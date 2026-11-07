@@ -13,12 +13,16 @@ import { buildC3DisciplineBlock } from './c3-task.js'
  */
 export function buildTeachSmartDigestPrompt(goal, narrative, images) {
   const list = Array.isArray(images) ? images : null
-  const mosaic = list?.[0]?.mosaic ? list[0] : null
-  const cellCount = mosaic
-    ? (Number(mosaic.sourceCount) || mosaic.cells?.length || 1)
+  const mosaics = list?.filter((img) => img?.mosaic) || []
+  const allMosaic = list?.length > 0 && mosaics.length === list.length
+  const cellCount = allMosaic
+    ? mosaics.reduce((n, m) => n + (Number(m.sourceCount) || m.cells?.length || 0), 0)
     : (list ? list.length : Number(images) || 0)
-  const attachLine = mosaic
-    ? `附图 1 张拼图（约 222 token），内含 ${cellCount} 格证据（按格号看点击坐标；不是必须逐步复刻的脚本）。`
+  const attachLine = allMosaic
+    ? (mosaics.length > 1
+      ? `附图 ${mosaics.length} 张拼图（多为 2×2，合计约 ${mosaics.length * 222} token），`
+        + `内含 ${cellCount} 格证据（按图号+格号看点击坐标；不是必须逐步复刻的脚本）。`
+      : `附图 1 张拼图（约 222 token），内含 ${cellCount} 格证据（按格号看点击坐标；不是必须逐步复刻的脚本）。`)
     : `附图 ${cellCount} 张（证据，不是必须逐步复刻的脚本）。`
   return (
     `【教学理解·仅学习·要变通】目标草稿：「${String(goal || '').slice(0, 80)}」。`

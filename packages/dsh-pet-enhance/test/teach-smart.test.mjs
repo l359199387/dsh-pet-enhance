@@ -78,3 +78,13 @@ test('smart digest prompt：拼图时写 1 张与格数', () => {
   assert.match(p, /4 格/)
   assert.match(p, /222/)
 })
+
+test('smart digest prompt：多张 2×2 拼图', () => {
+  const p = buildTeachSmartDigestPrompt('进B站', '1. 点击', [
+    { mosaic: true, sourceCount: 4, cells: [{}, {}, {}, {}] },
+    { mosaic: true, sourceCount: 4, cells: [{}, {}, {}, {}] },
+  ])
+  assert.match(p, /2 张拼图/)
+  assert.match(p, /8 格/)
+  assert.match(p, /图号/)
+})

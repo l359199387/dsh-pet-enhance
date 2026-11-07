@@ -476,7 +476,11 @@ export function createTeachBridge(options) {
     const preferred = options.getPreferredSessionId?.() ?? null
     const askOnce = async (imageList) => {
       const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
-      const maxImages = imageList.some((img) => img?.mosaic) ? 1 : MAX_DIGEST_IMAGES
+      // 多张 2×2 拼图分张交给模型（与盯屏一致）；不再强制只交 1 张
+      const maxImages = Math.min(
+        MAX_DIGEST_IMAGES,
+        Math.max(1, imageList.length),
+      )
       const woken = await wake(options.ctx, {
         text: prompt,
         preferredId: preferred,

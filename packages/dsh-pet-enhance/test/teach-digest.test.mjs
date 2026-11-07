@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   buildTeachDigestImages,
+  chunkFramesForSheets,
   dedupeDigestItems,
   describeDigestImagesForPrompt,
   digestEvidenceCount,
@@ -22,6 +23,15 @@ test('sampleFramesForDigest 保首尾', () => {
   assert.ok(picked.length <= 8)
 })
 
+test('chunkFramesForSheets：按 4 切开', () => {
+  const frames = Array.from({ length: 8 }, (_, i) => ({ i }))
+  const chunks = chunkFramesForSheets(frames, 4)
+  assert.equal(chunks.length, 2)
+  assert.equal(chunks[0].length, 4)
+  assert.equal(chunks[1].length, 4)
+  assert.deepEqual(chunkFramesForSheets(frames.slice(0, 5), 4).map((c) => c.length), [4, 1])
+})
+
 test('dedupeDigestItems：字节相同则去重，保留有 click 的', async () => {
   const a = { role: 'key', png: Buffer.from(tinyPng), file: 'a.png' }
   const b = {
@@ -35,14 +45,13 @@ test('dedupeDigestItems：字节相同则去重，保留有 click 的', async ()
   assert.equal(out[0].role, 'click')
 })
 
-test('buildTeachDigestImages：有 mosaic sidecar → 1 张拼图', async () => {
+test('buildTeachDigestImages：4 帧 → 1 张 2×2', async () => {
   const frames = [
     { role: 'click', file: '0.png', click: { eventI: 0, imageX: 1, imageY: 2, imageW: 400, imageH: 400 } },
     { role: 'click', file: '1.png', click: { eventI: 1, imageX: 3, imageY: 4, imageW: 400, imageH: 400 } },
     { role: 'click', file: '2.png', click: { eventI: 2, imageX: 5, imageY: 6, imageW: 400, imageH: 400 } },
     { role: 'click', file: '3.png', click: { eventI: 3, imageX: 7, imageY: 8, imageW: 400, imageH: 400 } },
   ]
-  // 不同 buffer，避免去重掉
   const pngs = frames.map((_, i) => Buffer.concat([tinyPng, Buffer.from([i])]))
   const sidecar = {
     async call(op, body) {
@@ -80,6 +89,55 @@ test('buildTeachDigestImages：有 mosaic sidecar → 1 张拼图', async () => 
   assert.match(legend, /勿用拼图全局坐标/)
 })
 
+test('buildTeachDigestImages：8 帧 → 2 张 2×2（不再丢后 4 帧）', async () => {
+  const frames = Array.from({ length: 8 }, (_, i) => ({
+    role: 'click',
+    file: `${i}.png`,
+    click: { eventI: i, imageX: i, imageY: i, imageW: 400, imageH: 400 },
+  }))
+  const pngs = frames.map((_, i) => Buffer.concat([tinyPng, Buffer.from([i])]))
+  let mosaicCalls = 0
+  const sidecar = {
+    async call(op, body) {
+      if (op === 'diff') return { ok: true, score: 50 }
+      if (op === 'mosaic') {
+        mosaicCalls += 1
+        assert.ok(body.frames.length <= 4)
+        return {
+          ok: true,
+          png: tinyPng.toString('base64'),
+          w: 798,
+          h: 462,
+          cols: 2,
+          rows: 2,
+        }
+      }
+      return { ok: false }
+    },
+  }
+  let i = 0
+  const imgs = await buildTeachDigestImages(frames, {
+    sidecar,
+    async readPng() {
+      return pngs[i++]
+    },
+  })
+  assert.equal(mosaicCalls, 2)
+  assert.equal(imgs.length, 2)
+  assert.equal(imgs[0].sheetIndex, 1)
+  assert.equal(imgs[1].sheetIndex, 2)
+  assert.equal(imgs[0].sheetTotal, 2)
+  assert.equal(digestEvidenceCount(imgs), 8)
+  assert.equal(imgs[0].cells[0].index, 1)
+  assert.equal(imgs[1].cells[0].index, 5)
+
+  const legend = describeDigestImagesForPrompt(imgs)
+  assert.match(legend, /2 张拼图/)
+  assert.match(legend, /图1\/2/)
+  assert.match(legend, /图2\/2/)
+  assert.match(legend, /格5/)
+})
+
 test('无 sidecar 时退回多图', async () => {
   const frames = [
     { role: 'click', file: '0.png', click: { eventI: 0, imageX: 1, imageY: 2 } },
@@ -90,7 +148,6 @@ test('无 sidecar 时退回多图', async () => {
       return Buffer.from(tinyPng)
     },
   })
-  // 两张相同 png 会被去重成 1
   assert.equal(imgs.length, 1)
   assert.equal(imgs[0].mosaic, undefined)
 })
