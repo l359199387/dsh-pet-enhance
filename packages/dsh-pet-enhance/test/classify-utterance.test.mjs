@@ -50,7 +50,22 @@ test('localClassify 兜底：明确口令仍可用', () => {
   assert.equal(localClassify('执行一下记录每日心情'), 'task')
   assert.equal(localClassify('用你学会的去刷B站'), 'task')
   assert.equal(localClassify('新开一个窗口聊天'), 'new_session')
+  assert.equal(localClassify('开启一个新的窗口'), 'new_session')
   assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_end')
+})
+
+test('classifyUtterance：新开窗本地优先，不叫醒模型', async () => {
+  let woke = 0
+  const r = await classifyUtterance({ fake: true }, '开启一个新的窗口', {
+    wake: async () => {
+      woke += 1
+      return { ok: true, sessionId: 's' }
+    },
+    waitReply: async () => ({ ok: true, text: 'chat' }),
+  })
+  assert.equal(r.label, 'new_session')
+  assert.equal(r.via, 'local')
+  assert.equal(woke, 0)
 })
 
 test('classifyUtterance：默认优先模型分流', async () => {

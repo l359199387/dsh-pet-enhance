@@ -79,7 +79,7 @@ export function buildClassifyPrompt(userText, { teaching = false, learnedGoals =
     + 'glance=看屏幕/截图/盯着看一会儿；'
     + 'teach=用户要演示教你；teach_end=演示结束；'
     + 'task=要你现在操作电脑，或执行下面已学会的某件事（说法可任意，不必固定口令）；'
-    + 'new_session=新开聊天窗口/新会话。'
+    + 'new_session=新开/开启/打开一个新的聊天窗口或新会话（不是闲聊）。'
     + `已学会：${learned}。`
     + `用户：「${clipped}」`
   )
@@ -117,24 +117,37 @@ export function isSkillStatusQuestion(text) {
 }
 
 /**
- * 本地分流（兜底）：只认极明确口令；闲聊 vs 干活主要交给模型。
+ * 极明确口令：本地优先，不交给模型（避免「开启新窗口」被判成闲聊）。
+ * @returns {string | null}
+ */
+export function localClassifyClear(text, { teaching = false } = {}) {
+  const s = String(text ?? '').trim()
+  if (!s) return null
+  if (teaching) {
+    if (isTeachEndIntent(s) || /按刚才教的|照着做|开始做|你可以去做/.test(s)) return 'teach_end'
+    return null
+  }
+  if (isTeachEndIntent(s)) return 'teach_end'
+  if (isTeachStartIntent(s)) return 'teach'
+  if (isNewSessionIntent(s)) return 'new_session'
+  if (isGlanceIntent(s)) return 'glance'
+  return null
+}
+
+/**
+ * 本地分流（兜底）：明确口令 + 少量执行启发式；闲聊 vs 干活主要交给模型。
  * @param {string} text
  * @param {{ teaching?: boolean }} [opts]
  */
 export function localClassify(text, { teaching = false } = {}) {
   const s = String(text ?? '').trim()
   if (!s) return 'chat'
-  if (teaching) {
-    if (isTeachEndIntent(s) || /按刚才教的|照着做|开始做|你可以去做/.test(s)) return 'teach_end'
-    return 'chat'
-  }
-  if (isTeachEndIntent(s)) return 'teach_end'
-  if (isTeachStartIntent(s)) return 'teach'
-  if (isNewSessionIntent(s)) return 'new_session'
+  const clear = localClassifyClear(s, { teaching })
+  if (clear) return clear
+  if (teaching) return 'chat'
   if (isSkillStatusQuestion(s)) return 'chat'
   // 兜底：仍认一批执行/操作口令，避免模型失败时全变闲聊
   if (isRunAutomationIntent(s) || isComputerTaskIntent(s)) return 'task'
-  if (isGlanceIntent(s)) return 'glance'
   return 'chat'
 }
 
@@ -192,6 +205,13 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
   const text = String(userText ?? '').trim()
   if (!text || isClassifyEcho(text)) {
     return { label: 'chat', via: 'local' }
+  }
+
+  // 教/看屏/新开窗等明确口令：本地优先，避免模型误判闲聊
+  const clear = localClassifyClear(text, { teaching })
+  if (clear) {
+    log(`classify → ${clear}（local-clear）`)
+    return { label: clear, via: 'local' }
   }
 
   const prompt = buildClassifyPrompt(text, {

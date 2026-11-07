@@ -196,11 +196,13 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
   }
 
   const modeStandard = applyStandardTranscriptMode(ctx)
+  const revealed = revealWorkspaceSession(ctx, sessionId)
   log(
     `session-spawn：新会话 ${sessionId}`
     + (workspace?.id ? ` ws=${workspace.id}` : '')
     + (permission ? ` perm=${permission}${permissionCopied ? '✓' : '✗'}` : '')
-    + (modeStandard ? ' mode=standard' : ''),
+    + (modeStandard ? ' mode=standard' : '')
+    + (revealed ? ' revealed' : ' reveal-skip'),
   )
 
   return {
@@ -210,6 +212,25 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
     permission,
     permissionCopied,
     modeStandard,
+    revealed,
     workspaceId: workspace?.id || null,
   }
+}
+
+/**
+ * 把新会话亮到前台（否则 create 了用户也看不见）。
+ * @returns {boolean}
+ */
+export function revealWorkspaceSession(ctx, sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return false
+  const ui = serviceOf(ctx, 'uiWorkspace')
+  if (!ui) return false
+  try {
+    if (typeof ui.openSession === 'function') {
+      ui.openSession(sid)
+      return true
+    }
+  } catch { /* ignore */ }
+  return false
 }

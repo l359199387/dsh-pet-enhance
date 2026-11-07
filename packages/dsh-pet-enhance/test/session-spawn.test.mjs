@@ -90,12 +90,20 @@ test('openNewWorkspaceSession：复制权限并切新 id', async () => {
     },
   }
 
-  const r = await openNewWorkspaceSession(ctx, { preferredId: 'old' })
+  const opened = []
+  const r = await openNewWorkspaceSession({
+    get(name) {
+      if (name === 'uiWorkspace') return { openSession: (id) => { opened.push(id) } }
+      return ctx.get(name)
+    },
+  }, { preferredId: 'old' })
   assert.equal(r.ok, true)
   assert.equal(r.sessionId, 'new')
   assert.equal(r.permission, 'danger-full-access')
   assert.equal(r.permissionCopied, true)
   assert.equal(r.modeStandard, true)
+  assert.equal(r.revealed, true)
   assert.deepEqual(modes, ['standard'])
+  assert.deepEqual(opened, ['new'])
   assert.equal(readSessionPermissionPreset(ctx, 'new'), 'danger-full-access')
 })
