@@ -107,6 +107,40 @@ export function mergeTeachQuestions(base, mandatory) {
 }
 
 /**
+ * 是否走「叫醒模型变通」路径。
+ * 用户明确点「不要」变通 / approach=replay 时必须本地回放，不能因有 summary 就 smart。
+ *
+ * @param {object} playbook
+ * @param {object | null | undefined} [learnMeta]
+ */
+export function shouldUseSmartRun(playbook, learnMeta = null) {
+  const denied = [
+    ...(Array.isArray(learnMeta?.understanding?.denied) ? learnMeta.understanding.denied : []),
+    ...(Array.isArray(playbook?.strategy?.denied) ? playbook.strategy.denied : []),
+    ...(Array.isArray(playbook?.understanding?.denied) ? playbook.understanding.denied : []),
+  ].map((x) => String(x || ''))
+  if (denied.includes('fast-ok') || denied.includes('adapt')) return false
+
+  const approach = String(
+    learnMeta?.understanding?.approach
+    || playbook?.approach
+    || playbook?.strategy?.approach
+    || playbook?.understanding?.approach
+    || '',
+  ).trim().toLowerCase()
+  if (approach === 'replay') return false
+
+  const fastPlan = String(
+    learnMeta?.understanding?.fastPlan
+    || playbook?.strategy?.fastPlan
+    || '',
+  ).trim()
+  if (approach === 'smart') return true
+  // 有明确快捷路径才 smart；仅有理解摘要不够格（否则 replay 也会被抬成乱点）
+  return Boolean(fastPlan)
+}
+
+/**
  * 执行时叫醒主会话的智能提示（优先快捷路径）。
  * @param {{ goal?: string, strategy?: { fastPlan?: string, summary?: string }, id?: string }} playbook
  */

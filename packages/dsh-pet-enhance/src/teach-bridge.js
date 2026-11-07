@@ -56,6 +56,7 @@ import { wakeSession, waitAssistantReply } from './wake-session.js'
 import { prepareFreshRunSession } from './session-spawn.js'
 import {
   buildSmartRunPrompt,
+  shouldUseSmartRun,
   buildTeachFollowupQuestions,
   buildTeachSmartDigestPrompt,
   mergeTeachQuestions,
@@ -261,14 +262,37 @@ function stepToActArgs(step, sessionId) {
   if (step.action === 'key') {
     return { action: 'key', keys: step.keys, reason: step.reason || 'teach-script', _teachReplay: true }
   }
+  if (step.action === 'scroll') {
+    return {
+      action: 'scroll',
+      x: step.hint?.x ?? step.x,
+      y: step.hint?.y ?? step.y,
+      delta: step.hint?.delta ?? step.delta ?? 0,
+      reason: step.reason || 'teach-script',
+      _teachReplay: true,
+    }
+  }
   return {
     action: step.action,
     x: step.hint?.x ?? step.x,
     y: step.hint?.y ?? step.y,
-    button: step.button || 'left',
+    button: step.button || step.hint?.button || 'left',
     reason: step.reason || 'teach-script',
     _teachReplay: true,
   }
+}
+
+/** 回放时能否本地 act（有坐标的点击/滚动，或脚本键入）。 */
+function canReplayStepLocally(step) {
+  if (!step) return false
+  if (step.action === 'type' || step.action === 'key') return true
+  if (step.secretRef) return true
+  if (step.action === 'click' || step.action === 'double_click' || step.action === 'scroll') {
+    const x = step.hint?.x ?? step.x
+    const y = step.hint?.y ?? step.y
+    return Number.isFinite(Number(x)) && Number.isFinite(Number(y))
+  }
+  return false
 }
 
 /**
@@ -888,11 +912,8 @@ export function createTeachBridge(options) {
       return true
     })
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
-    // 有学习理解/快捷路径 → 优先变通，不机械复刻点击坐标
-    const smart = playbook.approach === 'smart'
-      || playbook.strategy?.approach === 'smart'
-      || Boolean(fastPlan)
-      || Boolean(String(summary).trim())
+    // 仅明确 smart / 有 FAST 且用户未拒绝变通时才叫醒模型；有 summary ≠ 可以乱点
+    const smart = shouldUseSmartRun(playbook, learnMeta)
 
     if (smart) {
       const preferred = options.getPreferredSessionId?.() ?? null
@@ -955,13 +976,27 @@ export function createTeachBridge(options) {
       }
     }
 
+    // replay：按教学原顺序本地回放（点击用记录的屏幕坐标），禁止先打字后点图标
+    const orderedSteps = (playbook.steps || []).filter((s) => {
+      if (!s) return false
+      if (s.action === 'type' && !s.secretRef && isTeachNoiseTypedText(s.text)) return false
+      if (s.action === 'type' && !s.secretRef && summary && isLikelyAddressBarNoise(s.text)) {
+        return false
+      }
+      return canReplayStepLocally(s)
+    })
+    const leftoverGlance = (playbook.steps || []).filter(
+      (s) => s && !canReplayStepLocally(s) && s.mode === 'glance',
+    )
+
     await broadcastToDshPet(
-      `开始做「${clip(playbook.goal, 36)}」（脚本 ${scriptSteps.length} / 看屏 ${glanceSteps.length}）…`,
+      `开始回放「${clip(playbook.goal, 36)}」（本地 ${orderedSteps.length} 步`
+      + `${leftoverGlance.length ? ` / 余 ${leftoverGlance.length} 步需看屏` : ''}）…`,
       { pet, duration: 6_000 },
     )
 
-    if (typeof runAct === 'function' && scriptSteps.length) {
-      for (let i = 0; i < scriptSteps.length; i += 1) {
+    if (typeof runAct === 'function' && orderedSteps.length) {
+      for (let i = 0; i < orderedSteps.length; i += 1) {
         if (stopped) {
           await sayConclusionToPet('已急停，教学执行中断。', {
             pet,
@@ -977,9 +1012,19 @@ export function createTeachBridge(options) {
           })
           return
         }
-        const r = await runAct(stepToActArgs(scriptSteps[i], id))
+        const step = orderedSteps[i]
+        const win = String(step.window || '').trim()
+        if (win && (step.action === 'click' || step.action === 'double_click' || step.action === 'type')) {
+          await runAct({
+            action: 'focus',
+            window: win,
+            reason: 'teach-replay-focus',
+            _teachReplay: true,
+          }).catch(() => null)
+        }
+        const r = await runAct(stepToActArgs(step, id))
         if (!r?.meta?.ok) {
-          const failText = `脚本第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`
+          const failText = `回放第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`
           await sayConclusionToPet(failText, {
             pet,
             duration: 12_000,
@@ -995,8 +1040,8 @@ export function createTeachBridge(options) {
           return
         }
       }
-      if (scriptSteps.length && !glanceSteps.length) {
-        const doneText = `做完了：${clip(playbook.goal, 40)}（全脚本，未叫醒大模型）`
+      if (!leftoverGlance.length) {
+        const doneText = `做完了：${clip(playbook.goal, 40)}（按教学顺序回放，未叫醒大模型）`
         await sayConclusionToPet(doneText, {
           pet,
           duration: 12_000,
@@ -1004,21 +1049,21 @@ export function createTeachBridge(options) {
         })
         await updateTeachMeta(options.home, id, {
           status: 'done',
-          via: 'script-only',
+          via: 'replay-local',
           endedAt: new Date().toISOString(),
         })
         await recordRun(id, {
-          via: 'script-only',
+          via: 'replay-local',
           ok: true,
           summary: doneText,
           understandingSnapshot: snap,
         })
-        log(`teach：playbook 全脚本完成 ${id}`)
+        log(`teach：playbook 本地顺序回放完成 ${id}`)
         return
       }
     }
 
-    if (!glanceSteps.length) {
+    if (!orderedSteps.length && !leftoverGlance.length && !glanceSteps.length && !scriptSteps.length) {
       await sayConclusionToPet('记下了，但没有可执行步。', {
         pet,
         duration: 8_000,
@@ -1033,14 +1078,18 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 仅 glance：短提示叫醒（新开干净会话）
+    // 余下无法本地回放的 glance 步：短提示叫醒（新开干净会话）
     const preferred = options.getPreferredSessionId?.() ?? null
     const prepared = await prepareSession(options.ctx, {
       preferredId: preferred,
       onSession: options.onSession,
       log,
     })
-    const prompt = buildTeachGlancePrompt(playbook)
+    const remainder = {
+      ...playbook,
+      steps: leftoverGlance.length ? leftoverGlance : glanceSteps,
+    }
+    const prompt = buildTeachGlancePrompt(remainder)
     const woken = await wake(options.ctx, {
       text: prompt,
       sessionId: prepared.sessionId || undefined,
@@ -1050,8 +1099,8 @@ export function createTeachBridge(options) {
       const why = woken.reason || 'unknown'
       await sayConclusionToPet(
         why.includes('no-session')
-          ? '脚本步好了，但找不到主会话处理看屏步。请打开一个对话再说去做。'
-          : `脚本步好了；看屏步没叫醒主会话（${why}）。`,
+          ? '本地步好了，但找不到主会话处理剩余看屏步。请打开一个对话再说去做。'
+          : `本地步好了；剩余看屏步没叫醒主会话（${why}）。`,
         { pet, duration: 12_000, memoryPath: options.petMemoryPath },
       )
       await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why })
@@ -1064,7 +1113,7 @@ export function createTeachBridge(options) {
       return
     }
 
-    log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(playbook)}`)
+    log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(remainder)}`)
     try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
     const reply = await waitReply(options.ctx, woken.sessionId, {
       timeoutMs: 180_000,
@@ -1078,11 +1127,11 @@ export function createTeachBridge(options) {
       })
       await updateTeachMeta(options.home, id, {
         status: 'done',
-        via: 'script+glance',
+        via: 'replay+glance',
         endedAt: new Date().toISOString(),
       })
       await recordRun(id, {
-        via: 'script+glance',
+        via: 'replay+glance',
         ok: true,
         summary: reply.text,
         understandingSnapshot: snap,

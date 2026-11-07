@@ -6,6 +6,7 @@ import {
   buildTeachSmartDigestPrompt,
   mergeTeachQuestions,
   parseTeachSmartReply,
+  shouldUseSmartRun,
 } from '../src/teach-smart.js'
 import { createGlanceState } from '../src/state.js'
 import { parseTeachDigestReply } from '../src/teach-bridge.js'
@@ -51,6 +52,30 @@ test('buildSmartRunPrompt 含快捷路径', () => {
   assert.match(p, /bilibili/)
   assert.match(p, /不要机械复刻/)
   assert.match(p, /动手纪律·C3/)
+})
+
+test('shouldUseSmartRun：replay / 拒绝变通 → false；有 FAST 才 true', () => {
+  assert.equal(
+    shouldUseSmartRun({
+      approach: 'replay',
+      strategy: { approach: 'replay', summary: '很长理解', fastPlan: '' },
+    }, {
+      understanding: { approach: 'replay', summary: '很长理解', denied: ['fast-ok'] },
+    }),
+    false,
+  )
+  assert.equal(
+    shouldUseSmartRun({ approach: 'smart', strategy: { summary: '有理解无FAST' } }),
+    true,
+  )
+  assert.equal(
+    shouldUseSmartRun({ strategy: { summary: '只有摘要' } }),
+    false,
+  )
+  assert.equal(
+    shouldUseSmartRun({ strategy: { fastPlan: '打开网址' } }),
+    true,
+  )
 })
 
 test('glance state：teachEndOffer', () => {
