@@ -429,30 +429,52 @@ export async function buildRecentChatHtml(options) {
   .lightbox {
     position: fixed; inset: 0; z-index: 1000;
     display: flex; align-items: center; justify-content: center;
-    padding: 24px; background: rgba(0,0,0,.82);
+    padding: 16px; background: rgba(0,0,0,.86);
     opacity: 0; visibility: hidden; pointer-events: none;
     transition: opacity .18s ease, visibility .18s ease;
-    cursor: zoom-out;
+    cursor: default;
+    overflow: hidden;
   }
   .lightbox.is-open {
     opacity: 1; visibility: visible; pointer-events: auto;
   }
+  .lightbox-stage {
+    position: relative;
+    max-width: 100%; max-height: 100%;
+    display: flex; align-items: center; justify-content: center;
+  }
   .lightbox img {
     max-width: min(96vw, 1200px);
-    max-height: 92vh;
+    max-height: 86vh;
     object-fit: contain;
     border-radius: 4px;
     box-shadow: 0 8px 40px rgba(0,0,0,.45);
-    transform: scale(.96);
-    transition: transform .18s ease;
-    cursor: zoom-out;
     background: #111;
+    transform-origin: center center;
+    will-change: transform;
+    user-select: none;
+    -webkit-user-drag: none;
   }
-  .lightbox.is-open img { transform: scale(1); }
+  .lightbox.is-panning img { cursor: grabbing; }
+  .lightbox:not(.is-panning) img { cursor: grab; }
+  .lightbox-hud {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    pointer-events: none; user-select: none; text-align: center;
+  }
+  .lightbox-meta {
+    font-size: 12px; color: rgba(255,255,255,.88);
+    background: rgba(0,0,0,.35); border-radius: 999px; padding: 3px 10px;
+  }
   .lightbox-hint {
-    position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
-    font-size: 12px; color: rgba(255,255,255,.72);
-    pointer-events: none; user-select: none;
+    font-size: 11px; color: rgba(255,255,255,.62); line-height: 1.45;
+    max-width: 92vw;
+  }
+  .lightbox-hint kbd {
+    display: inline-block; padding: 0 5px; margin: 0 1px;
+    border: 1px solid rgba(255,255,255,.28); border-radius: 3px;
+    font: 11px/1.4 Consolas, "Segoe UI", monospace;
+    color: #fff;
   }
 </style>
 </head>
@@ -466,30 +488,114 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
 ${blocks.join('\n')}
 </main>
 <div class="lightbox" id="lightbox" hidden>
-  <img alt="大图预览"/>
-  <div class="lightbox-hint">点击空白处或按 Esc 关闭</div>
+  <div class="lightbox-stage"><img alt="大图预览"/></div>
+  <div class="lightbox-hud">
+    <div class="lightbox-meta" id="lightbox-meta">1 / 1 · 100%</div>
+    <div class="lightbox-hint">
+      <kbd>Esc</kbd>关闭 · <kbd>+</kbd><kbd>-</kbd>缩放 · <kbd>0</kbd>复位 ·
+      <kbd>←</kbd><kbd>→</kbd>切图 · <kbd>R</kbd>旋转 · 滚轮缩放 · 拖拽平移
+    </div>
+  </div>
 </div>
 <script>
 (function () {
   var box = document.getElementById('lightbox');
-  var big = box.querySelector('img');
+  var stage = box.querySelector('.lightbox-stage');
+  var big = stage.querySelector('img');
+  var meta = document.getElementById('lightbox-meta');
+  var list = [];
+  var index = 0;
+  var scale = 1;
+  var rotate = 0;
+  var tx = 0;
+  var ty = 0;
+  var dragging = false;
+  var lastX = 0;
+  var lastY = 0;
+  var MIN = 0.4;
+  var MAX = 6;
+
+  function gallery() {
+    var out = [];
+    var seen = Object.create(null);
+    document.querySelectorAll('[data-zoom] img').forEach(function (img) {
+      var src = img.currentSrc || img.src;
+      if (!src || seen[src]) return;
+      seen[src] = 1;
+      out.push(src);
+    });
+    return out;
+  }
+
+  function applyTransform(animate) {
+    big.style.transition = animate ? 'transform .16s ease' : 'none';
+    big.style.transform = 'translate(' + tx + 'px,' + ty + 'px) rotate(' + rotate + 'deg) scale(' + scale + ')';
+    var pct = Math.round(scale * 100);
+    meta.textContent = (index + 1) + ' / ' + Math.max(list.length, 1) + ' · ' + pct + '%';
+  }
+
+  function resetView(animate) {
+    scale = 1;
+    rotate = 0;
+    tx = 0;
+    ty = 0;
+    applyTransform(animate !== false);
+  }
+
+  function showAt(i, animate) {
+    if (!list.length) return;
+    index = (i + list.length) % list.length;
+    big.src = list[index];
+    resetView(animate);
+  }
+
   function openZoom(src) {
     if (!src) return;
-    big.src = src;
+    list = gallery();
+    var i = list.indexOf(src);
+    if (i < 0) {
+      list.push(src);
+      i = list.length - 1;
+    }
+    index = i;
     box.hidden = false;
+    showAt(index, false);
     requestAnimationFrame(function () { box.classList.add('is-open'); });
     document.body.classList.add('is-zooming');
   }
+
   function closeZoom() {
     box.classList.remove('is-open');
     document.body.classList.remove('is-zooming');
+    dragging = false;
+    box.classList.remove('is-panning');
     setTimeout(function () {
       if (!box.classList.contains('is-open')) {
         box.hidden = true;
         big.removeAttribute('src');
+        list = [];
       }
     }, 180);
   }
+
+  function zoomBy(factor, cx, cy) {
+    var next = Math.min(MAX, Math.max(MIN, scale * factor));
+    if (next === scale) return;
+    // 以视口中心为默认锚点；有指针则绕指针缩放
+    if (typeof cx === 'number' && typeof cy === 'number') {
+      var rect = big.getBoundingClientRect();
+      var mx = cx - (rect.left + rect.width / 2);
+      var my = cy - (rect.top + rect.height / 2);
+      var k = next / scale;
+      tx = mx - (mx - tx) * k;
+      ty = my - (my - ty) * k;
+    }
+    scale = next;
+    applyTransform(true);
+  }
+
+  function isOpen() { return box.classList.contains('is-open'); }
+
   document.addEventListener('click', function (e) {
     var hit = e.target.closest('[data-zoom]');
     if (hit && !box.contains(hit)) {
@@ -498,10 +604,60 @@ ${blocks.join('\n')}
       openZoom(thumb && (thumb.currentSrc || thumb.src));
       return;
     }
-    if (box.classList.contains('is-open') && (e.target === box || e.target === big)) closeZoom();
+    if (isOpen() && (e.target === box || e.target === stage)) closeZoom();
   });
+
+  big.addEventListener('dblclick', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (scale > 1.05) resetView(true);
+    else zoomBy(2, e.clientX, e.clientY);
+  });
+
+  big.addEventListener('pointerdown', function (e) {
+    if (!isOpen() || e.button !== 0) return;
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    box.classList.add('is-panning');
+    big.setPointerCapture(e.pointerId);
+  });
+  big.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    tx += e.clientX - lastX;
+    ty += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    applyTransform(false);
+  });
+  function endDrag(e) {
+    if (!dragging) return;
+    dragging = false;
+    box.classList.remove('is-panning');
+    try { big.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  big.addEventListener('pointerup', endDrag);
+  big.addEventListener('pointercancel', endDrag);
+
+  box.addEventListener('wheel', function (e) {
+    if (!isOpen()) return;
+    e.preventDefault();
+    var factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    zoomBy(factor, e.clientX, e.clientY);
+  }, { passive: false });
+
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeZoom();
+    if (!isOpen()) return;
+    var k = e.key;
+    if (k === 'Escape') { e.preventDefault(); closeZoom(); return; }
+    if (k === '+' || k === '=' || k === ']') { e.preventDefault(); zoomBy(1.2); return; }
+    if (k === '-' || k === '_') { e.preventDefault(); zoomBy(1 / 1.2); return; }
+    if (k === '0') { e.preventDefault(); resetView(true); return; }
+    if (k === 'r' || k === 'R') { e.preventDefault(); rotate = (rotate + 90) % 360; applyTransform(true); return; }
+    if (k === 'ArrowLeft') { e.preventDefault(); showAt(index - 1, false); return; }
+    if (k === 'ArrowRight') { e.preventDefault(); showAt(index + 1, false); return; }
+    if (k === 'ArrowUp') { e.preventDefault(); ty += 40; applyTransform(true); return; }
+    if (k === 'ArrowDown') { e.preventDefault(); ty -= 40; applyTransform(true); return; }
   });
 })();
 </script>

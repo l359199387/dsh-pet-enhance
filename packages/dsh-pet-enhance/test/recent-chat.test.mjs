@@ -95,6 +95,8 @@ test('buildRecentChatHtml 内嵌头像 data URI 与气泡', async () => {
     assert.ok(html.includes('alt="小蓝鲸"'))
     assert.ok(html.includes('id="lightbox"'))
     assert.ok(html.includes('data-zoom'))
+    assert.ok(html.includes('ArrowLeft'))
+    assert.ok(html.includes('滚轮缩放'))
     assert.ok(!html.includes('avatar-pet.svg'))
   } finally {
     await rm(home, { recursive: true, force: true })
