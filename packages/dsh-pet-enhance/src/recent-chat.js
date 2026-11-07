@@ -430,6 +430,7 @@ export async function buildRecentChatHtml(options) {
     flex-direction: column;
     gap: 22px;
   }
+  #bottom-anchor { width: 100%; height: 1px; flex: 0 0 1px; }
   .load-tip {
     text-align: center; font-size: 12px; color: var(--muted);
     padding: 10px 0 4px; min-height: 28px;
@@ -552,6 +553,7 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   <div class="load-tip" id="load-tip">上滑可查看更早聊天</div>
   <div id="top-sentinel" aria-hidden="true"></div>
   <div id="chat-list"></div>
+  <div id="bottom-anchor" aria-hidden="true"></div>
 </main>
 <div class="lightbox" id="lightbox" hidden>
   <div class="lightbox-stage"><img alt="大图预览"/></div>
@@ -574,8 +576,59 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   var sub = document.getElementById('header-sub');
   var cursor = pages.length; // 下一页要加载的是 cursor-1
   var loading = false;
-  var armed = true; // 到顶后只加载一页，需先离开顶部再上滑
+  var armed = false; // 吸底完成前不启用顶部加载
+  var sticking = false; // 打开时吸底，等布局/图片稳定
   var io = null;
+  var bottomAnchor = document.getElementById('bottom-anchor');
+
+  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
+
+  function scrollToBottom() {
+    if (bottomAnchor && bottomAnchor.scrollIntoView) {
+      bottomAnchor.scrollIntoView({ block: 'end', behavior: 'auto' });
+    }
+    var top = Math.max(
+      document.documentElement.scrollHeight,
+      document.body ? document.body.scrollHeight : 0
+    );
+    window.scrollTo(0, top);
+  }
+
+  function enableTopLoader() {
+    armed = true;
+    updateTip();
+    if (io && cursor > 0) io.observe(sentinel);
+  }
+
+  function stickBottomOnOpen() {
+    sticking = true;
+    var tries = 0;
+    var imgs = list.querySelectorAll('img');
+    for (var i = 0; i < imgs.length; i++) {
+      if (!imgs[i].complete) {
+        imgs[i].addEventListener('load', scrollToBottom, { once: true });
+        imgs[i].addEventListener('error', scrollToBottom, { once: true });
+      }
+    }
+    function tick() {
+      scrollToBottom();
+      tries += 1;
+      if (tries < 24) {
+        requestAnimationFrame(tick);
+      } else {
+        sticking = false;
+        scrollToBottom();
+        enableTopLoader();
+      }
+    }
+    requestAnimationFrame(tick);
+    setTimeout(function () {
+      if (!sticking) return;
+      sticking = false;
+      scrollToBottom();
+      enableTopLoader();
+    }, 600);
+  }
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -704,15 +757,12 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
     var built = pageHtml(pages[cursor], 0);
     list.innerHTML = built.html;
     updateTip();
-    requestAnimationFrame(function () {
-      window.scrollTo(0, document.documentElement.scrollHeight);
-      armed = true;
-      if (io && cursor > 0) io.observe(sentinel);
-    });
+    stickBottomOnOpen();
   }
 
   if ('IntersectionObserver' in window) {
     io = new IntersectionObserver(function (entries) {
+      if (sticking) return;
       for (var i = 0; i < entries.length; i++) {
         if (entries[i].isIntersecting) {
           prependPage();
@@ -722,6 +772,7 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
     }, { root: null, rootMargin: '40px 0px 0px 0px', threshold: 0 });
   } else {
     window.addEventListener('scroll', function () {
+      if (sticking) return;
       if ((window.scrollY || 0) < 40) prependPage();
     }, { passive: true });
   }

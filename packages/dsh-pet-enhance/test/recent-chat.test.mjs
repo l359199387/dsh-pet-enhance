@@ -102,6 +102,8 @@ test('buildRecentChatHtml 分页数据与上滑提示', async () => {
     assert.ok(html.includes('上滑'))
     assert.ok(html.includes('prependPage'))
     assert.ok(html.includes('createDocumentFragment'))
+    assert.ok(html.includes('stickBottomOnOpen') || html.includes('scrollToBottom'))
+    assert.ok(html.includes('bottom-anchor'))
     assert.ok(html.includes('id="lightbox"'))
     assert.ok(html.includes('#chat-list'))
     assert.ok(html.includes('gap: 22px'))
