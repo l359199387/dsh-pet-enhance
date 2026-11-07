@@ -1,31 +1,48 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  chunkFrames,
   createWakeBudget,
-  MOSAIC_FRAMES_PER_SHEET,
+  decideSheetFlush,
+  SHEET_DEFAULTS,
   WATCH_DEFAULTS,
-  watchFrameBudget,
-  watchSilentFloorSec,
 } from '../src/watch-loop.js'
 
-test('watchFrameBudget 按时长估最多帧数', () => {
-  assert.equal(watchFrameBudget(30), 10)
-  assert.equal(watchFrameBudget(60), 12)
-  assert.equal(watchFrameBudget(10), 4)
-  assert.equal(watchFrameBudget(20), 7)
+test('decideSheetFlush：prefer=2 即封', () => {
+  assert.equal(decideSheetFlush({ length: 2, sheetAgeSec: 0.1 }), 'prefer')
+  assert.equal(decideSheetFlush({ length: 1, sheetAgeSec: 1 }), null)
 })
 
-test('chunkFrames 10 格拆成 3 张 2×2', () => {
-  assert.equal(MOSAIC_FRAMES_PER_SHEET, 4)
-  const chunks = chunkFrames(Array.from({ length: 10 }, (_, i) => i))
-  assert.deepEqual(chunks.map((c) => c.length), [4, 4, 2])
+test('decideSheetFlush：cap=4', () => {
+  assert.equal(decideSheetFlush({ length: 4, sheetAgeSec: 0 }), 'cap')
 })
 
-test('watchSilentFloorSec 短盯更密', () => {
-  assert.equal(watchSilentFloorSec(30), 8)
-  assert.equal(watchSilentFloorSec(60), 15)
-  assert.ok(watchSilentFloorSec(15) >= 6)
+test('decideSheetFlush：单帧等满 min(30, 2×maxWait)', () => {
+  assert.equal(decideSheetFlush({
+    length: 1,
+    sheetAgeSec: Math.min(30, SHEET_DEFAULTS.maxWaitSec * 2),
+  }), 'time')
+  assert.equal(decideSheetFlush({
+    length: 1,
+    sheetAgeSec: SHEET_DEFAULTS.maxWaitSec,
+  }), null)
+  // maxWait 很大时仍封顶 30s（see-now region）
+  assert.equal(decideSheetFlush({
+    length: 1,
+    sheetAgeSec: 30,
+    maxWaitSec: 60,
+  }), 'time')
+  assert.equal(decideSheetFlush({
+    length: 1,
+    sheetAgeSec: 29,
+    maxWaitSec: 60,
+  }), null)
+})
+
+test('SHEET_DEFAULTS 对齐 see-now region', () => {
+  assert.equal(SHEET_DEFAULTS.preferFrames, 2)
+  assert.equal(SHEET_DEFAULTS.maxFramesPerSheet, 4)
+  assert.equal(SHEET_DEFAULTS.maxWaitSec, 15)
+  assert.equal(SHEET_DEFAULTS.silentFloorSec, 20)
 })
 
 test('叫醒预算：第 9 次拒绝', () => {

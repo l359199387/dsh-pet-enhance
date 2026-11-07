@@ -27,8 +27,9 @@ export function glanceToolSpec() {
       + '- 用户说「看一眼」「现在屏幕上是什么」→ `glance()` / `glance({action:"see"})` 整屏。\n'
       + '- 用户说「看看 PyCharm / Edge」→ `glance({window:"PyCharm"})`，只抓那个窗口。\n'
       + '- 用户框了一块或给了坐标 → `glance({region:"x,y,w,h"})`，单位是屏幕物理像素。\n'
-      + '- 用户说「盯着看一会儿 / 陪我看 / 有变化再告诉我」→ `glance({action:"watch", seconds:60, frames:4})`。\n'
-      + '  watch 会阻塞到攒够帧或超时；静止屏幕通常只回 1–2 帧并说明「基本没变」。\n'
+      + '- 用户说「盯着看一会儿 / 陪我看 / 有变化再告诉我」→ `glance({action:"watch", seconds:60})`。\n'
+      + '  watch 按变化选帧：够约 2 帧就先拼一张（2×1），最多 4 帧/张（2×2）；`seconds` 只是阻塞上限。\n'
+      + '  静止屏幕通常只回 1–2 帧并说明「基本没变」。\n'
       + '  **不要**用连珠炮多次 watch 把自己叫醒；连续无人回应会触达叫醒预算并自动停。\n'
       + '- `quality:"low"`（默认）798×462 ≈ 222 token；`standard` 1050×630 ≈ 392；`high` 1260×756 ≈ 560。\n'
       + '  **看不清就升档重看，不要从糊图上猜。** 多帧拼图与单帧同价。\n'
@@ -64,7 +65,15 @@ export function glanceToolSpec() {
         },
         frames: {
           type: 'integer',
-          description: 'watch 目标留帧数 1–8，默认 4（2×2）；>4 用 2×4。多帧拼一张，token 不变。',
+          description: '兼容旧名：等价于每张拼图最多几帧（1–4，默认 4）。节奏由变化分驱动，不是硬凑格数。',
+        },
+        preferFrames: {
+          type: 'integer',
+          description: 'watch 期望每张几帧就封箱，默认 2（对齐 see-now）。',
+        },
+        maxWaitSec: {
+          type: 'integer',
+          description: 'watch 单张等待上限秒数，默认 15；单帧会等到约 2× 再发。',
         },
       },
     },

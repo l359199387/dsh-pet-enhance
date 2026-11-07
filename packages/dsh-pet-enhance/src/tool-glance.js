@@ -66,7 +66,7 @@ function watchEnvelope(result) {
     `watch ${result.elapsedSec}s`,
     `${result.framesKept} 帧（采样 ${result.samples}）`,
     sheets > 1
-      ? `${sheets} 张 2×2 拼图`
+      ? `${sheets} 张拼图（${result.cols}×${result.rows}）`
       : `${result.cols}×${result.rows}`,
     `→ ${result.width}×${result.height}`,
     `${result.quality} 档 · ~${result.tokens} token`,
@@ -163,7 +163,10 @@ export function createGlanceTool({
             window,
             region: parsedRegion,
             seconds: args?.seconds,
-            frames: args?.frames,
+            // 兼容旧参数名 frames → 每张上限（see-now maxFrames/cap）
+            maxFramesPerSheet: args?.maxFramesPerSheet ?? args?.frames,
+            preferFrames: args?.preferFrames,
+            maxWaitSec: args?.maxWaitSec,
             signal: exec?.signal,
             log,
           })

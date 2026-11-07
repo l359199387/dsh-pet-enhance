@@ -672,7 +672,7 @@ def handle_diff(req: dict) -> dict:
 
 
 def handle_mosaic(req: dict) -> dict:
-    """把多帧 PNG 拼成一张（最多 2×2 / 4 格），宽度对齐 42。更多帧由上层拆成多张。"""
+    """把多帧 PNG 拼成一张（最多 4 格：1 / 2×1 / 2×2），宽度对齐 42。更多帧由上层拆成多张。"""
     from mosaic import MAX_FRAMES, compose_mosaic, encode_png, normalize_quality
 
     frames_raw = req.get("frames")
@@ -714,7 +714,7 @@ def handle_mosaic(req: dict) -> dict:
 
 
 def handle_stack(req: dict) -> dict:
-    """多张已合成的拼图竖向叠成一张（每张仍是完整 2×2）。"""
+    """多张已合成的拼图竖向叠成一张（每张保持原布局清晰度）。"""
     from mosaic import encode_png, stack_vertical
 
     pngs_raw = req.get("pngs")

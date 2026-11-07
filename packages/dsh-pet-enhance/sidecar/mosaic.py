@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""多帧拼图：固定最多 2×2（4 格），画布对齐 42px（图片 token 格）。
-超过 4 帧由上层拆成多张拼图，避免 3×4 单格过小。"""
+"""多帧拼图：对齐 see-now region —— 1 / 2×1 / 2×2（最多 4 格），画布对齐 42px。
+超过 4 帧由上层拆成多张拼图。"""
 
 from __future__ import annotations
 
@@ -27,10 +27,12 @@ def canvas_size(quality: str | None) -> tuple[int, int]:
 
 
 def layout_for_count(n: int) -> tuple[int, int]:
-    """返回 (cols, rows)。1→1×1；2–4→2×2。"""
+    """返回 (cols, rows)。对齐 see-now：1→1×1；2→2×1；3–4→2×2。"""
     count = max(1, min(MAX_FRAMES, int(n)))
     if count <= 1:
         return 1, 1
+    if count == 2:
+        return 2, 1
     return 2, 2
 
 
@@ -63,7 +65,7 @@ def compose_mosaic(
     labels: list[str] | None = None,
 ):
     """
-    frames: [{image: PIL.Image, ...}, ...] 最多 4 张 → 2×2。
+    frames: [{image: PIL.Image, ...}, ...] 最多 4 张 → 按 layout_for_count。
     返回 (PIL.Image, meta dict)。
     """
     from PIL import Image, ImageDraw, ImageFont

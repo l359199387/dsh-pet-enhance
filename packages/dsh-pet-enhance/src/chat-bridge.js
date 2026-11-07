@@ -24,7 +24,7 @@ import {
   parseWatchSeconds,
   shouldSkipGlanceBridge,
 } from './intent.js'
-import { runWatch, watchFrameBudget } from './watch-loop.js'
+import { runWatch } from './watch-loop.js'
 
 /** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
 export function latestWatchPngPath(home) {
@@ -86,9 +86,10 @@ export function followUpPrompt(userText, shot) {
 export function followUpWatchPrompt(userText, result) {
   const silent = result?.silent ? '屏幕基本没变。' : `变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
   const sheets = Number(result?.mosaicCount) || 1
+  const layout = `${result?.cols || '?'}×${result?.rows || '?'}`
   const sheetBit = sheets > 1
-    ? `${result?.framesKept ?? 0} 帧→${sheets} 张 2×2 拼图（自上而下按时间）。`
-    : `${result?.framesKept ?? 0} 帧→一张 2×2 拼图。`
+    ? `${result?.framesKept ?? 0} 帧→${sheets} 张拼图（${layout} 起，自上而下按时间）。`
+    : `${result?.framesKept ?? 0} 帧→一张 ${layout} 拼图。`
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
     + `（盯屏拼图）主人说「${String(userText).slice(0, 40)}」。`
@@ -210,8 +211,6 @@ export function createChatBridge(options) {
 
   async function handleWatchIntent(userText) {
     const seconds = parseWatchSeconds(userText, 60)
-    // 按时长估最多留帧；真正盯满 seconds，不再「凑满 2 帧就提前停」
-    const frames = watchFrameBudget(seconds)
     busy = true
     const t0 = Date.now()
     try {
@@ -222,7 +221,7 @@ export function createChatBridge(options) {
       }).catch(() => {})
 
       const notice = await broadcastToDshPet(
-        `好，我盯满大约 ${seconds} 秒（有变化才多留帧，最多 ${frames} 格）；盯完把拼图给你。`,
+        `好，我最多盯大约 ${seconds} 秒（有变化就留帧、够 2 帧就先拼一张）；盯完把拼图给你。`,
         { pet, duration: Math.min(12_000, seconds * 200) },
       )
       if (!notice.ok || notice.data?.ok === false) {
@@ -239,7 +238,6 @@ export function createChatBridge(options) {
           sidecar,
           quality: 'low',
           seconds,
-          frames,
           log,
         })
       } catch (e) {
@@ -277,7 +275,7 @@ export function createChatBridge(options) {
       await broadcastToDshPet(
         (result.silent
           ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧 / ${sheetN} 张拼图）。`
-          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧，拼成 ${sheetN} 张 2×2。`)
+          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧，拼成 ${sheetN} 张（${result.cols || '?'}×${result.rows || '?'}）。`)
         + (saved
           ? ' 拼图在对话面板最底下（滚到底）；也可打开文件夹里的 watch-latest.png。双击桌宠是开/关对话，不是会话列表。'
           : ' 拼图在对话面板最底下，请滚到底看。'),

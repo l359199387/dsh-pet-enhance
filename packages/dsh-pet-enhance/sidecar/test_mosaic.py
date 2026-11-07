@@ -16,13 +16,13 @@ class MosaicTests(unittest.TestCase):
             self.assertEqual(w % 42, 0, q)
             self.assertEqual(h % 42, 0, q)
 
-    def test_layout_max_2x2(self):
+    def test_layout_see_now(self):
         self.assertEqual(mosaic.layout_for_count(1), (1, 1))
-        self.assertEqual(mosaic.layout_for_count(2), (2, 2))
+        self.assertEqual(mosaic.layout_for_count(2), (2, 1))
+        self.assertEqual(mosaic.layout_for_count(3), (2, 2))
         self.assertEqual(mosaic.layout_for_count(4), (2, 2))
-        # 超过 4 仍按 4 裁，布局仍是 2×2（上层应拆成多张）
+        # 超过 4 仍按 4 裁
         self.assertEqual(mosaic.layout_for_count(8), (2, 2))
-        self.assertEqual(mosaic.layout_for_count(10), (2, 2))
 
     def test_compose_four(self):
         frames = [{"image": Image.new("RGB", (100, 60), (i * 40, 20, 20))} for i in range(4)]

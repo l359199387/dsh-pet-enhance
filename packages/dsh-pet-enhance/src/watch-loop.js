@@ -1,33 +1,31 @@
 /**
- * `glance({action:"watch"})`：阻塞盯屏 → 变化分选帧 → 拼图返回。
- * 不向会话推图；只作为工具返回值（硬约束）。
+ * `glance({action:"watch"})`：阻塞盯屏 → 变化分选帧 → 按 see-now 节奏封成 sheet。
+ * 对齐 @_ref/dsh-see-now：变化驱动留帧；prefer≈2 / cap=4 / maxWait 封箱；
+ * 布局 1→1×1、2→2×1、3–4→2×2；静止约 20s 兜底。
  *
  * @module src/watch-loop.js
  */
 
 import { captureFrame, normalizeQuality, canvasWidth } from './capture.js'
-import { createFrameSelector } from './select-frames.js'
+import { createFrameSelector, SELECT_DEFAULTS } from './select-frames.js'
 import { CANVAS_BY_QUALITY, imageTokens } from './image-tokens.js'
 
 export const WATCH_DEFAULTS = Object.freeze({
   seconds: 60,
   maxSeconds: 600,
-  frames: 4,
-  maxFrames: 12,
   sampleMs: 1000,
   maxAutonomousWakes: 8,
+  /** 管道内总留帧上限（see-now pipeline maxFrames 量级） */
+  maxFrames: 40,
 })
 
-/** 对齐 dsh-see-now：每张 sheet 最多 2×2（4 格），多了拆成多张。 */
-export const MOSAIC_FRAMES_PER_SHEET = 4
-
-/** 按每张 sheet 格数切开（默认 4）。 */
-export function chunkFrames(items, size = MOSAIC_FRAMES_PER_SHEET) {
-  const n = Math.max(1, Math.trunc(Number(size) || MOSAIC_FRAMES_PER_SHEET))
-  const out = []
-  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n))
-  return out
-}
+/** 与 see-now region 封箱对齐 */
+export const SHEET_DEFAULTS = Object.freeze({
+  preferFrames: 2,
+  maxFramesPerSheet: 4,
+  maxWaitSec: 15,
+  silentFloorSec: SELECT_DEFAULTS.silentFloorSec, // 20
+})
 
 /**
  * 连续无人回应的 watch 叫醒预算（进程内）。
@@ -79,16 +77,25 @@ function clampInt(v, lo, hi, fallback) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)))
 }
 
-/** 按时长给「最多留几帧」：约每 3 秒一格，2–12（30 秒约 10 格）。 */
-export function watchFrameBudget(seconds) {
-  const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 3)))
-}
+/**
+ * see-now region 风格封箱判定。
+ * @param {{ length: number, sheetAgeSec: number, preferFrames?: number, maxFramesPerSheet?: number, maxWaitSec?: number }} p
+ * @returns {'cap'|'prefer'|'time'|null}
+ */
+export function decideSheetFlush(p) {
+  const n = Math.max(0, Number(p.length) || 0)
+  if (n <= 0) return null
+  const prefer = Math.max(1, Number(p.preferFrames) || SHEET_DEFAULTS.preferFrames)
+  const cap = Math.max(prefer, Number(p.maxFramesPerSheet) || SHEET_DEFAULTS.maxFramesPerSheet)
+  const maxWait = Math.max(1, Number(p.maxWaitSec) || SHEET_DEFAULTS.maxWaitSec)
+  const age = Math.max(0, Number(p.sheetAgeSec) || 0)
 
-/** 静止兜底间隔：短盯密一点，长盯最多 20s。 */
-export function watchSilentFloorSec(seconds) {
-  const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  return Math.min(20, Math.max(6, Math.round(s / 4)))
+  if (n >= cap) return 'cap'
+  if (n >= prefer) return 'prefer'
+  // 单帧：等满 min(30, 2×maxWait) 再发（see-now region：避免每 15s 扔一张单帧）
+  const singleWait = Math.min(30, maxWait * 2)
+  if (n === 1 && age >= singleWait) return 'time'
+  return null
 }
 
 function sleep(ms, signal) {
@@ -117,7 +124,10 @@ function sleep(ms, signal) {
  *   window?: string,
  *   region?: string | object,
  *   seconds?: number,
- *   frames?: number,
+ *   preferFrames?: number,
+ *   maxFramesPerSheet?: number,
+ *   maxWaitSec?: number,
+ *   silentFloorSec?: number,
  *   signal?: AbortSignal,
  *   sampleMs?: number,
  *   log?: (m: string) => void,
@@ -125,31 +135,32 @@ function sleep(ms, signal) {
  */
 export async function runWatch(options = {}) {
   const quality = normalizeQuality(options.quality)
+  // seconds = 阻塞上限（see-now）；画面够了会中途封多张 sheet，不是「必须凑满 N 格」
   const seconds = clampInt(options.seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  const targetFrames = clampInt(
-    options.frames ?? watchFrameBudget(seconds),
-    1,
-    WATCH_DEFAULTS.maxFrames,
-    watchFrameBudget(seconds),
-  )
   const sampleMs = clampInt(options.sampleMs, 200, 5_000, WATCH_DEFAULTS.sampleMs)
+  const preferFrames = clampInt(options.preferFrames, 1, 4, SHEET_DEFAULTS.preferFrames)
+  const maxFramesPerSheet = clampInt(
+    options.maxFramesPerSheet,
+    preferFrames,
+    4,
+    SHEET_DEFAULTS.maxFramesPerSheet,
+  )
+  const maxWaitSec = clampInt(options.maxWaitSec, 5, 120, SHEET_DEFAULTS.maxWaitSec)
   const silentFloorSec = clampInt(
-    options.silentFloorSec ?? watchSilentFloorSec(seconds),
+    options.silentFloorSec,
     5,
     60,
-    watchSilentFloorSec(seconds),
+    SHEET_DEFAULTS.silentFloorSec,
   )
+  const maxTotalFrames = clampInt(options.maxFrames, 1, 80, WATCH_DEFAULTS.maxFrames)
   const log = options.log ?? (() => {})
   const signal = options.signal
   const sidecar = options.sidecar
-  // 用户说了盯 N 秒就盯满；frames 只是「最多留几格」，不能凑满就提前收工
-  const earlyStop = options.earlyStop === true
 
   if (!sidecar || typeof sidecar.call !== 'function') {
     throw Object.assign(new Error('watch 需要 Python sidecar'), { code: 'SIDECAR_DOWN' })
   }
 
-  // 重置流式打分，避免跨次 watch 污染
   try {
     await sidecar.call('diff', { reset: true }, 5_000)
   } catch { /* ignore */ }
@@ -160,24 +171,81 @@ export async function runWatch(options = {}) {
   })
   const started = Date.now()
   const deadline = started + seconds * 1000
+
   /** @type {{ png: Buffer, label: string, score: number, reason: string, t: number }[]} */
-  const kept = []
+  let sheet = []
+  let sheetStart = 0
+  let globalKeep = 0
   let samples = 0
   let maxScore = 0
   let lastScore = 0
+  /** @type {{ png: Buffer, width: number, height: number, cols: number, rows: number, tokens: number, frameCount: number, labels: string[], why: string }[]} */
+  const mosaics = []
+  /** @type {string[]} */
+  const allReasons = []
+  /** @type {string[]} */
+  const allLabels = []
 
   selector.reset(0)
-  log(`watch 开始：${seconds}s · 最多 ${targetFrames} 帧 · 静止兜底 ${silentFloorSec}s`)
+  log(
+    `watch 开始（see-now 节奏）：上限 ${seconds}s · prefer=${preferFrames}`
+    + ` · cap=${maxFramesPerSheet} · maxWait=${maxWaitSec}s · floor=${silentFloorSec}s`,
+  )
+
+  async function composeSheet(frames, why) {
+    if (!frames.length) return
+    const resp = await sidecar.call('mosaic', {
+      quality,
+      frames: frames.map((f) => ({
+        png: f.png.toString('base64'),
+        label: f.label,
+      })),
+    }, 30_000)
+    if (!resp?.ok) {
+      throw Object.assign(new Error(resp?.error?.message || '拼图失败'), {
+        code: resp?.error?.code || 'MOSAIC_FAILED',
+      })
+    }
+    const mosaicPng = Buffer.from(String(resp.png || ''), 'base64')
+    const mosaicW = Number(resp.w) || 0
+    const mosaicH = Number(resp.h) || 0
+    mosaics.push({
+      png: mosaicPng,
+      width: mosaicW,
+      height: mosaicH,
+      cols: Number(resp.cols) || 1,
+      rows: Number(resp.rows) || 1,
+      tokens: imageTokens(mosaicW, mosaicH),
+      frameCount: frames.length,
+      labels: frames.map((f) => f.label),
+      why,
+    })
+    log(
+      `watch 封箱 #${mosaics.length} why=${why}：${frames.length} 帧`
+      + ` → ${resp.cols}×${resp.rows} ${mosaicW}×${mosaicH}`,
+    )
+  }
+
+  async function flushSheet(why) {
+    if (!sheet.length) return
+    const batch = sheet
+    sheet = []
+    sheetStart = 0
+    await composeSheet(batch, why)
+  }
 
   while (Date.now() < deadline) {
     if (signal?.aborted) {
       throw Object.assign(new Error('watch 被取消'), { code: 'ABORTED' })
     }
+    if (globalKeep >= maxTotalFrames) {
+      await flushSheet('cap-total')
+      break
+    }
 
     const tRel = (Date.now() - started) / 1000
     let shot
     try {
-      // 直接走 sidecar capture 拿 score；仍经 captureFrame 统一降级语义（窗口必须 sidecar）
       const resp = await sidecar.call(
         'capture',
         {
@@ -211,7 +279,6 @@ export async function runWatch(options = {}) {
         ms: Number(resp.ms) || 0,
       }
     } catch (e) {
-      // 无窗口匹配等硬错误立刻抛；偶发超时继续
       if (['WINDOW_NOT_FOUND', 'WINDOW_AMBIGUOUS', 'BAD_REQUEST', 'ABORTED'].includes(e?.code)) {
         throw e
       }
@@ -230,19 +297,39 @@ export async function runWatch(options = {}) {
 
     const decision = selector.push({ score, t: tRel, isFirst })
     if (decision.keep) {
-      if (kept.length < targetFrames) {
-        const label = `${kept.length + 1}  +${tRel.toFixed(1)}s`
-        kept.push({
-          png: shot.png,
-          label,
-          score: score ?? 0,
-          reason: decision.reason || 'first',
-          t: tRel,
-        })
-        log(`watch 留帧 #${kept.length} reason=${decision.reason} score=${(score ?? 0).toFixed(2)}`)
+      if (sheet.length === 0) sheetStart = tRel
+      globalKeep += 1
+      const label = `${globalKeep}  +${tRel.toFixed(1)}s`
+      const entry = {
+        png: shot.png,
+        label,
+        score: score ?? 0,
+        reason: decision.reason || 'first',
+        t: tRel,
       }
-      // 仅显式 earlyStop 时才「帧满提前收工」；默认盯满用户说的秒数
-      if (earlyStop && kept.length >= targetFrames) break
+      sheet.push(entry)
+      allReasons.push(entry.reason)
+      allLabels.push(label)
+      log(`watch 留帧 #${globalKeep} reason=${entry.reason} score=${entry.score.toFixed(2)}`)
+
+      const why = decideSheetFlush({
+        length: sheet.length,
+        sheetAgeSec: tRel - sheetStart,
+        preferFrames,
+        maxFramesPerSheet,
+        maxWaitSec,
+      })
+      if (why) await flushSheet(why)
+    } else if (sheet.length > 0) {
+      // 无新留帧时也要看时间出口（单帧等太久）
+      const why = decideSheetFlush({
+        length: sheet.length,
+        sheetAgeSec: tRel - sheetStart,
+        preferFrames,
+        maxFramesPerSheet,
+        maxWaitSec,
+      })
+      if (why === 'time') await flushSheet(why)
     }
 
     const remain = deadline - Date.now()
@@ -250,8 +337,11 @@ export async function runWatch(options = {}) {
     await sleep(Math.min(sampleMs, remain), signal)
   }
 
-  // 超时仍无帧：强制抓一张兜底
-  if (kept.length === 0) {
+  // 收尾：未封箱的尾巴
+  if (sheet.length) await flushSheet('end')
+
+  // 全程无帧：强制一张兜底
+  if (!mosaics.length) {
     const shot = await captureFrame({
       sidecar,
       quality,
@@ -260,56 +350,24 @@ export async function runWatch(options = {}) {
       home: options.home,
       signal,
     })
-    kept.push({
+    await composeSheet([{
       png: shot.png,
       label: '1  +0.0s',
       score: 0,
       reason: 'floor',
       t: 0,
-    })
+    }], 'force')
+    allReasons.push('floor')
+    allLabels.push('1  +0.0s')
+    globalKeep = 1
   }
 
-  const silent = maxScore < 2 && kept.every((f) => f.reason === 'first' || f.reason === 'floor')
-
-  // see-now 口径：每张最多 2×2；10 格 → 3 张（4+4+2），单格保持清晰
-  const sheets = chunkFrames(kept, MOSAIC_FRAMES_PER_SHEET)
-  /** @type {{ png: Buffer, width: number, height: number, cols: number, rows: number, tokens: number, frameCount: number, labels: string[] }[]} */
-  const mosaics = []
-  for (let si = 0; si < sheets.length; si += 1) {
-    const sheet = sheets[si]
-    const resp = await sidecar.call('mosaic', {
-      quality,
-      frames: sheet.map((f) => ({
-        png: f.png.toString('base64'),
-        label: f.label,
-      })),
-    }, 30_000)
-    if (!resp?.ok) {
-      throw Object.assign(new Error(resp?.error?.message || '拼图失败'), {
-        code: resp?.error?.code || 'MOSAIC_FAILED',
-      })
-    }
-    const mosaicPng = Buffer.from(String(resp.png || ''), 'base64')
-    const mosaicW = Number(resp.w) || 0
-    const mosaicH = Number(resp.h) || 0
-    mosaics.push({
-      png: mosaicPng,
-      width: mosaicW,
-      height: mosaicH,
-      cols: Number(resp.cols) || 1,
-      rows: Number(resp.rows) || 1,
-      tokens: imageTokens(mosaicW, mosaicH),
-      frameCount: sheet.length,
-      labels: sheet.map((f) => f.label),
-    })
-    log(`watch 拼图 ${si + 1}/${sheets.length}：${sheet.length} 帧 → ${mosaicW}×${mosaicH}`)
-  }
-
+  const silent = maxScore < 2 && allReasons.every((r) => r === 'first' || r === 'floor')
   const expected = CANVAS_BY_QUALITY[quality] || CANVAS_BY_QUALITY.low
+
   let deliverPng = mosaics[0]?.png
   let deliverW = mosaics[0]?.width || expected.w
   let deliverH = mosaics[0]?.height || expected.h
-  // 多张时竖向叠成一张交给「单附件」对话路径；单格仍是完整 2×2 清晰度
   if (mosaics.length > 1) {
     try {
       const stacked = await sidecar.call('stack', {
@@ -341,13 +399,13 @@ export async function runWatch(options = {}) {
     expectedTokens: expected.tokens * mosaics.length,
     cols: mosaics[0]?.cols || 1,
     rows: mosaics[0]?.rows || 1,
-    framesKept: kept.length,
+    framesKept: globalKeep,
     samples,
     maxScore,
     lastScore,
     silent,
     elapsedSec,
-    reasons: kept.map((f) => f.reason),
-    labels: kept.map((f) => f.label),
+    reasons: allReasons,
+    labels: allLabels,
   }
 }
