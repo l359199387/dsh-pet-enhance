@@ -18,13 +18,18 @@ import {
   GLANCE_FOLLOWUP_PREFIX,
   GLANCE_INTENT_RE,
   isGlanceIntent,
+  isWatchIntent,
+  parseWatchSeconds,
   shouldSkipGlanceBridge,
 } from './intent.js'
+import { runWatch } from './watch-loop.js'
 
 export {
   GLANCE_FOLLOWUP_PREFIX,
   GLANCE_INTENT_RE,
   isGlanceIntent,
+  isWatchIntent,
+  parseWatchSeconds,
 }
 
 function lastUserMessage(messages) {
@@ -49,6 +54,21 @@ export function followUpPrompt(userText, shot) {
     + `用户刚说「${String(userText).slice(0, 80)}」。`
     + `我已抓到${where} → ${shot.width}×${shot.height}。`
     + '请根据附图用一两句口语告诉用户桌面/屏幕上现在有什么，说具体内容。'
+    + `\n\n${glancePersonaBlock()}`
+  )
+}
+
+export function followUpWatchPrompt(userText, result) {
+  const silent = result?.silent
+    ? '这段时间屏幕基本没变。'
+    : `这段时间最大变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
+  return (
+    `${GLANCE_FOLLOWUP_PREFIX}`
+    + `用户刚说「${String(userText).slice(0, 80)}」。`
+    + `我已盯屏约 ${result?.elapsedSec ?? '?'} 秒，留了 ${result?.framesKept ?? 0} 帧拼成一张图`
+    + `（${result?.width}×${result?.height} · ~${result?.tokens ?? 222} token）。`
+    + silent
+    + '请根据拼图用两三句口语告诉用户屏幕上发生了什么（或确认没变）；不要假装自己在眨眼发酸。'
     + `\n\n${glancePersonaBlock()}`
   )
 }
@@ -92,7 +112,156 @@ export function createChatBridge(options) {
     else if (r.skipped) log('chat-bridge episode 跳过（敏感窗口）')
   }
 
+  async function deliverShot(userText, shot, t0, promptBuilder = followUpPrompt) {
+    if (!shot?.png || !Buffer.isBuffer(shot.png)) {
+      await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
+      await remember({
+        userText,
+        shot,
+        result: 'bad-png',
+        durMs: Date.now() - t0,
+        error: 'bad-png',
+      })
+      return
+    }
+
+    const prompt = promptBuilder(userText, shot)
+    const chat = await chatWithDshPet(prompt, {
+      pet,
+      attachment: {
+        mediaType: 'image/png',
+        data: shot.png.toString('base64'),
+      },
+      timeoutMs: 120_000,
+    })
+
+    if (!chat.ok || chat.data?.ok === false) {
+      const reason = chat.data?.reason || chat.error || `http-${chat.status}`
+      const msg = `图有了，但宠物没能开口（${reason}）。`
+      log(`chat-bridge 附图对话失败：${msg}`)
+      const fallback = shot.silent != null
+        ? (
+          `我盯了约 ${shot.elapsedSec ?? '?'} 秒，留 ${shot.framesKept ?? 0} 帧`
+          + `（${shot.width}×${shot.height}）。`
+          + (shot.silent ? '屏幕基本没变。' : '')
+        )
+        : (() => {
+          const screen = shot.screen?.w && shot.screen?.h
+            ? `${shot.screen.w}×${shot.screen.h}`
+            : '未知尺寸'
+          const where = shot.window?.title
+            ? `窗口「${shot.window.title}」`
+            : `整屏 ${screen}`
+          return (
+            `我看了一眼：${where} → ${shot.width}×${shot.height}`
+            + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
+          )
+        })()
+      await broadcastToDshPet(fallback, { pet, duration: 14_000 })
+      await remember({
+        userText,
+        shot,
+        result: 'chat-failed',
+        durMs: Date.now() - t0,
+        error: reason,
+        reply: fallback,
+      })
+      return
+    }
+
+    const reply = typeof chat.data?.text === 'string' ? chat.data.text : ''
+    lastContent = prompt
+    lastTs = Date.now()
+    log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
+    await remember({
+      userText,
+      shot,
+      result: 'ok',
+      durMs: Date.now() - t0,
+      reply,
+    })
+  }
+
+  async function handleWatchIntent(userText) {
+    const seconds = parseWatchSeconds(userText, 60)
+    const frames = seconds >= 45 ? 4 : 2
+    busy = true
+    const t0 = Date.now()
+    try {
+      try { options.onLooking?.() } catch { /* ignore */ }
+      await callDshPet('/work-status', {
+        method: 'POST',
+        body: { state: 'working', task: 'watch' },
+      }).catch(() => {})
+
+      const notice = await broadcastToDshPet(
+        `好，我盯大约 ${seconds} 秒（有变化才留帧）；盯完把拼图给你。`,
+        { pet, duration: Math.min(12_000, seconds * 200) },
+      )
+      if (!notice.ok || notice.data?.ok === false) {
+        log(`chat-bridge watch 预告失败：${notice.error || notice.data?.reason || notice.status}`)
+      }
+
+      const sidecar = typeof options.sidecar === 'function'
+        ? options.sidecar()
+        : options.sidecar
+      let result
+      try {
+        result = await runWatch({
+          home: options.home,
+          sidecar,
+          quality: 'low',
+          seconds,
+          frames,
+          log,
+        })
+      } catch (e) {
+        const msg = `盯屏没看成：${e?.message ?? e}`
+        log(`chat-bridge watch 失败：${msg}`)
+        await broadcastToDshPet(msg, { pet, duration: 12_000 })
+        await remember({
+          userText,
+          result: 'watch-failed',
+          durMs: Date.now() - t0,
+          error: e?.message ?? String(e),
+        })
+        return
+      }
+
+      await broadcastToDshPet(
+        result.silent
+          ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧）。`
+          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧拼成一张。`,
+        { pet, duration: 8_000 },
+      )
+
+      const shot = {
+        png: result.png,
+        width: result.width,
+        height: result.height,
+        quality: result.quality,
+        engine: 'watch',
+        ms: Date.now() - t0,
+        silent: result.silent,
+        elapsedSec: result.elapsedSec,
+        framesKept: result.framesKept,
+        tokens: result.tokens,
+        maxScore: result.maxScore,
+      }
+      await deliverShot(userText, shot, t0, (text, s) => followUpWatchPrompt(text, s))
+    } finally {
+      await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
+      try { options.onIdle?.() } catch { /* ignore */ }
+      busy = false
+    }
+  }
+
   async function handleIntent(userText) {
+    if (isWatchIntent(userText)) {
+      await handleWatchIntent(userText)
+      return
+    }
+
     busy = true
     const t0 = Date.now()
     try {
@@ -132,64 +301,7 @@ export function createChatBridge(options) {
         return
       }
 
-      if (!shot?.png || !Buffer.isBuffer(shot.png)) {
-        await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
-        await remember({
-          userText,
-          shot,
-          result: 'bad-png',
-          durMs: Date.now() - t0,
-          error: 'bad-png',
-        })
-        return
-      }
-
-      const prompt = followUpPrompt(userText, shot)
-      const chat = await chatWithDshPet(prompt, {
-        pet,
-        attachment: {
-          mediaType: 'image/png',
-          data: shot.png.toString('base64'),
-        },
-        timeoutMs: 120_000,
-      })
-
-      if (!chat.ok || chat.data?.ok === false) {
-        const reason = chat.data?.reason || chat.error || `http-${chat.status}`
-        const msg = `图有了，但宠物没能开口（${reason}）。`
-        log(`chat-bridge 附图对话失败：${msg}`)
-        const screen = shot.screen?.w && shot.screen?.h
-          ? `${shot.screen.w}×${shot.screen.h}`
-          : '未知尺寸'
-        const where = shot.window?.title
-          ? `窗口「${shot.window.title}」`
-          : `整屏 ${screen}`
-        const fallback =
-          `我看了一眼：${where} → ${shot.width}×${shot.height}`
-          + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
-        await broadcastToDshPet(fallback, { pet, duration: 14_000 })
-        await remember({
-          userText,
-          shot,
-          result: 'chat-failed',
-          durMs: Date.now() - t0,
-          error: reason,
-          reply: fallback,
-        })
-        return
-      }
-
-      const reply = typeof chat.data?.text === 'string' ? chat.data.text : ''
-      lastContent = prompt
-      lastTs = Date.now()
-      log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
-      await remember({
-        userText,
-        shot,
-        result: 'ok',
-        durMs: Date.now() - t0,
-        reply,
-      })
+      await deliverShot(userText, shot, t0, followUpPrompt)
     } finally {
       await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
       try { options.onIdle?.() } catch { /* ignore */ }

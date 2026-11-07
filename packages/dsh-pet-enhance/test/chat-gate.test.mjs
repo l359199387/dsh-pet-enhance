@@ -29,6 +29,11 @@ test('ackForLabel 含任务接手', () => {
   assert.match(ackForLabel('task', 'zh'), /这事我来办/)
 })
 
+test('ackForLabel：盯屏口令说明秒数', () => {
+  assert.match(ackForLabel('glance', 'zh', '盯着屏幕看 60 秒'), /60 秒/)
+  assert.match(ackForLabel('glance', 'zh', '看一眼桌面'), /瞅一眼/)
+})
+
 test('runChatGate：task 接管并 markHandled', async () => {
   const handled = []
   const tasks = []

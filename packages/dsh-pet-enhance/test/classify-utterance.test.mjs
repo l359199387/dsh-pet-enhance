@@ -31,6 +31,8 @@ test('localClassify：「学会了吗」是 chat，不是 task', () => {
   assert.equal(isSkillStatusQuestion('你学会记录心情了吗?'), true)
   assert.equal(localClassify('今天天气真好'), 'chat')
   assert.equal(localClassify('看一眼桌面'), 'glance')
+  assert.equal(localClassify('盯着屏幕看 60 秒'), 'glance')
+  assert.equal(localClassify('陪看一会儿'), 'glance')
   assert.equal(localClassify('我教你一下保存'), 'teach')
   assert.equal(localClassify('教完了'), 'teach_end')
   assert.equal(localClassify('把窗口最小化'), 'task')

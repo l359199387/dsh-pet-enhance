@@ -5,6 +5,7 @@
  */
 
 import { classifyUtterance } from './classify-utterance.js'
+import { isWatchIntent, parseWatchSeconds } from './intent.js'
 import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
@@ -22,10 +23,14 @@ export function shouldTakeoverChat(label) {
  * @param {string} label
  * @param {string} [locale]
  */
-export function ackForLabel(label, locale = 'zh') {
+export function ackForLabel(label, locale = 'zh', text = '') {
   const loc = locale || 'zh'
   switch (label) {
     case 'glance':
+      if (isWatchIntent(text)) {
+        const sec = parseWatchSeconds(text, 60)
+        return `好，我盯大约 ${sec} 秒；有变化再跟你说，先别急。`
+      }
       return '好，我瞅一眼…'
     case 'teach':
       return '好，你演示，我学。'
@@ -79,7 +84,7 @@ export async function runChatGate(options) {
 
   const locale = getLocale(options.home)
   const effectiveLabel = teaching && (label === 'teach_end' || label === 'task') ? 'teach_end' : label
-  const ack = ackForLabel(effectiveLabel, locale)
+  const ack = ackForLabel(effectiveLabel, locale, text)
 
   // 客户端闸门 + 服务端闸门可能连打两次：短时去重，只派发一次
   const dup = Boolean(options.isDuplicate?.(text))

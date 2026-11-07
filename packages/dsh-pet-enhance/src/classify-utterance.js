@@ -59,7 +59,7 @@ export function buildClassifyPrompt(userText, { teaching = false } = {}) {
   return (
     `${CLASSIFY_PREFIX}`
     + '只输出一个标签词，禁止工具与解释。'
-    + 'chat=闲聊问候或询问是否学会；glance=看屏幕/截图；'
+    + 'chat=闲聊问候或询问是否学会；glance=看屏幕/截图/盯着看一会儿；'
     + 'teach=用户要演示教你；teach_end=演示结束要你照做；'
     + 'task=要你操作电脑。'
     + `用户：「${clipped}」`
@@ -80,7 +80,9 @@ export function parseClassifyLabel(reply) {
 
   if (/教完|学完|结束教学|照着做|按刚才/.test(raw)) return 'teach_end'
   if (/教你|跟我学|看我做|开始教学/.test(raw)) return 'teach'
-  if (/看(?:一?眼|看)|截图|桌面|屏幕/.test(raw) && !/点|输入|关掉|最小化/.test(raw)) return 'glance'
+  if (/(?:看(?:一?眼|看)|截图|桌面|屏幕|盯着|陪看|watch)/.test(raw) && !/点|输入|关掉|最小化/.test(raw)) {
+    return 'glance'
+  }
   if (/干活|任务|操作|点击|输入/.test(raw)) return 'task'
   if (/闲聊|聊天|问候|学会/.test(raw)) return 'chat'
   return null

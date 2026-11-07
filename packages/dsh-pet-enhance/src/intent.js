@@ -14,7 +14,32 @@ export const AGENT_WAKE_PREFIX = '【小蓝鲸交办】'
 export const TEACH_FOLLOWUP_PREFIX = '【小蓝鲸教学回放】'
 
 export const GLANCE_INTENT_RE =
-  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance/i
+  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance|(?:盯着|看着|陪看|盯一会儿|看一会儿|看一会|连续看).{0,12}?(?:屏幕|桌面|画面)?|盯着看|看着看/i
+
+/**
+ * 「盯着看一会儿 / watch 60 秒」→ 走阻塞陪看，不是单帧 see。
+ * 仍算 glance 大类（闸门接管），具体 action 由 chat-bridge / 工具决定。
+ */
+export const WATCH_INTENT_RE =
+  /盯着|陪看|看着看|盯一会儿|看一会儿|看一会|连续看|帮我盯|\bwatch\b|(?:盯|看).{0,12}?\d+\s*(?:秒|s\b)/i
+
+/** 从口令里抠 watch 秒数；默认 60，上限 600。 */
+export function parseWatchSeconds(text, fallback = 60) {
+  const s = String(text ?? '')
+  const m = s.match(/(\d{1,4})\s*(?:秒|s\b)/i)
+  if (m) {
+    const n = Number(m[1])
+    if (Number.isFinite(n) && n > 0) return Math.min(600, Math.max(1, Math.trunc(n)))
+  }
+  if (/一会儿|一会|片刻|稍后/i.test(s)) return Math.min(fallback, 30)
+  return fallback
+}
+
+export function isWatchIntent(text) {
+  const s = String(text ?? '').trim()
+  if (!s || isBridgeEcho(s)) return false
+  return WATCH_INTENT_RE.test(s)
+}
 
 /**
  * 粗筛「可能要操作电脑」。只决定要不要叫醒带 glance/act 的 Agent；
@@ -50,7 +75,7 @@ function isBridgeEcho(s) {
 export function isGlanceIntent(text) {
   const s = String(text ?? '').trim()
   if (!s || isBridgeEcho(s)) return false
-  return GLANCE_INTENT_RE.test(s)
+  return GLANCE_INTENT_RE.test(s) || isWatchIntent(s)
 }
 
 /** 要跑已学自动化 / 再次执行。 */

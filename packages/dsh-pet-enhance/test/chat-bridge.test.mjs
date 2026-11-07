@@ -28,10 +28,22 @@ test('isGlanceIntent：看屏/桌面相关命中，闲聊与 follow-up 不命中
   assert.equal(isGlanceIntent('看看屏幕上写了什么'), true)
   assert.equal(isGlanceIntent('截个图'), true)
   assert.equal(isGlanceIntent('glance please'), true)
+  assert.equal(isGlanceIntent('盯着屏幕看 60 秒'), true)
+  assert.equal(isGlanceIntent('陪我看一会儿屏幕'), true)
   assert.equal(isGlanceIntent('今天吃什么'), false)
   assert.equal(isGlanceIntent('帮我看一下天气预报'), false)
   assert.equal(isGlanceIntent(`${GLANCE_FOLLOWUP_PREFIX}请描述`), false)
   assert.equal(isGlanceIntent(''), false)
+})
+
+test('isWatchIntent / parseWatchSeconds：盯屏口令', async () => {
+  const { isWatchIntent, parseWatchSeconds } = await import('../src/intent.js')
+  assert.equal(isWatchIntent('盯着屏幕看 60 秒'), true)
+  assert.equal(isWatchIntent('陪看 30s'), true)
+  assert.equal(isWatchIntent('看一眼桌面'), false)
+  assert.equal(parseWatchSeconds('盯着屏幕看 60 秒'), 60)
+  assert.equal(parseWatchSeconds('watch 90秒'), 90)
+  assert.equal(parseWatchSeconds('盯一会儿'), 30)
 })
 
 test('createChatBridge：首次 tick 只建基线，不抓屏', async () => {
