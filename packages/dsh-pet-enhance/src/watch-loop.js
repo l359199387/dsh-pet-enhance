@@ -24,9 +24,12 @@ export const WATCH_DEFAULTS = Object.freeze({
   maxDeliverSheets: 6,
 })
 
-/** 与 see-now region 封箱对齐 */
+/**
+ * 横屏桌面默认凑满 4 帧 → 2×2（不再 prefer=2 早封成 1×2）。
+ * 时间出口只对 ≥3 帧开放，尽量避免两帧竖条。
+ */
 export const SHEET_DEFAULTS = Object.freeze({
-  preferFrames: 2,
+  preferFrames: 4,
   maxFramesPerSheet: 4,
   maxWaitSec: 15,
   silentFloorSec: SELECT_DEFAULTS.silentFloorSec, // 20
@@ -97,9 +100,12 @@ export function decideSheetFlush(p) {
 
   if (n >= cap) return 'cap'
   if (n >= prefer) return 'prefer'
-  // 单帧：等满 min(30, 2×maxWait) 再发（see-now region：避免每 15s 扔一张单帧）
+  // ≥3 帧等到 maxWait：可封 2×2（缺一格也比 1×2 好）
+  if (n >= 3 && age >= maxWait) return 'time'
+  // 单帧：等满 min(30, 2×maxWait) 再发
   const singleWait = Math.min(30, maxWait * 2)
   if (n === 1 && age >= singleWait) return 'time'
+  // 正好 2 帧：继续等第 3/4 帧凑 2×2，交给收尾或 prefer
   return null
 }
 

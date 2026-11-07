@@ -28,7 +28,7 @@ export function glanceToolSpec() {
       + '- 用户说「看看 PyCharm / Edge」→ `glance({window:"PyCharm"})`，只抓那个窗口。\n'
       + '- 用户框了一块或给了坐标 → `glance({region:"x,y,w,h"})`，单位是屏幕物理像素。\n'
       + '- 用户说「盯着看一会儿 / 陪我看 / 有变化再告诉我」→ `glance({action:"watch", seconds:60})`。\n'
-      + '  watch 按变化选帧：够约 2 帧就先拼一张，最多 4 帧/张；布局按画面比例自适应、cover 填格无黑边；`seconds` 只是阻塞上限。\n'
+      + '  watch 按变化选帧：优先凑满 4 帧拼成 2×2；布局自适应、cover 填格；`seconds` 只是阻塞上限。\n'
       + '  静止屏幕通常只回 1–2 帧并说明「基本没变」。\n'
       + '  **不要**用连珠炮多次 watch 把自己叫醒；连续无人回应会触达叫醒预算并自动停。\n'
       + '- `quality:"low"`（默认）798×462 ≈ 222 token；`standard` 1050×630 ≈ 392；`high` 1260×756 ≈ 560。\n'
@@ -69,7 +69,7 @@ export function glanceToolSpec() {
         },
         preferFrames: {
           type: 'integer',
-          description: 'watch 期望每张几帧就封箱，默认 2（对齐 see-now）。',
+          description: 'watch 期望每张几帧就封箱，默认 4（2×2）。',
         },
         maxWaitSec: {
           type: 'integer',

@@ -6,14 +6,24 @@ import {
   SHEET_DEFAULTS,
   WATCH_DEFAULTS,
 } from '../src/watch-loop.js'
+import { isShortAckReply } from '../src/pet-chat-memory.js'
 
-test('decideSheetFlush：prefer=2 即封', () => {
-  assert.equal(decideSheetFlush({ length: 2, sheetAgeSec: 0.1 }), 'prefer')
+test('decideSheetFlush：prefer=4 才封，2 帧继续等', () => {
+  assert.equal(decideSheetFlush({ length: 2, sheetAgeSec: 0.1 }), null)
+  assert.equal(decideSheetFlush({ length: 3, sheetAgeSec: 0.1 }), null)
+  assert.equal(decideSheetFlush({ length: 4, sheetAgeSec: 0.1 }), 'cap')
   assert.equal(decideSheetFlush({ length: 1, sheetAgeSec: 1 }), null)
 })
 
-test('decideSheetFlush：cap=4', () => {
-  assert.equal(decideSheetFlush({ length: 4, sheetAgeSec: 0 }), 'cap')
+test('decideSheetFlush：3 帧等到 maxWait 可封', () => {
+  assert.equal(decideSheetFlush({
+    length: 3,
+    sheetAgeSec: SHEET_DEFAULTS.maxWaitSec,
+  }), 'time')
+  assert.equal(decideSheetFlush({
+    length: 2,
+    sheetAgeSec: SHEET_DEFAULTS.maxWaitSec,
+  }), null)
 })
 
 test('decideSheetFlush：单帧等满 min(30, 2×maxWait)', () => {
@@ -25,24 +35,20 @@ test('decideSheetFlush：单帧等满 min(30, 2×maxWait)', () => {
     length: 1,
     sheetAgeSec: SHEET_DEFAULTS.maxWaitSec,
   }), null)
-  // maxWait 很大时仍封顶 30s（see-now region）
-  assert.equal(decideSheetFlush({
-    length: 1,
-    sheetAgeSec: 30,
-    maxWaitSec: 60,
-  }), 'time')
-  assert.equal(decideSheetFlush({
-    length: 1,
-    sheetAgeSec: 29,
-    maxWaitSec: 60,
-  }), null)
 })
 
-test('SHEET_DEFAULTS 对齐 see-now region', () => {
-  assert.equal(SHEET_DEFAULTS.preferFrames, 2)
+test('SHEET_DEFAULTS：优先 2×2', () => {
+  assert.equal(SHEET_DEFAULTS.preferFrames, 4)
   assert.equal(SHEET_DEFAULTS.maxFramesPerSheet, 4)
   assert.equal(SHEET_DEFAULTS.maxWaitSec, 15)
   assert.equal(SHEET_DEFAULTS.silentFloorSec, 20)
+})
+
+test('短应答识别', () => {
+  assert.equal(isShortAckReply('嗯'), true)
+  assert.equal(isShortAckReply('好'), true)
+  assert.equal(isShortAckReply('好的'), false)
+  assert.equal(isShortAckReply('画面在动'), false)
 })
 
 test('叫醒预算：第 9 次拒绝', () => {

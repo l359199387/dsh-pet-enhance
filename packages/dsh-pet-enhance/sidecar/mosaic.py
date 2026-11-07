@@ -75,8 +75,21 @@ def grid_plan(n: int, aspect_cell: float) -> tuple[int, int]:
 
 
 def layout_for_count(n: int, aspect: float = DEFAULT_ASPECT) -> tuple[int, int]:
-    """返回 (cols, rows)。横屏 2 帧 → 1×2；竖屏 2 帧 → 2×1；3–4 → 多为 2×2。"""
-    return grid_plan(n, aspect)
+    """
+    返回 (cols, rows)。
+    桌面横屏优先 2×2：3–4 帧强制 2×2；2 帧用 2×1 并排（避免 1×2 竖条）。
+    竖屏仍走 gridPlan（2 帧并排 2×1）。
+    """
+    count = max(1, min(MAX_FRAMES, int(n)))
+    aspect = float(aspect) if aspect and aspect > 0 else DEFAULT_ASPECT
+    if count <= 1:
+        return 1, 1
+    if count >= 3:
+        return 2, 2
+    # count == 2
+    if aspect >= 1:
+        return 2, 1
+    return grid_plan(count, aspect)
 
 
 def sheet_size(

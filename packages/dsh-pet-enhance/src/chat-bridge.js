@@ -25,6 +25,7 @@ import {
   shouldSkipGlanceBridge,
 } from './intent.js'
 import { runWatch } from './watch-loop.js'
+import { stripTrailingShortAcks } from './pet-chat-memory.js'
 
 /** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
 export function latestWatchPngPath(home) {
@@ -83,13 +84,12 @@ export function followUpPrompt(userText, shot) {
   )
 }
 
-/** 中间分张：让模型先看图存印象，短回即可。 */
+/** 中间分张：只让模型看图；对话里的短应答随后会被清掉。 */
 export function followUpWatchSheetPrompt(userText, result, index, total) {
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
     + `（盯屏拼图 ${index}/${total}）主人说「${String(userText).slice(0, 40)}」。`
-    + `这是第 ${index} 张，后面还有 ${total - index} 张。`
-    + '请先看清本张画面，只回「好」或「嗯」一字即可，等最后一张再总结。'
+    + '请查看本张附图，不要回复任何文字。'
   )
 }
 
@@ -99,15 +99,15 @@ export function followUpWatchPrompt(userText, result) {
   const delivered = Number(result?.deliveredSheets) || sheets
   const layout = `${result?.cols || '?'}×${result?.rows || '?'}`
   const sheetBit = delivered > 1
-    ? `${result?.framesKept ?? 0} 帧→共 ${sheets} 张拼图，刚才已按时间顺序分 ${delivered} 张附图给你（${layout}）。`
+    ? `${result?.framesKept ?? 0} 帧→共 ${sheets} 张拼图，已按时间顺序分 ${delivered} 张附图（多为 2×2，${layout}）。`
     : `${result?.framesKept ?? 0} 帧→一张 ${layout} 拼图。`
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
-    + `（盯屏拼图·最后一张 ${delivered}/${delivered}）主人说「${String(userText).slice(0, 40)}」。`
+    + `（盯屏拼图）主人说「${String(userText).slice(0, 40)}」。`
     + `盯了约 ${result?.elapsedSec ?? '?'}s，${sheetBit}`
     + silent
     + (delivered > 1
-      ? '请结合前面几张附图，用两三句口语说这段时间发生了什么；别装眼睛酸。'
+      ? '请结合全部附图，用两三句口语说这段时间发生了什么；别装眼睛酸。'
       : '请看拼图用两三句口语说发生了什么；别装眼睛酸。')
     + ` ${glancePersonaBlock().replace(/\n/g, ' ')}`
   )
@@ -199,7 +199,6 @@ export function createChatBridge(options) {
       if (!chat.ok || chat.data?.ok === false) {
         lastError = chat.data?.reason || chat.error || `http-${chat.status}`
         log(`chat-bridge 盯屏分张 ${i + 1}/${total} 失败：${lastError}`)
-        // 中间张失败则跳过继续；最后一张失败再走兜底
         if (!isLast) continue
         break
       }
@@ -208,6 +207,13 @@ export function createChatBridge(options) {
       lastReply = typeof chat.data?.text === 'string' ? chat.data.text : ''
       lastContent = prompt
       lastTs = Date.now()
+      // 中间张：模型已看过图；清掉「嗯/好」短回复，聊天里只留图
+      if (!isLast) {
+        const stripped = await stripTrailingShortAcks(pet).catch(() => null)
+        if (stripped?.removed) {
+          log(`chat-bridge 已去掉 ${stripped.removed} 条短应答`)
+        }
+      }
       log(`chat-bridge 盯屏分张 ${i + 1}/${total} 已送进对话`)
     }
 
@@ -305,7 +311,7 @@ export function createChatBridge(options) {
       }).catch(() => {})
 
       const notice = await broadcastToDshPet(
-        `好，我最多盯大约 ${seconds} 秒（有变化就留帧、够 2 帧就先拼一张）；盯完把拼图给你。`,
+        `好，我最多盯大约 ${seconds} 秒（有变化就留帧，优先凑满 4 帧拼成 2×2）；盯完把拼图给你。`,
         { pet, duration: Math.min(12_000, seconds * 200) },
       )
       if (!notice.ok || notice.data?.ok === false) {
