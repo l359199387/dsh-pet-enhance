@@ -153,6 +153,7 @@ export function createPetRouter(options) {
         // 已学 playbook 优先：再次执行少消化 token
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
         if (ran) break
+        // agent-bridge 会再冒「这事我来办」；此处不再重复
         await options.agentBridge.handleTask(userText)
         break
       }
@@ -162,6 +163,7 @@ export function createPetRouter(options) {
         // 「执行一下记录每日心情」等：即便粗分到 chat，也再试匹配已学自动化
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
         if (ran) break
+        // 纯闲聊：不叫醒主会话，留给 dsh-pet 原生聊天回答
         break
       }
     }

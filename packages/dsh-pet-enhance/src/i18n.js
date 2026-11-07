@@ -21,6 +21,8 @@ const ZH = Object.freeze({
   'bubble.liveOn': '好，开始盯屏幕；有变化会冒泡告诉你。',
   'bubble.liveOff': '好，不盯了；需要时再说「看一眼」。',
   'bubble.greet': '小蓝鲸已接入：随便聊；想看屏幕、教我操作、或让我动手，直接说就行，我会先判断再行动。',
+  'bubble.confirmAsk': '需要你确认：{summary}。请点我头顶「好 / 不要」，或右键「更多」里选。',
+  'bubble.taskTakeover': '这事我来办——去主会话看屏幕再动手…',
 
   'learned.title': '我学会的',
   'learned.sub': '卡片查看学习理解与执行记录；可搜索标题，对执行评价后会改正理解。编辑里的「补充」保存后也会并入理解并清空。',
@@ -92,6 +94,8 @@ const EN = Object.freeze({
   'bubble.liveOn': 'OK — watching the screen; I’ll bubble when something changes.',
   'bubble.liveOff': 'OK — not watching. Say “look at my screen” when you need a glance.',
   'bubble.greet': 'Blue Whale online: chat anytime; ask to look, teach me, or act — I’ll route first.',
+  'bubble.confirmAsk': 'Need your OK: {summary}. Tap 「好 / 不要」above my head, or More menu.',
+  'bubble.taskTakeover': 'I’ll handle this — checking the screen in the main session…',
 
   'learned.title': 'What I learned',
   'learned.sub': 'Cards show understanding and run history. Search titles; rate a run to refine understanding. Edit → Notes merges into understanding then clears.',

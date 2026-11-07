@@ -107,7 +107,8 @@ export function createAgentBridge(options) {
 
       try { options.resetActBudget?.() } catch { /* ignore */ }
       const preferred = options.getPreferredSessionId?.() ?? null
-      await broadcastToDshPet('好，我去主会话里看屏幕再动手…', { pet, duration: 8_000 })
+      // 与 i18n bubble.taskTakeover 对齐：任务走插件，闲聊留给 dsh-pet
+      await broadcastToDshPet('这事我来办——去主会话看屏幕再动手…', { pet, duration: 8_000 })
       try { options.onActing?.() } catch { /* ignore */ }
 
       const prompt = buildAgentWakePrompt(userText)

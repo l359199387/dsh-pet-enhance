@@ -568,7 +568,7 @@ function installTools(ctx, log, state) {
           getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
           getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
           onConfirmAsk: async () => {
-            // 确认气泡由网页 overlay / 桌面 Helper 头顶弹出；这里不再刷普通说话气泡抢注意力。
+            // 可见性：confirmGate.onPending → 说话气泡 + 右键「好/不要」；头顶 UI 仍由 overlay / Helper 补丁负责。
           },
           onPolicyDeny: async ({ code, userBubble, reason }) => {
             const text = userBubble
@@ -716,10 +716,12 @@ function installDshPetBridge(ctx, log, state, disposers) {
     const menuHit = (ev, key) => menuLabelVariants(key).some((label) => Boolean(ev?.[label]))
 
     const pushMenu = async () => {
+      const pending = state.confirmGate?.getPending?.()
+        ?? state.glance.snapshot().guard.pendingConfirm.data
       const r = await registerGlanceMenu({
         liveWatch,
         actEnabled,
-        pendingConfirm: false,
+        pendingConfirm: Boolean(pending?.id),
         locale,
       })
       if (r.ok) {
@@ -730,7 +732,16 @@ function installDshPetBridge(ctx, log, state, disposers) {
       return false
     }
 
-    state.onConfirmPending = null
+    /** 挂起确认：刷新「好/不要」菜单项 + 说话气泡（头顶 UI 可能在桌面窗/网页另一处）。 */
+    state.onConfirmPending = (pending) => {
+      pushMenu().catch(() => {})
+      if (!pending?.id) return
+      const summary = String(pending.summary || '').trim().slice(0, 120) || '需要确认'
+      broadcastToDshPet(
+        t(locale, 'bubble.confirmAsk', { summary }),
+        { duration: 50_000 },
+      ).catch(() => {})
+    }
     state.onLocaleChange = async (nextLocale) => {
       locale = String(nextLocale || locale)
       await pushMenu()
@@ -805,6 +816,19 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (menuHit(ev, 'menu.actOn') || menuHit(ev, 'menu.actOff')) {
         await setActEnabled(!actEnabled)
       }
+      if (menuHit(ev, 'menu.confirmYes') || menuHit(ev, 'menu.confirmNo')) {
+        const pending = state.confirmGate?.getPending?.()
+        if (pending?.id) {
+          const allow = menuHit(ev, 'menu.confirmYes')
+          state.confirmGate.resolve(pending.id, allow)
+          log(`dsh-pet 菜单确认 allow=${allow} id=${pending.id}`)
+          await pushMenu()
+          await broadcastToDshPet(
+            allow ? '已确认，继续做。' : '已拒绝，不再试。',
+            { duration: 6_000 },
+          )
+        }
+      }
     }
 
     loadSettings(home).then((s) => {
@@ -821,10 +845,18 @@ function installDshPetBridge(ctx, log, state, disposers) {
     teach.start()
     router.start()
     ensureMenu().catch(() => {})
+    let menuTicks = 0
     const timer = setInterval(() => {
-      ensureMenu().catch(() => {})
-      pollMenu().catch(() => {})
-    }, 4_000)
+      menuTicks += 1
+      // 有待确认时加快菜单事件轮询，避免点「好」要等好几秒才生效
+      const pending = Boolean(state.confirmGate?.getPending?.()?.id)
+      if (pending || menuTicks % 4 === 0) {
+        pollMenu().catch(() => {})
+      }
+      if (menuTicks % 4 === 0) {
+        ensureMenu().catch(() => {})
+      }
+    }, 1_000)
     return () => {
       stopped = true
       clearInterval(timer)
