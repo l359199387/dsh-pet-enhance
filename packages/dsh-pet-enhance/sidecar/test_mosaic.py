@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""拼图画布对齐与布局单测。"""
+"""拼图画布对齐、布局与 cover 消黑边单测。"""
 
 from __future__ import annotations
 
@@ -16,22 +16,67 @@ class MosaicTests(unittest.TestCase):
             self.assertEqual(w % 42, 0, q)
             self.assertEqual(h % 42, 0, q)
 
-    def test_layout_see_now(self):
-        self.assertEqual(mosaic.layout_for_count(1), (1, 1))
-        self.assertEqual(mosaic.layout_for_count(2), (2, 1))
-        self.assertEqual(mosaic.layout_for_count(3), (2, 2))
-        self.assertEqual(mosaic.layout_for_count(4), (2, 2))
-        # 超过 4 仍按 4 裁
-        self.assertEqual(mosaic.layout_for_count(8), (2, 2))
+    def test_layout_landscape(self):
+        # 横屏 16:9：2 帧上下叠更接近正方形
+        self.assertEqual(mosaic.layout_for_count(1, 16 / 9), (1, 1))
+        self.assertEqual(mosaic.layout_for_count(2, 16 / 9), (1, 2))
+        # 3 帧横屏：1×3 比 2×2（空一格）更接近 1:1
+        self.assertEqual(mosaic.layout_for_count(3, 16 / 9), (1, 3))
+        self.assertEqual(mosaic.layout_for_count(4, 16 / 9), (2, 2))
 
-    def test_compose_four(self):
-        frames = [{"image": Image.new("RGB", (100, 60), (i * 40, 20, 20))} for i in range(4)]
+    def test_layout_portrait(self):
+        # 竖屏 9:16：2 帧并排
+        self.assertEqual(mosaic.layout_for_count(2, 9 / 16), (2, 1))
+        self.assertEqual(mosaic.layout_for_count(4, 9 / 16), (2, 2))
+
+    def test_compose_four_aligned(self):
+        frames = [{"image": Image.new("RGB", (160, 90), (i * 40, 20, 20))} for i in range(4)]
         img, meta = mosaic.compose_mosaic(frames, quality="low")
-        self.assertEqual(meta["w"], 798)
-        self.assertEqual(meta["h"], 462)
         self.assertEqual(meta["cols"], 2)
         self.assertEqual(meta["rows"], 2)
-        self.assertEqual(img.size, (798, 462))
+        self.assertEqual(meta["w"] % 42, 0)
+        self.assertEqual(meta["h"] % 42, 0)
+        self.assertEqual(img.size, (meta["w"], meta["h"]))
+
+    def test_compose_two_landscape_no_letterbox(self):
+        """横屏 2 帧：1×2 布局；格内 cover 填满，四角不是垫底灰。"""
+        red = (220, 40, 40)
+        frames = [{"image": Image.new("RGB", (320, 180), red)} for _ in range(2)]
+        img, meta = mosaic.compose_mosaic(frames, quality="low")
+        self.assertEqual(meta["cols"], 1)
+        self.assertEqual(meta["rows"], 2)
+        self.assertEqual(meta["w"] % 42, 0)
+        self.assertEqual(meta["h"] % 42, 0)
+
+        strip = meta["strip"]
+        body_h = meta["h"] - strip
+        cell_w = meta["w"] // meta["cols"]
+        cell_h = body_h // meta["rows"]
+        # 避开顶部标签条，取格内四角内侧
+        samples = [
+            (2, 16),
+            (cell_w - 3, 16),
+            (2, cell_h - 3),
+            (cell_w - 3, cell_h - 3),
+            (2, cell_h + 16),
+            (cell_w - 3, cell_h + cell_h - 3),
+        ]
+        pad = (24, 24, 28)
+        bg = (18, 18, 22)
+        for x, y in samples:
+            px = img.getpixel((x, y))
+            self.assertNotEqual(px, pad, f"letterbox at {(x, y)}")
+            self.assertNotEqual(px, bg, f"empty cell at {(x, y)}")
+            # cover 后应接近纯红
+            self.assertGreater(px[0], 180, f"not filled red at {(x, y)}: {px}")
+
+    def test_cover_fills_box(self):
+        src = Image.new("RGB", (200, 100), (10, 200, 10))
+        out = mosaic._cover(src, 80, 80)
+        self.assertEqual(out.size, (80, 80))
+        # 中心与边都应是绿（无灰边）
+        for pt in [(0, 0), (79, 0), (0, 79), (79, 79), (40, 40)]:
+            self.assertEqual(out.getpixel(pt), (10, 200, 10), pt)
 
     def test_stack_vertical(self):
         a = Image.new("RGB", (100, 40), (10, 0, 0))

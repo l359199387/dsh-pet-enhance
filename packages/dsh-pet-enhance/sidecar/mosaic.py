@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""多帧拼图：对齐 see-now region —— 1 / 2×1 / 2×2（最多 4 格），画布对齐 42px。
+"""多帧拼图：对齐 see-now —— 最多 4 格；cover 填格消黑边；按源比例选布局并自适应画布。
 超过 4 帧由上层拆成多张拼图。"""
 
 from __future__ import annotations
 
+import math
 from io import BytesIO
 
-# 与 docs/03 §7、capture.CANVAS_WIDTH 对齐
+# 与 docs/03 §7、capture.CANVAS_WIDTH 对齐（单帧参考画布 / token 预算锚点）
 CANVAS = {
     "low": (798, 462),
     "standard": (1050, 630),
@@ -15,6 +16,7 @@ CANVAS = {
 STRIP = {"low": 12, "standard": 30, "high": 36}
 CELL = 42
 MAX_FRAMES = 4
+DEFAULT_ASPECT = 16 / 9
 
 
 def normalize_quality(value: str | None) -> str:
@@ -26,14 +28,102 @@ def canvas_size(quality: str | None) -> tuple[int, int]:
     return CANVAS[normalize_quality(quality)]
 
 
-def layout_for_count(n: int) -> tuple[int, int]:
-    """返回 (cols, rows)。对齐 see-now：1→1×1；2→2×1；3–4→2×2。"""
+def align_down(px: int, step: int = CELL) -> int:
+    n = max(0, int(px))
+    return max(step, (n // step) * step)
+
+
+def frame_aspect(frames: list) -> float:
+    """取首帧宽高比；无效则默认 16:9。"""
+    for item in frames or []:
+        img = item.get("image") if isinstance(item, dict) else item
+        if img is None:
+            continue
+        w = getattr(img, "width", 0) or 0
+        h = getattr(img, "height", 0) or 0
+        if w > 0 and h > 0:
+            return w / h
+    return DEFAULT_ASPECT
+
+
+def grid_plan(n: int, aspect_cell: float) -> tuple[int, int]:
+    """
+    n 帧、单格宽高比 → 选整图最接近 1:1 的 (cols, rows)。
+    移植自 see-now layout.gridPlan（含空格惩罚、同向优先）。
+    """
     count = max(1, min(MAX_FRAMES, int(n)))
-    if count <= 1:
-        return 1, 1
-    if count == 2:
-        return 2, 1
-    return 2, 2
+    aspect = float(aspect_cell) if aspect_cell and aspect_cell > 0 else 1.0
+    squarish = abs(aspect - 1.0) < 1e-9
+
+    def score_of(cols: int, rows: int) -> tuple:
+        width = cols * aspect
+        ratio = width / rows
+        holes = cols * rows - count
+        score = abs(math.log(ratio)) + (holes / count)
+        same_dir = (ratio >= 1) == (aspect >= 1)
+        return (score, 0 if (squarish or same_dir) else 1, -cols)
+
+    best = None
+    best_key = None
+    for cols in range(1, count + 1):
+        rows = math.ceil(count / cols)
+        key = score_of(cols, rows)
+        if best is None or key < best_key:
+            best = (cols, rows)
+            best_key = key
+    return best or (1, 1)
+
+
+def layout_for_count(n: int, aspect: float = DEFAULT_ASPECT) -> tuple[int, int]:
+    """返回 (cols, rows)。横屏 2 帧 → 1×2；竖屏 2 帧 → 2×1；3–4 → 多为 2×2。"""
+    return grid_plan(n, aspect)
+
+
+def sheet_size(
+    quality: str | None,
+    cols: int,
+    rows: int,
+    aspect_cell: float,
+) -> tuple[int, int, int]:
+    """
+    按源格比例算画布：面积贴近档位画布（控 token），宽高对齐 42。
+    返回 (W, H, strip)。
+    """
+    q = normalize_quality(quality)
+    base_w, base_h = canvas_size(q)
+    strip = STRIP[q]
+    cols = max(1, int(cols))
+    rows = max(1, int(rows))
+    aspect = float(aspect_cell) if aspect_cell and aspect_cell > 0 else DEFAULT_ASPECT
+    body_aspect = (cols * aspect) / rows  # body 宽/高
+
+    target_area = float(base_w * base_h)
+    # body_w * body_h ≈ target；body_w = body_aspect * body_h
+    h_body = math.sqrt(target_area / body_aspect)
+    w = body_aspect * h_body
+
+    W = align_down(int(round(w)))
+    # 保证可被列数整除（等宽格）
+    while W >= CELL * cols and (W // cols) * cols != W:
+        W -= CELL
+    if W < CELL * cols:
+        W = CELL * cols
+
+    H = align_down(int(round(h_body + strip)))
+    body_h = H - strip
+    while body_h >= CELL * rows and (body_h // rows) * rows != body_h:
+        H -= CELL
+        body_h = H - strip
+    if body_h < CELL * rows:
+        body_h = CELL * rows
+        H = align_down(body_h + strip)
+        # 对齐后 strip 可能变；以 H - body 为实际 strip 不强制，compose 用 STRIP[q]
+        if H - strip < body_h:
+            H = body_h + strip
+            if H % CELL != 0:
+                H += CELL - (H % CELL)
+
+    return W, H, strip
 
 
 def _pil_resample():
@@ -41,21 +131,23 @@ def _pil_resample():
     return getattr(Image, "Resampling", Image).LANCZOS
 
 
-def _fit(image, box_w: int, box_h: int):
+def _cover(image, box_w: int, box_h: int):
+    """覆盖式填格：短边铺满、长边居中裁掉，不留黑边（对齐 see-now cover）。"""
     from PIL import Image
 
     img = image.convert("RGB")
-    if img.width <= 0 or img.height <= 0 or box_w <= 0 or box_h <= 0:
-        return Image.new("RGB", (max(1, box_w), max(1, box_h)), (24, 24, 28))
-    scale = min(box_w / img.width, box_h / img.height)
+    bw = max(1, int(box_w))
+    bh = max(1, int(box_h))
+    if img.width <= 0 or img.height <= 0:
+        return Image.new("RGB", (bw, bh), (24, 24, 28))
+
+    scale = max(bw / img.width, bh / img.height)
     nw = max(1, int(round(img.width * scale)))
     nh = max(1, int(round(img.height * scale)))
     resized = img.resize((nw, nh), resample=_pil_resample())
-    canvas = Image.new("RGB", (box_w, box_h), (24, 24, 28))
-    ox = (box_w - nw) // 2
-    oy = (box_h - nh) // 2
-    canvas.paste(resized, (ox, oy))
-    return canvas
+    ox = max(0, (nw - bw) // 2)
+    oy = max(0, (nh - bh) // 2)
+    return resized.crop((ox, oy, ox + bw, oy + bh))
 
 
 def compose_mosaic(
@@ -65,21 +157,21 @@ def compose_mosaic(
     labels: list[str] | None = None,
 ):
     """
-    frames: [{image: PIL.Image, ...}, ...] 最多 4 张 → 按 layout_for_count。
+    frames: [{image: PIL.Image, ...}, ...] 最多 4 张。
     返回 (PIL.Image, meta dict)。
     """
     from PIL import Image, ImageDraw, ImageFont
 
     q = normalize_quality(quality)
-    W, H = canvas_size(q)
+    n = max(1, min(MAX_FRAMES, len(frames) or 1))
+    aspect = frame_aspect(frames)
+    cols, rows = layout_for_count(n, aspect)
+    W, H, strip = sheet_size(q, cols, rows, aspect)
     assert W % CELL == 0 and H % CELL == 0, "画布必须对齐 42"
 
-    n = max(1, min(MAX_FRAMES, len(frames) or 1))
-    cols, rows = layout_for_count(n)
-    strip = STRIP[q]
-    body_h = H - strip
-    cell_w = W // cols
-    cell_h = body_h // rows
+    body_h = max(1, H - strip)
+    cell_w = max(1, W // cols)
+    cell_h = max(1, body_h // rows)
 
     out = Image.new("RGB", (W, H), (18, 18, 22))
     draw = ImageDraw.Draw(out)
@@ -94,7 +186,10 @@ def compose_mosaic(
         x0 = col * cell_w
         y0 = row * cell_h
         img = frames[i].get("image") if isinstance(frames[i], dict) else frames[i]
-        cell = _fit(img, cell_w - 2, cell_h - 2)
+        # 1px 缝用背景色，格内 cover 填满
+        inner_w = max(1, cell_w - 2)
+        inner_h = max(1, cell_h - 2)
+        cell = _cover(img, inner_w, inner_h)
         out.paste(cell, (x0 + 1, y0 + 1))
         label = None
         if labels and i < len(labels):
@@ -118,11 +213,12 @@ def compose_mosaic(
         "rows": rows,
         "frames": n,
         "strip": strip,
+        "aspect": round(aspect, 4),
     }
 
 
 def stack_vertical(images: list, *, gap: int = 8):
-    """把多张已合成的拼图自上而下叠成一张（每张仍是完整 2×2 清晰度）。"""
+    """把多张已合成的拼图自上而下叠成一张。"""
     from PIL import Image
 
     if not images:

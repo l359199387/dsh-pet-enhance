@@ -1,7 +1,7 @@
 /**
  * `glance({action:"watch"})`：阻塞盯屏 → 变化分选帧 → 按 see-now 节奏封成 sheet。
  * 对齐 @_ref/dsh-see-now：变化驱动留帧；prefer≈2 / cap=4 / maxWait 封箱；
- * 布局 1→1×1、2→2×1、3–4→2×2；静止约 20s 兜底。
+ * 拼图 cover 填格消黑边；布局按源比例自适应（横屏 2→1×2）；静止约 20s 兜底。
  *
  * @module src/watch-loop.js
  */
