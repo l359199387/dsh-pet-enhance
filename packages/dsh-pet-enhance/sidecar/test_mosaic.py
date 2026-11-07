@@ -20,6 +20,8 @@ class MosaicTests(unittest.TestCase):
         self.assertEqual(mosaic.layout_for_count(1), (1, 1))
         self.assertEqual(mosaic.layout_for_count(4), (2, 2))
         self.assertEqual(mosaic.layout_for_count(8), (4, 2))
+        self.assertEqual(mosaic.layout_for_count(10), (4, 3))
+        self.assertEqual(mosaic.layout_for_count(12), (4, 3))
 
     def test_compose_four(self):
         frames = [{"image": Image.new("RGB", (100, 60), (i * 40, 20, 20))} for i in range(4)]

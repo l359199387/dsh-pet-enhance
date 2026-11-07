@@ -13,7 +13,7 @@ export const WATCH_DEFAULTS = Object.freeze({
   seconds: 60,
   maxSeconds: 600,
   frames: 4,
-  maxFrames: 8,
+  maxFrames: 12,
   sampleMs: 1000,
   maxAutonomousWakes: 8,
 })
@@ -68,10 +68,10 @@ function clampInt(v, lo, hi, fallback) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)))
 }
 
-/** 按时长给「最多留几帧」：约每 5 秒一格，2–8（30 秒约 6 格）。 */
+/** 按时长给「最多留几帧」：约每 3 秒一格，2–12（30 秒约 10 格）。 */
 export function watchFrameBudget(seconds) {
   const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 5)))
+  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 3)))
 }
 
 /** 静止兜底间隔：短盯密一点，长盯最多 20s。 */

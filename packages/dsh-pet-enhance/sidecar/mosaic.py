@@ -24,14 +24,19 @@ def canvas_size(quality: str | None) -> tuple[int, int]:
     return CANVAS[normalize_quality(quality)]
 
 
+MAX_FRAMES = 12
+
+
 def layout_for_count(n: int) -> tuple[int, int]:
-    """返回 (cols, rows)。1→1×1；2–4→2×2；5–8→4×2。"""
-    count = max(1, min(8, int(n)))
+    """返回 (cols, rows)。1→1×1；2–4→2×2；5–8→4×2；9–12→4×3。"""
+    count = max(1, min(MAX_FRAMES, int(n)))
     if count <= 1:
         return 1, 1
     if count <= 4:
         return 2, 2
-    return 4, 2
+    if count <= 8:
+        return 4, 2
+    return 4, 3
 
 
 def _pil_resample():
@@ -63,7 +68,7 @@ def compose_mosaic(
     labels: list[str] | None = None,
 ):
     """
-    frames: [{image: PIL.Image, ...}, ...] 最多 8 张。
+    frames: [{image: PIL.Image, ...}, ...] 最多 12 张。
     返回 (PIL.Image, meta dict)。
     """
     from PIL import Image, ImageDraw, ImageFont
@@ -72,7 +77,7 @@ def compose_mosaic(
     W, H = canvas_size(q)
     assert W % CELL == 0 and H % CELL == 0, "画布必须对齐 42"
 
-    n = max(1, min(8, len(frames) or 1))
+    n = max(1, min(MAX_FRAMES, len(frames) or 1))
     cols, rows = layout_for_count(n)
     strip = STRIP[q]
     body_h = H - strip

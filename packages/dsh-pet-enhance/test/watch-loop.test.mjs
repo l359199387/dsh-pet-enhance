@@ -8,10 +8,10 @@ import {
 } from '../src/watch-loop.js'
 
 test('watchFrameBudget 按时长估最多帧数', () => {
-  assert.equal(watchFrameBudget(30), 6)
-  assert.equal(watchFrameBudget(60), 8)
-  assert.equal(watchFrameBudget(10), 2)
-  assert.equal(watchFrameBudget(20), 4)
+  assert.equal(watchFrameBudget(30), 10)
+  assert.equal(watchFrameBudget(60), 12)
+  assert.equal(watchFrameBudget(10), 4)
+  assert.equal(watchFrameBudget(20), 7)
 })
 
 test('watchSilentFloorSec 短盯更密', () => {
