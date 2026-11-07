@@ -44,6 +44,7 @@ import {
   createFrameRecorder,
   describeClickFramesForPrompt,
   MAX_DIGEST_IMAGES,
+  MAX_DIGEST_SHEETS,
   teachFramesDir,
 } from './teach-frames.js'
 import { digestEvidenceCount } from './teach-digest.js'
@@ -476,9 +477,9 @@ export function createTeachBridge(options) {
     const preferred = options.getPreferredSessionId?.() ?? null
     const askOnce = async (imageList) => {
       const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
-      // 多张 2×2 拼图分张交给模型（与盯屏一致）；不再强制只交 1 张
+      // 多张 2×2 拼图分张交给模型（格数硬顶 ≠ 张数硬顶）
       const maxImages = Math.min(
-        MAX_DIGEST_IMAGES,
+        MAX_DIGEST_SHEETS,
         Math.max(1, imageList.length),
       )
       const woken = await wake(options.ctx, {

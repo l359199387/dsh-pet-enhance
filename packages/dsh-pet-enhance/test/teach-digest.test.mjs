@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   buildTeachDigestImages,
   chunkFramesForSheets,
+  DIGEST_BUDGET,
   dedupeDigestItems,
   describeDigestImagesForPrompt,
   digestEvidenceCount,
@@ -15,12 +16,35 @@ const tinyPng = Buffer.from(
   'hex',
 )
 
-test('sampleFramesForDigest 保首尾', () => {
+test('sampleFramesForDigest：点击过多才均匀抽，保首尾', () => {
   const list = Array.from({ length: 20 }, (_, i) => ({ role: 'click', i, file: `${i}.png` }))
-  const picked = sampleFramesForDigest(list, 8)
+  const picked = sampleFramesForDigest(list)
   assert.equal(picked[0].i, 0)
   assert.equal(picked.at(-1).i, 19)
-  assert.ok(picked.length <= 8)
+  assert.equal(picked.length, DIGEST_BUDGET.evidenceCap)
+  assert.ok(picked.length <= DIGEST_BUDGET.absoluteMax)
+})
+
+test('sampleFramesForDigest：点击优先全留，普通帧少喂', () => {
+  const clicks = Array.from({ length: 10 }, (_, i) => ({ role: 'click', i, kind: 'c' }))
+  const ctx = [
+    { role: 'key', i: 100, kind: 'k' },
+    { role: 'supplement', i: 101, kind: 's' },
+    { role: 'key', i: 102, kind: 'k2' },
+  ]
+  const picked = sampleFramesForDigest([...clicks, ...ctx])
+  const clickN = picked.filter((f) => f.role === 'click').length
+  const ctxN = picked.filter((f) => f.role === 'key' || f.role === 'supplement').length
+  assert.equal(clickN, 10, '10 次点击应全留（未超 evidenceCap）')
+  assert.ok(ctxN <= DIGEST_BUDGET.contextCap)
+  assert.ok(picked.length <= DIGEST_BUDGET.absoluteMax)
+})
+
+test('sampleFramesForDigest：无点击时只少抽上下文', () => {
+  const ctx = Array.from({ length: 8 }, (_, i) => ({ role: 'key', i }))
+  const picked = sampleFramesForDigest(ctx)
+  assert.ok(picked.length <= DIGEST_BUDGET.absoluteMax)
+  assert.ok(picked.length <= 4)
 })
 
 test('chunkFramesForSheets：按 4 切开', () => {

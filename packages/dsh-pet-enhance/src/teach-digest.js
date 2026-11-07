@@ -9,25 +9,89 @@ import { formatMouseButtonLabel } from './teach-store.js'
 
 /** 连续两帧变化分低于此值视为重复（与选帧 dupMin 同口径）。 */
 export const DIGEST_DEDUP_MIN = 8
-/** 喂模型前抽样上限（可拆成多张 2×2）。 */
-export const DIGEST_MOSAIC_MAX = 8
 /** 每张拼图最多几格（与 mosaic.MAX_FRAMES / 盯屏 2×2 对齐）。 */
 export const DIGEST_SHEET_FRAMES = 4
 export const DIGEST_MOSAIC_QUALITY = 'low'
+
+/**
+ * 喂模型预算（自适应，不是死 8）：
+ * - 点击/滑轮尽量全留，超过 evidenceCap 才均匀抽
+ * - 开场/收尾等普通帧最多 contextCap
+ * - absoluteMax 为硬顶（→ 最多几张 2×2）
+ */
+export const DIGEST_BUDGET = Object.freeze({
+  evidenceCap: 12,
+  contextCap: 2,
+  absoluteMax: 16,
+  sheetFrames: DIGEST_SHEET_FRAMES,
+})
+
+/** @deprecated 兼容旧名：等于硬顶 absoluteMax */
+export const DIGEST_MOSAIC_MAX = DIGEST_BUDGET.absoluteMax
+
 const CLICK_CROP_SIZE = 400
 
-/** 从过多证据帧里均匀抽 N 张（保留首尾）。与 teach-frames.sampleFramesForDigest 同口径。 */
-export function sampleFramesForDigest(frameList, limit = DIGEST_MOSAIC_MAX) {
-  const evidence = (frameList || []).filter((f) => f.role === 'click' || f.role === 'scroll')
-  const context = (frameList || []).filter((f) => f.role === 'key' || f.role === 'supplement')
-  const pool = evidence.length ? evidence : context
-  if (pool.length <= limit) return pool.slice()
-  const idxs = new Set([0, pool.length - 1])
-  const mid = Math.max(1, limit - 2)
+function isEvidenceRole(role) {
+  return role === 'click' || role === 'scroll'
+}
+
+function isContextRole(role) {
+  return role === 'key' || role === 'supplement'
+}
+
+/** 均匀抽 n 个下标（保首尾）。 */
+function uniformIndices(length, n) {
+  const len = Math.max(0, length)
+  const want = Math.max(0, Math.min(len, Math.trunc(n)))
+  if (want <= 0) return []
+  if (len <= want) return Array.from({ length: len }, (_, i) => i)
+  const idxs = new Set([0, len - 1])
+  const mid = Math.max(1, want - 2)
   for (let i = 1; i <= mid; i += 1) {
-    idxs.add(Math.round((i * (pool.length - 1)) / (mid + 1)))
+    idxs.add(Math.round((i * (len - 1)) / (mid + 1)))
   }
-  return [...idxs].sort((a, b) => a - b).slice(0, limit).map((i) => pool[i])
+  return [...idxs].sort((a, b) => a - b).slice(0, want)
+}
+
+/**
+ * 点击/滑轮优先，普通帧少喂。
+ * @param {object[]} frameList
+ * @param {number | Partial<typeof DIGEST_BUDGET> & { absoluteMax?: number }} [limitOrOpts]
+ *        传 number 时视为 absoluteMax（兼容旧调用）。
+ */
+export function sampleFramesForDigest(frameList, limitOrOpts) {
+  const list = Array.isArray(frameList) ? frameList : []
+  const opts = typeof limitOrOpts === 'number'
+    ? { absoluteMax: limitOrOpts }
+    : (limitOrOpts && typeof limitOrOpts === 'object' ? limitOrOpts : {})
+  const evidenceCap = Math.max(1, Number(opts.evidenceCap) || DIGEST_BUDGET.evidenceCap)
+  const contextCap = opts.contextCap != null
+    ? Math.max(0, Number(opts.contextCap) || 0)
+    : DIGEST_BUDGET.contextCap
+  const absoluteMax = Math.max(1, Number(opts.absoluteMax) || DIGEST_BUDGET.absoluteMax)
+
+  const indexed = list.map((f, i) => ({ f, i }))
+  const evidence = indexed.filter(({ f }) => isEvidenceRole(f.role))
+  const context = indexed.filter(({ f }) => isContextRole(f.role))
+
+  /** @type {{ f: object, i: number }[]} */
+  let picked
+  if (!evidence.length) {
+    // 没有点击/滑轮：只从上下文里少抽一点
+    const pool = context.length ? context : indexed
+    const n = Math.min(absoluteMax, Math.max(DIGEST_SHEET_FRAMES, contextCap * 2 || 4))
+    picked = uniformIndices(pool.length, n).map((k) => pool[k])
+  } else {
+    const evN = Math.min(evidenceCap, absoluteMax, evidence.length)
+    const ev = uniformIndices(evidence.length, evN).map((k) => evidence[k])
+    const room = Math.max(0, absoluteMax - ev.length)
+    const ctxN = Math.min(contextCap, room, context.length)
+    const ctx = ctxN > 0
+      ? uniformIndices(context.length, ctxN).map((k) => context[k])
+      : []
+    picked = [...ev, ...ctx].sort((a, b) => a.i - b.i)
+  }
+  return picked.map(({ f }) => f)
 }
 
 /**
@@ -163,11 +227,13 @@ async function composeOneSheet(batch, indexBase, sheetIndex, sheetTotal, quality
  * @returns {Promise<object[]>}
  */
 export async function buildTeachDigestImages(frameList, options) {
-  const limit = options.limit ?? DIGEST_MOSAIC_MAX
   const sheetSize = options.sheetSize ?? DIGEST_SHEET_FRAMES
   const quality = options.quality ?? DIGEST_MOSAIC_QUALITY
   const log = options.log ?? (() => {})
-  const picked = sampleFramesForDigest(frameList, limit)
+  const budgetOpts = options.limit != null
+    ? { absoluteMax: options.limit, ...options.budget }
+    : (options.budget || {})
+  const picked = sampleFramesForDigest(frameList, budgetOpts)
   const loaded = []
   for (const f of picked) {
     try {

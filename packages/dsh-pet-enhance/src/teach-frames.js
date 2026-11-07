@@ -11,7 +11,8 @@ import { captureFrame } from './capture.js'
 import {
   buildTeachDigestImages,
   describeDigestImagesForPrompt,
-  DIGEST_MOSAIC_MAX,
+  DIGEST_BUDGET,
+  DIGEST_SHEET_FRAMES,
   sampleFramesForDigest as sampleDigestPool,
 } from './teach-digest.js'
 
@@ -23,16 +24,18 @@ export const MAX_CLICK_FRAMES = 40
 /** 滑轮起止帧软上限（每次手势 2 张） */
 export const MAX_SCROLL_FRAMES = 24
 /**
- * 理解阶段喂模型的「证据格」上限。
- * 实际交图：去重后拼成 **1 张**（~222 token）；失败才退回最多 8 张分图。
+ * 理解阶段喂模型的格数硬顶（点击优先；普通帧少喂，见 DIGEST_BUDGET）。
+ * 交图：去重后按 4 帧拆多张 2×2。
  */
-export const MAX_DIGEST_IMAGES = DIGEST_MOSAIC_MAX
+export const MAX_DIGEST_IMAGES = DIGEST_BUDGET.absoluteMax
+/** 理解阶段最多交几张拼图 */
+export const MAX_DIGEST_SHEETS = Math.ceil(DIGEST_BUDGET.absoluteMax / DIGEST_SHEET_FRAMES)
 /** @deprecated 旧合计上限；现点击/滑轮帧单独预算 */
 export const MAX_TOTAL_FRAMES = MAX_KEY_FRAMES + MAX_SUPPLEMENT_FRAMES + MAX_CLICK_FRAMES + MAX_SCROLL_FRAMES
 
-/** 从过多证据帧里均匀抽 N 张（保留首尾）。 */
-export function sampleFramesForDigest(frameList, limit = MAX_DIGEST_IMAGES) {
-  return sampleDigestPool(frameList, limit)
+/** 点击/滑轮优先抽样（见 teach-digest.sampleFramesForDigest）。 */
+export function sampleFramesForDigest(frameList, limitOrOpts) {
+  return sampleDigestPool(frameList, limitOrOpts)
 }
 
 /** 点击证据：鼠标附近正方形边长（屏幕像素） */
