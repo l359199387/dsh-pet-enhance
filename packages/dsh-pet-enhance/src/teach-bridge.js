@@ -46,6 +46,7 @@ import {
   MAX_DIGEST_IMAGES,
   teachFramesDir,
 } from './teach-frames.js'
+import { digestEvidenceCount } from './teach-digest.js'
 import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
@@ -475,12 +476,13 @@ export function createTeachBridge(options) {
     const preferred = options.getPreferredSessionId?.() ?? null
     const askOnce = async (imageList) => {
       const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
+      const maxImages = imageList.some((img) => img?.mosaic) ? 1 : MAX_DIGEST_IMAGES
       const woken = await wake(options.ctx, {
         text: prompt,
         preferredId: preferred,
         images: imageList,
         attachments: options.attachments,
-        maxImages: MAX_DIGEST_IMAGES,
+        maxImages,
         log,
       })
       if (!woken.ok) {
@@ -488,7 +490,11 @@ export function createTeachBridge(options) {
         return { needMore: false, summary: narrative, fastPlan: '' }
       }
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
-      log(`teach digest 附图成功 ${woken.imageCount ?? 0} 张（失败 ${woken.imageFailed ?? 0}）`)
+      const cells = digestEvidenceCount(imageList)
+      log(
+        `teach digest 附图成功 ${woken.imageCount ?? 0} 张`
+        + `（证据格 ${cells}；失败 ${woken.imageFailed ?? 0}）`,
+      )
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 90_000,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
@@ -512,7 +518,9 @@ export function createTeachBridge(options) {
     return {
       summary: parsed.summary || narrative,
       fastPlan: parsed.fastPlan || '',
-      usedFrames: imgs.length,
+      usedFrames: digestEvidenceCount(imgs),
+      digestImages: imgs.length,
+      mosaic: Boolean(imgs[0]?.mosaic),
       supplemented,
       frameDir: teachFramesDir(options.home, id),
     }
@@ -606,7 +614,7 @@ export function createTeachBridge(options) {
     }
 
     // 1) 点击截图（含图内坐标）+ 文字 → 模型理解；不执行
-    await broadcastToDshPet('好，我用每次点击的截图理解你刚才的操作…', { pet, duration: 6_000 })
+    await broadcastToDshPet('好，我把关键点击截图拼成一张来理解（省 token）…', { pet, duration: 6_000 })
     const playbook = buildPlaybook(goal, steps, id)
     if (frames) {
       attachClickFramesToPlaybook(playbook, frames.list())

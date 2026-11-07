@@ -12,10 +12,17 @@ import { buildC3DisciplineBlock } from './c3-task.js'
  * @param {object[]} [images]
  */
 export function buildTeachSmartDigestPrompt(goal, narrative, images) {
-  const frameCount = Array.isArray(images) ? images.length : Number(images) || 0
+  const list = Array.isArray(images) ? images : null
+  const mosaic = list?.[0]?.mosaic ? list[0] : null
+  const cellCount = mosaic
+    ? (Number(mosaic.sourceCount) || mosaic.cells?.length || 1)
+    : (list ? list.length : Number(images) || 0)
+  const attachLine = mosaic
+    ? `附图 1 张拼图（约 222 token），内含 ${cellCount} 格证据（按格号看点击坐标；不是必须逐步复刻的脚本）。`
+    : `附图 ${cellCount} 张（证据，不是必须逐步复刻的脚本）。`
   return (
     `【教学理解·仅学习·要变通】目标草稿：「${String(goal || '').slice(0, 80)}」。`
-    + `附图 ${frameCount} 张（证据，不是必须逐步复刻的脚本）。\n`
+    + `${attachLine}\n`
     + `步骤摘要：\n${String(narrative || '').slice(0, 700)}\n`
     + '请拆解主人真正想达成的结果。若有电脑更快的方式（打开网址、写/编辑文件、快捷键、命令），'
     + '优先写快捷路径，不要鼓励机械复刻每一次点击。\n'

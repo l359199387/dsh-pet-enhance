@@ -8,7 +8,12 @@
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { captureFrame } from './capture.js'
-import { formatMouseButtonLabel } from './teach-store.js'
+import {
+  buildTeachDigestImages,
+  describeDigestImagesForPrompt,
+  DIGEST_MOSAIC_MAX,
+  sampleFramesForDigest as sampleDigestPool,
+} from './teach-digest.js'
 
 /** 开场/换窗/收尾等上下文关键帧上限（不含点击帧） */
 export const MAX_KEY_FRAMES = 5
@@ -17,23 +22,17 @@ export const MAX_SUPPLEMENT_FRAMES = 2
 export const MAX_CLICK_FRAMES = 40
 /** 滑轮起止帧软上限（每次手势 2 张） */
 export const MAX_SCROLL_FRAMES = 24
-/** 理解阶段最多喂给模型的附图数（控 token；其余只在文字里写路径） */
-export const MAX_DIGEST_IMAGES = 8
+/**
+ * 理解阶段喂模型的「证据格」上限。
+ * 实际交图：去重后拼成 **1 张**（~222 token）；失败才退回最多 8 张分图。
+ */
+export const MAX_DIGEST_IMAGES = DIGEST_MOSAIC_MAX
 /** @deprecated 旧合计上限；现点击/滑轮帧单独预算 */
 export const MAX_TOTAL_FRAMES = MAX_KEY_FRAMES + MAX_SUPPLEMENT_FRAMES + MAX_CLICK_FRAMES + MAX_SCROLL_FRAMES
 
 /** 从过多证据帧里均匀抽 N 张（保留首尾）。 */
 export function sampleFramesForDigest(frameList, limit = MAX_DIGEST_IMAGES) {
-  const evidence = (frameList || []).filter((f) => f.role === 'click' || f.role === 'scroll')
-  const context = (frameList || []).filter((f) => f.role === 'key' || f.role === 'supplement')
-  const pool = evidence.length ? evidence : context
-  if (pool.length <= limit) return pool.slice()
-  const idxs = new Set([0, pool.length - 1])
-  const mid = Math.max(1, limit - 2)
-  for (let i = 1; i <= mid; i += 1) {
-    idxs.add(Math.round((i * (pool.length - 1)) / (mid + 1)))
-  }
-  return [...idxs].sort((a, b) => a - b).slice(0, limit).map((i) => pool[i])
+  return sampleDigestPool(frameList, limit)
 }
 
 /** 点击证据：鼠标附近正方形边长（屏幕像素） */
@@ -514,19 +513,25 @@ export function createFrameRecorder(options) {
     return out
   }
 
-  /** 专供 digest：均匀抽样，默认最多 MAX_DIGEST_IMAGES。 */
+  /**
+   * 专供 digest：均匀抽样 → 变化分去重 → 拼成 1 张（省 token）。
+   * 拼图失败时退回最多 `limit` 张分图。
+   */
   async function loadDigestImages(limit = MAX_DIGEST_IMAGES) {
     const dir = teachFramesDir(options.home, options.sessionId)
-    const picked = sampleFramesForDigest(frames, limit)
-    const out = []
-    for (const f of picked) {
-      try {
-        const path = join(dir, f.file)
-        const png = await readFile(path)
-        out.push({ ...f, png, name: f.file, path })
-      } catch { /* skip */ }
-    }
-    return out
+    const images = await buildTeachDigestImages(frames, {
+      limit,
+      sidecar: sidecar(),
+      log,
+      async readPng(f) {
+        return readFile(join(dir, f.file))
+      },
+    })
+    return images.map((img) => ({
+      ...img,
+      path: img.mosaic ? join(dir, img.file || 'digest-mosaic.png') : join(dir, img.file),
+      name: img.name || img.file,
+    }))
   }
 
   return {
@@ -584,45 +589,9 @@ export function attachClickFramesToPlaybook(playbook, frameList) {
   return playbook
 }
 
-/** 给 digest 提示用的附图坐标说明。 */
+/** 给 digest 提示用的附图坐标说明（支持拼图格号）。 */
 export function describeClickFramesForPrompt(images) {
-  const lines = []
-  let n = 0
-  for (const img of images || []) {
-    n += 1
-    if (img.role === 'click' && img.click) {
-      const c = img.click
-      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const crop = c.crop
-        ? `鼠标附近裁切 ${c.crop.w}×${c.crop.h}`
-        : `鼠标附近约 ${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const btn = formatMouseButtonLabel(c.button)
-      const act = c.action === 'double_click' ? `${btn}双击` : `${btn}点击`
-      lines.push(
-        `图${n}（${img.name || img.file}）：步骤#${c.eventI} ${act}，${crop}；`
-        + `请在本图上看图内坐标 (${c.imageX},${c.imageY})，图规格 ${size}`
-        + '（勿用整屏坐标）'
-        + (img.window ? ` @「${String(img.window).slice(0, 40)}」` : ''),
-      )
-    } else if (img.role === 'scroll' && img.scroll) {
-      const c = img.scroll
-      const size = (c.imageW && c.imageH) ? `${c.imageW}×${c.imageH}` : `${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const crop = c.crop
-        ? `鼠标附近裁切 ${c.crop.w}×${c.crop.h}`
-        : `鼠标附近约 ${CLICK_CROP_SIZE}×${CLICK_CROP_SIZE}`
-      const phase = c.phase === 'start' ? '滚动开始' : '滚动结束'
-      const axis = c.horizontal ? '横向' : '纵向'
-      lines.push(
-        `图${n}（${img.name || img.file}）：步骤#${c.eventI} 滑轮${axis}${phase} δ=${c.delta || 0}，${crop}；`
-        + `光标图内坐标 (${c.imageX},${c.imageY})，图规格 ${size}`
-        + '（勿用整屏坐标；中间滚动格不截图）'
-        + (img.window ? ` @「${String(img.window).slice(0, 40)}」` : ''),
-      )
-    } else {
-      lines.push(`图${n}（${img.name || img.file}）：上下文/${img.reason || img.role}（整屏缩略，仅辅助）`)
-    }
-  }
-  return lines.join('\n')
+  return describeDigestImagesForPrompt(images)
 }
 
 export async function readLearnedFrameManifest(home, learnedId) {

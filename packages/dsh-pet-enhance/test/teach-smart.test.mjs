@@ -67,3 +67,14 @@ test('smart digest prompt 要求变通', () => {
   assert.match(p, /FAST/)
   assert.match(p, /变通|最快/)
 })
+
+test('smart digest prompt：拼图时写 1 张与格数', () => {
+  const p = buildTeachSmartDigestPrompt('进B站', '1. 点击', [{
+    mosaic: true,
+    sourceCount: 4,
+    cells: [{}, {}, {}, {}],
+  }])
+  assert.match(p, /1 张拼图/)
+  assert.match(p, /4 格/)
+  assert.match(p, /222/)
+})
