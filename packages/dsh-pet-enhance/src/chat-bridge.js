@@ -85,10 +85,14 @@ export function followUpPrompt(userText, shot) {
 
 export function followUpWatchPrompt(userText, result) {
   const silent = result?.silent ? '屏幕基本没变。' : `变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
+  const sheets = Number(result?.mosaicCount) || 1
+  const sheetBit = sheets > 1
+    ? `${result?.framesKept ?? 0} 帧→${sheets} 张 2×2 拼图（自上而下按时间）。`
+    : `${result?.framesKept ?? 0} 帧→一张 2×2 拼图。`
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
     + `（盯屏拼图）主人说「${String(userText).slice(0, 40)}」。`
-    + `盯了约 ${result?.elapsedSec ?? '?'}s，${result?.framesKept ?? 0} 帧→一张图。`
+    + `盯了约 ${result?.elapsedSec ?? '?'}s，${sheetBit}`
     + silent
     + '请看拼图用两三句口语说发生了什么；别装眼睛酸。'
     + ` ${glancePersonaBlock().replace(/\n/g, ' ')}`
@@ -257,11 +261,23 @@ export function createChatBridge(options) {
         result.png,
         log,
       )
+      // 分张落盘，方便最近聊天/本地翻看
+      const sheetPngs = Array.isArray(result.pngs) ? result.pngs : []
+      for (let i = 0; i < sheetPngs.length; i += 1) {
+        const name = i === 0 ? 'watch-latest.png' : `watch-latest-${i + 1}.png`
+        await saveLatestPng(
+          options.home,
+          join(options.home, 'cache', name),
+          sheetPngs[i],
+          log,
+        ).catch(() => {})
+      }
 
+      const sheetN = result.mosaicCount || sheetPngs.length || 1
       await broadcastToDshPet(
         (result.silent
-          ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧）。`
-          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧拼成一张。`)
+          ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧 / ${sheetN} 张拼图）。`
+          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧，拼成 ${sheetN} 张 2×2。`)
         + (saved
           ? ' 拼图在对话面板最底下（滚到底）；也可打开文件夹里的 watch-latest.png。双击桌宠是开/关对话，不是会话列表。'
           : ' 拼图在对话面板最底下，请滚到底看。'),
@@ -278,6 +294,7 @@ export function createChatBridge(options) {
         silent: result.silent,
         elapsedSec: result.elapsedSec,
         framesKept: result.framesKept,
+        mosaicCount: sheetN,
         tokens: result.tokens,
         maxScore: result.maxScore,
       }

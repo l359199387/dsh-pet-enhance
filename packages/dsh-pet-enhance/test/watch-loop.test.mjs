@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  chunkFrames,
   createWakeBudget,
+  MOSAIC_FRAMES_PER_SHEET,
   WATCH_DEFAULTS,
   watchFrameBudget,
   watchSilentFloorSec,
@@ -12,6 +14,12 @@ test('watchFrameBudget 按时长估最多帧数', () => {
   assert.equal(watchFrameBudget(60), 12)
   assert.equal(watchFrameBudget(10), 4)
   assert.equal(watchFrameBudget(20), 7)
+})
+
+test('chunkFrames 10 格拆成 3 张 2×2', () => {
+  assert.equal(MOSAIC_FRAMES_PER_SHEET, 4)
+  const chunks = chunkFrames(Array.from({ length: 10 }, (_, i) => i))
+  assert.deepEqual(chunks.map((c) => c.length), [4, 4, 2])
 })
 
 test('watchSilentFloorSec 短盯更密', () => {

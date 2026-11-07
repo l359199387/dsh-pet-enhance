@@ -61,17 +61,20 @@ function envelope(shot) {
 }
 
 function watchEnvelope(result) {
+  const sheets = result.mosaicCount || 1
   const bits = [
     `watch ${result.elapsedSec}s`,
     `${result.framesKept} 帧（采样 ${result.samples}）`,
-    `${result.cols}×${result.rows}`,
+    sheets > 1
+      ? `${sheets} 张 2×2 拼图`
+      : `${result.cols}×${result.rows}`,
     `→ ${result.width}×${result.height}`,
     `${result.quality} 档 · ~${result.tokens} token`,
   ]
   if (result.silent) {
     bits.push('屏幕基本没变')
   } else {
-    bits.push(`最大变化分 ${result.maxScore.toFixed(1)}`)
+    bits.push(`最大变化分 ${Number(result.maxScore || 0).toFixed(1)}`)
   }
   return bits.join(' · ')
 }
@@ -217,13 +220,24 @@ export function createGlanceTool({
           }
         }
 
-        let ref
+        const pngs = Array.isArray(result.pngs) && result.pngs.length
+          ? result.pngs
+          : (result.png ? [result.png] : [])
+        /** @type {object[]} */
+        const images = []
         try {
-          ref = await saveImage.call(attachments, {
-            data: result.png,
-            mediaType: 'image/png',
-            name: `glance-watch-${result.quality}-${result.width}x${result.height}.png`,
-          })
+          for (let i = 0; i < pngs.length; i += 1) {
+            const buf = pngs[i]
+            if (!buf?.byteLength) continue
+            const ref = await saveImage.call(attachments, {
+              data: buf,
+              mediaType: 'image/png',
+              name: pngs.length > 1
+                ? `glance-watch-${result.quality}-${i + 1}of${pngs.length}.png`
+                : `glance-watch-${result.quality}-${result.width}x${result.height}.png`,
+            })
+            images.push(ref)
+          }
         } catch (error) {
           log?.(`glance watch 存图失败：${error?.message ?? error}`)
           return {
@@ -233,7 +247,17 @@ export function createGlanceTool({
           }
         }
 
-        return { text, images: [ref], meta }
+        if (!images.length) {
+          return {
+            text: `${text}\n（attachments 存图后为空。）`,
+            images: [],
+            meta,
+          }
+        }
+
+        meta.mosaicCount = result.mosaicCount || images.length
+        meta.bytes = pngs.reduce((n, b) => n + (b?.byteLength || 0), 0)
+        return { text, images, meta }
       }
 
       // —— see ——

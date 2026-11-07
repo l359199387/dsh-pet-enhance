@@ -16,12 +16,13 @@ class MosaicTests(unittest.TestCase):
             self.assertEqual(w % 42, 0, q)
             self.assertEqual(h % 42, 0, q)
 
-    def test_layout(self):
+    def test_layout_max_2x2(self):
         self.assertEqual(mosaic.layout_for_count(1), (1, 1))
+        self.assertEqual(mosaic.layout_for_count(2), (2, 2))
         self.assertEqual(mosaic.layout_for_count(4), (2, 2))
-        self.assertEqual(mosaic.layout_for_count(8), (4, 2))
-        self.assertEqual(mosaic.layout_for_count(10), (4, 3))
-        self.assertEqual(mosaic.layout_for_count(12), (4, 3))
+        # 超过 4 仍按 4 裁，布局仍是 2×2（上层应拆成多张）
+        self.assertEqual(mosaic.layout_for_count(8), (2, 2))
+        self.assertEqual(mosaic.layout_for_count(10), (2, 2))
 
     def test_compose_four(self):
         frames = [{"image": Image.new("RGB", (100, 60), (i * 40, 20, 20))} for i in range(4)]
@@ -31,6 +32,12 @@ class MosaicTests(unittest.TestCase):
         self.assertEqual(meta["cols"], 2)
         self.assertEqual(meta["rows"], 2)
         self.assertEqual(img.size, (798, 462))
+
+    def test_stack_vertical(self):
+        a = Image.new("RGB", (100, 40), (10, 0, 0))
+        b = Image.new("RGB", (80, 30), (0, 10, 0))
+        out = mosaic.stack_vertical([a, b], gap=4)
+        self.assertEqual(out.size, (100, 40 + 4 + 30))
 
 
 if __name__ == "__main__":

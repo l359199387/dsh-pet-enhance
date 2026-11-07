@@ -18,6 +18,17 @@ export const WATCH_DEFAULTS = Object.freeze({
   maxAutonomousWakes: 8,
 })
 
+/** 对齐 dsh-see-now：每张 sheet 最多 2×2（4 格），多了拆成多张。 */
+export const MOSAIC_FRAMES_PER_SHEET = 4
+
+/** 按每张 sheet 格数切开（默认 4）。 */
+export function chunkFrames(items, size = MOSAIC_FRAMES_PER_SHEET) {
+  const n = Math.max(1, Math.trunc(Number(size) || MOSAIC_FRAMES_PER_SHEET))
+  const out = []
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n))
+  return out
+}
+
 /**
  * 连续无人回应的 watch 叫醒预算（进程内）。
  * 用户新消息应调用 `noteUserTurn()` 清零。
@@ -260,37 +271,76 @@ export async function runWatch(options = {}) {
 
   const silent = maxScore < 2 && kept.every((f) => f.reason === 'first' || f.reason === 'floor')
 
-  const resp = await sidecar.call('mosaic', {
-    quality,
-    frames: kept.map((f) => ({
-      png: f.png.toString('base64'),
-      label: f.label,
-    })),
-  }, 30_000)
-  if (!resp?.ok) {
-    throw Object.assign(new Error(resp?.error?.message || '拼图失败'), {
-      code: resp?.error?.code || 'MOSAIC_FAILED',
+  // see-now 口径：每张最多 2×2；10 格 → 3 张（4+4+2），单格保持清晰
+  const sheets = chunkFrames(kept, MOSAIC_FRAMES_PER_SHEET)
+  /** @type {{ png: Buffer, width: number, height: number, cols: number, rows: number, tokens: number, frameCount: number, labels: string[] }[]} */
+  const mosaics = []
+  for (let si = 0; si < sheets.length; si += 1) {
+    const sheet = sheets[si]
+    const resp = await sidecar.call('mosaic', {
+      quality,
+      frames: sheet.map((f) => ({
+        png: f.png.toString('base64'),
+        label: f.label,
+      })),
+    }, 30_000)
+    if (!resp?.ok) {
+      throw Object.assign(new Error(resp?.error?.message || '拼图失败'), {
+        code: resp?.error?.code || 'MOSAIC_FAILED',
+      })
+    }
+    const mosaicPng = Buffer.from(String(resp.png || ''), 'base64')
+    const mosaicW = Number(resp.w) || 0
+    const mosaicH = Number(resp.h) || 0
+    mosaics.push({
+      png: mosaicPng,
+      width: mosaicW,
+      height: mosaicH,
+      cols: Number(resp.cols) || 1,
+      rows: Number(resp.rows) || 1,
+      tokens: imageTokens(mosaicW, mosaicH),
+      frameCount: sheet.length,
+      labels: sheet.map((f) => f.label),
     })
+    log(`watch 拼图 ${si + 1}/${sheets.length}：${sheet.length} 帧 → ${mosaicW}×${mosaicH}`)
   }
-  const mosaicPng = Buffer.from(String(resp.png || ''), 'base64')
-  const mosaicW = Number(resp.w)
-  const mosaicH = Number(resp.h)
-  const cols = Number(resp.cols) || 1
-  const rows = Number(resp.rows) || 1
 
   const expected = CANVAS_BY_QUALITY[quality] || CANVAS_BY_QUALITY.low
-  const tokens = imageTokens(mosaicW || expected.w, mosaicH || expected.h)
+  let deliverPng = mosaics[0]?.png
+  let deliverW = mosaics[0]?.width || expected.w
+  let deliverH = mosaics[0]?.height || expected.h
+  // 多张时竖向叠成一张交给「单附件」对话路径；单格仍是完整 2×2 清晰度
+  if (mosaics.length > 1) {
+    try {
+      const stacked = await sidecar.call('stack', {
+        pngs: mosaics.map((m) => m.png.toString('base64')),
+        gap: 8,
+      }, 30_000)
+      if (stacked?.ok && stacked.png) {
+        deliverPng = Buffer.from(String(stacked.png), 'base64')
+        deliverW = Number(stacked.w) || deliverW
+        deliverH = Number(stacked.h) || deliverH
+      }
+    } catch (e) {
+      log(`watch 叠图失败，回退首张：${e?.message ?? e}`)
+    }
+  }
+
+  const tokens = mosaics.reduce((sum, m) => sum + (m.tokens || 0), 0)
   const elapsedSec = Math.round((Date.now() - started) / 1000)
 
   return {
-    png: mosaicPng,
-    width: mosaicW || expected.w,
-    height: mosaicH || expected.h,
+    png: deliverPng,
+    pngs: mosaics.map((m) => m.png),
+    mosaics,
+    mosaicCount: mosaics.length,
+    width: deliverW,
+    height: deliverH,
     quality,
     tokens,
-    expectedTokens: expected.tokens,
-    cols,
-    rows,
+    expectedTokens: expected.tokens * mosaics.length,
+    cols: mosaics[0]?.cols || 1,
+    rows: mosaics[0]?.rows || 1,
     framesKept: kept.length,
     samples,
     maxScore,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""多帧拼图：2×2 / 2×4，画布对齐 42px（图片 token 格）。"""
+"""多帧拼图：固定最多 2×2（4 格），画布对齐 42px（图片 token 格）。
+超过 4 帧由上层拆成多张拼图，避免 3×4 单格过小。"""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ CANVAS = {
 }
 STRIP = {"low": 12, "standard": 30, "high": 36}
 CELL = 42
+MAX_FRAMES = 4
 
 
 def normalize_quality(value: str | None) -> str:
@@ -24,19 +26,12 @@ def canvas_size(quality: str | None) -> tuple[int, int]:
     return CANVAS[normalize_quality(quality)]
 
 
-MAX_FRAMES = 12
-
-
 def layout_for_count(n: int) -> tuple[int, int]:
-    """返回 (cols, rows)。1→1×1；2–4→2×2；5–8→4×2；9–12→4×3。"""
+    """返回 (cols, rows)。1→1×1；2–4→2×2。"""
     count = max(1, min(MAX_FRAMES, int(n)))
     if count <= 1:
         return 1, 1
-    if count <= 4:
-        return 2, 2
-    if count <= 8:
-        return 4, 2
-    return 4, 3
+    return 2, 2
 
 
 def _pil_resample():
@@ -68,7 +63,7 @@ def compose_mosaic(
     labels: list[str] | None = None,
 ):
     """
-    frames: [{image: PIL.Image, ...}, ...] 最多 12 张。
+    frames: [{image: PIL.Image, ...}, ...] 最多 4 张 → 2×2。
     返回 (PIL.Image, meta dict)。
     """
     from PIL import Image, ImageDraw, ImageFont
@@ -109,12 +104,11 @@ def compose_mosaic(
         draw.rectangle([x0, y0, x0 + cell_w - 1, y0 + 14], fill=(0, 0, 0))
         draw.text((x0 + 3, y0 + 1), str(label)[:48], fill=(220, 220, 230), font=font)
 
-    # 底信息带
     draw.rectangle([0, body_h, W, H], fill=(12, 12, 16))
     summary = f"{n} frames · {cols}×{rows} · {q} {W}×{H}"
     draw.text((6, body_h + max(0, (strip - 10) // 2)), summary, fill=(160, 160, 170), font=font)
 
-    meta = {
+    return out, {
         "w": W,
         "h": H,
         "quality": q,
@@ -123,7 +117,26 @@ def compose_mosaic(
         "frames": n,
         "strip": strip,
     }
-    return out, meta
+
+
+def stack_vertical(images: list, *, gap: int = 8):
+    """把多张已合成的拼图自上而下叠成一张（每张仍是完整 2×2 清晰度）。"""
+    from PIL import Image
+
+    if not images:
+        raise ValueError("stack 需要至少 1 张图")
+    rgb = [im.convert("RGB") for im in images]
+    width = max(im.width for im in rgb)
+    height = sum(im.height for im in rgb) + gap * (len(rgb) - 1)
+    out = Image.new("RGB", (width, height), (18, 18, 22))
+    y = 0
+    for i, im in enumerate(rgb):
+        x = (width - im.width) // 2
+        out.paste(im, (x, y))
+        y += im.height
+        if i < len(rgb) - 1:
+            y += gap
+    return out
 
 
 def encode_png(image) -> bytes:

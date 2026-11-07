@@ -672,8 +672,8 @@ def handle_diff(req: dict) -> dict:
 
 
 def handle_mosaic(req: dict) -> dict:
-    """把多帧 PNG 拼成一张（2×2 / 2×4），宽度对齐 42。"""
-    from mosaic import compose_mosaic, encode_png, normalize_quality
+    """把多帧 PNG 拼成一张（最多 2×2 / 4 格），宽度对齐 42。更多帧由上层拆成多张。"""
+    from mosaic import MAX_FRAMES, compose_mosaic, encode_png, normalize_quality
 
     frames_raw = req.get("frames")
     if not isinstance(frames_raw, list) or not frames_raw:
@@ -683,7 +683,7 @@ def handle_mosaic(req: dict) -> dict:
     packed = []
     labels = []
     try:
-        for i, item in enumerate(frames_raw[:8]):
+        for i, item in enumerate(frames_raw[:MAX_FRAMES]):
             if isinstance(item, dict):
                 png = item.get("png")
                 label = item.get("label") or str(i + 1)
@@ -709,6 +709,36 @@ def handle_mosaic(req: dict) -> dict:
         "cols": meta["cols"],
         "rows": meta["rows"],
         "frames": meta["frames"],
+        "ms": 0,
+    }
+
+
+def handle_stack(req: dict) -> dict:
+    """多张已合成的拼图竖向叠成一张（每张仍是完整 2×2）。"""
+    from mosaic import encode_png, stack_vertical
+
+    pngs_raw = req.get("pngs")
+    if not isinstance(pngs_raw, list) or not pngs_raw:
+        return _err("BAD_REQUEST", "stack 需要 pngs: [base64, ...]")
+
+    try:
+        images = []
+        for i, item in enumerate(pngs_raw):
+            b64 = item.get("png") if isinstance(item, dict) else item
+            if not b64:
+                return _err("BAD_REQUEST", f"pngs[{i}] 缺 png")
+            images.append(_decode_png_b64(b64))
+        image = stack_vertical(images, gap=int(req.get("gap") or 8))
+        png_bytes = encode_png(image)
+    except Exception as e:
+        return _err("STACK_FAILED", f"叠图失败：{e}")
+
+    return {
+        "ok": True,
+        "png": base64.b64encode(png_bytes).decode("ascii"),
+        "w": image.width,
+        "h": image.height,
+        "sheets": len(images),
         "ms": 0,
     }
 
@@ -878,6 +908,7 @@ HANDLERS = {
     "observe": handle_observe,
     "diff": handle_diff,
     "mosaic": handle_mosaic,
+    "stack": handle_stack,
 }
 
 
