@@ -101,9 +101,12 @@ test('buildRecentChatHtml 分页数据与上滑提示', async () => {
     assert.ok(html.includes('top-sentinel'))
     assert.ok(html.includes('上滑'))
     assert.ok(html.includes('prependPage'))
+    assert.ok(html.includes('createDocumentFragment'))
     assert.ok(html.includes('id="lightbox"'))
+    assert.ok(html.includes('#chat-list'))
+    assert.ok(html.includes('gap: 22px'))
+    assert.ok(html.includes('.avatar.pet'))
     assert.ok(html.includes('data:image/png;base64') || html.includes('data:image/svg+xml'))
-    // 最新页由脚本渲染，JSON 里应有转义后的内容
     assert.ok(html.includes('u29') || html.includes('\\u003c'))
   } finally {
     await rm(home, { recursive: true, force: true })

@@ -423,11 +423,16 @@ export async function buildRecentChatHtml(options) {
   main.chat {
     max-width: 680px; margin: 0 auto;
     padding: 8px 12px 36px;
-    display: flex; flex-direction: column; gap: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #chat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
   }
   .load-tip {
     text-align: center; font-size: 12px; color: var(--muted);
-    padding: 8px 0 2px; min-height: 28px;
+    padding: 10px 0 4px; min-height: 28px;
   }
   .load-tip.is-busy { color: var(--link); }
   .time-chip { display: flex; justify-content: center; margin: 2px 0; }
@@ -435,12 +440,18 @@ export async function buildRecentChatHtml(options) {
     font-size: 11px; color: #fff; background: rgba(0,0,0,.16);
     border-radius: 4px; padding: 2px 8px; line-height: 1.45;
   }
-  .row { display: flex; align-items: flex-start; gap: 10px; width: 100%; }
+  .row {
+    display: flex; align-items: flex-start; gap: 10px; width: 100%;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px;
+  }
   .row.me { justify-content: flex-end; }
   .avatar {
     width: var(--avatar); height: var(--avatar); flex: 0 0 var(--avatar);
-    border-radius: 6px; object-fit: cover; background: #cfe8ff;
+    border-radius: 6px; background: #cfe8ff center/cover no-repeat;
   }
+  .avatar.pet { background-image: url("${petAvatar}"); }
+  .avatar.me { background-image: url("${meAvatar}"); }
   .side { max-width: min(74%, 440px); display: flex; flex-direction: column; }
   .row.me .side { align-items: flex-end; }
   .row.pet .side { align-items: flex-start; }
@@ -563,7 +574,8 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   var sub = document.getElementById('header-sub');
   var cursor = pages.length; // 下一页要加载的是 cursor-1
   var loading = false;
-  var lastTs = 0;
+  var armed = true; // 到顶后只加载一页，需先离开顶部再上滑
+  var io = null;
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -597,19 +609,20 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   function rowHtml(row) {
     var imgs = (row.images || []).map(function (u) {
       return '<button type="button" class="attach" data-zoom aria-label="查看大图">'
-        + '<img src="' + esc(u) + '" alt="拼图" loading="lazy"/></button>';
+        + '<img src="' + esc(u) + '" alt="拼图" loading="lazy" decoding="async"/></button>';
     }).join('');
     var text = esc(row.content || '');
     var inner = (text ? '<div class="text">' + text + '</div>' : '') + imgs;
     if (!inner) return '';
+    // 头像用 CSS 背景（整页只嵌一份），避免每条消息重复塞入巨型 base64
     if (row.role === 'assistant') {
       return '<div class="row pet">'
-        + '<img class="avatar" src="' + data.petAvatar + '" alt="小蓝鲸" width="42" height="42"/>'
+        + '<div class="avatar pet" role="img" aria-label="小蓝鲸"></div>'
         + '<div class="side"><div class="bubble">' + inner + '</div></div></div>';
     }
     return '<div class="row me">'
       + '<div class="side"><div class="bubble">' + inner + '</div></div>'
-      + '<img class="avatar" src="' + data.meAvatar + '" alt="我" width="42" height="42"/></div>';
+      + '<div class="avatar me" role="img" aria-label="我"></div></div>';
   }
 
   function pageHtml(pageRows, seedTs) {
@@ -635,6 +648,9 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
     } else if (loading) {
       tip.textContent = '正在加载更早消息…';
       tip.className = 'load-tip is-busy';
+    } else if (!armed) {
+      tip.textContent = '继续上滑可加载更早 · 已显示 ' + shownPages + '/' + pages.length + ' 页';
+      tip.className = 'load-tip';
     } else {
       tip.textContent = '上滑加载更早 · 已显示 ' + shownPages + '/' + pages.length + ' 页';
       tip.className = 'load-tip';
@@ -645,25 +661,41 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   }
 
   function prependPage() {
-    if (loading || cursor <= 0) { updateTip(); return; }
+    if (loading || !armed || cursor <= 0) { updateTip(); return; }
     loading = true;
+    armed = false;
+    if (io) io.unobserve(sentinel);
     updateTip();
+
     var next = cursor - 1;
     var pageRows = pages[next] || [];
     var built = pageHtml(pageRows, 0);
     var holder = document.createElement('div');
     holder.innerHTML = built.html;
+    var frag = document.createDocumentFragment();
+    while (holder.firstChild) frag.appendChild(holder.firstChild);
+
     var prevHeight = document.documentElement.scrollHeight;
-    var nodes = [];
-    while (holder.firstChild) nodes.push(holder.firstChild);
-    for (var i = 0; i < nodes.length; i++) {
-      list.insertBefore(nodes[i], list.firstChild);
-    }
+    var prevTop = window.scrollY || document.documentElement.scrollTop || 0;
+    list.insertBefore(frag, list.firstChild);
     var newHeight = document.documentElement.scrollHeight;
-    window.scrollTo(0, window.scrollY + (newHeight - prevHeight));
+    window.scrollTo(0, prevTop + (newHeight - prevHeight));
+
     cursor = next;
     loading = false;
     updateTip();
+
+    // 离开顶部后再允许加载下一页，避免停在顶部连环卡顿加载
+    var rearm = function () {
+      if ((window.scrollY || 0) > 120) {
+        window.removeEventListener('scroll', rearm);
+        armed = true;
+        updateTip();
+        if (io && cursor > 0) io.observe(sentinel);
+      }
+    };
+    window.addEventListener('scroll', rearm, { passive: true });
+    setTimeout(rearm, 500);
   }
 
   function loadLatest() {
@@ -671,28 +703,30 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
     cursor = pages.length - 1;
     var built = pageHtml(pages[cursor], 0);
     list.innerHTML = built.html;
-    lastTs = built.lastTs;
     updateTip();
-    // 滚到底（最新）
     requestAnimationFrame(function () {
       window.scrollTo(0, document.documentElement.scrollHeight);
+      armed = true;
+      if (io && cursor > 0) io.observe(sentinel);
     });
   }
 
-  loadLatest();
-
   if ('IntersectionObserver' in window) {
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) {
-        if (en.isIntersecting) prependPage();
-      });
-    }, { root: null, rootMargin: '80px 0px 0px 0px', threshold: 0 });
-    io.observe(sentinel);
+    io = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        if (entries[i].isIntersecting) {
+          prependPage();
+          break;
+        }
+      }
+    }, { root: null, rootMargin: '40px 0px 0px 0px', threshold: 0 });
   } else {
     window.addEventListener('scroll', function () {
-      if (window.scrollY < 80) prependPage();
+      if ((window.scrollY || 0) < 40) prependPage();
     }, { passive: true });
   }
+
+  loadLatest();
 
   // —— 灯箱 ——
   var box = document.getElementById('lightbox');
