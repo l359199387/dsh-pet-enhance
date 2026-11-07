@@ -1,17 +1,18 @@
 /**
- * dsh-pet 对话闸门：任务/看屏/教学由插件接手，避免小蓝鲸先嘴炮「已打开/已保存」。
+ * dsh-pet 对话闸门：任务/看屏/教学由插件接手；闲聊默认关闭（不走 dsh-pet 闲聊模型）。
  *
  * @module src/chat-gate.js
  */
 
-import { classifyUtterance } from './classify-utterance.js'
-import { isWatchIntent, parseWatchSeconds } from './intent.js'
+import { classifyUtterance, isSkillStatusQuestion } from './classify-utterance.js'
+import { isRunAutomationIntent, isWatchIntent, parseWatchSeconds } from './intent.js'
 import { listLearnedIndex } from './learned-automation.js'
+import { sayConclusionToPet } from './pet-chat-memory.js'
 import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
-/** 需要插件接手、跳过 dsh-pet 闲聊模型的标签。 */
-export const TAKEOVER_LABELS = new Set(['task', 'glance', 'teach', 'teach_end', 'new_session'])
+/** 需要插件接手、跳过 dsh-pet 闲聊模型的标签（含 chat：闲聊已关）。 */
+export const TAKEOVER_LABELS = new Set(['task', 'glance', 'teach', 'teach_end', 'new_session', 'chat'])
 
 /**
  * @param {string} label
@@ -41,8 +42,10 @@ export function ackForLabel(label, locale = 'zh', text = '') {
       return t(loc, 'bubble.taskTakeover')
     case 'new_session':
       return '好，我新开一个工作区聊天窗…'
+    case 'chat':
+      return t(loc, 'bubble.chatOff')
     default:
-      return ''
+      return t(loc, 'bubble.chatOff')
   }
 }
 
@@ -148,7 +151,68 @@ async function dispatchTakeover(options, label, text, teaching) {
     case 'new_session':
       await options.openNewSession?.(text)
       break
-    default:
+    case 'chat':
+    default: {
+      // 闲聊已关：仍允许「执行学会的 / 学会了吗」，其余只回 ack
+      if (isRunAutomationIntent(text)) {
+        const ran = await options.teachBridge?.tryRunMatchingPlaybook?.(text)
+        if (ran) break
+      }
+      if (await answerSkillStatusInGate(options, text)) break
+      const ran = await options.teachBridge?.tryRunMatchingPlaybook?.(text)
+      if (ran) break
       break
+    }
   }
+}
+
+/**
+ * 「学会了吗」本地作答（不叫醒闲聊模型）。
+ * @returns {Promise<boolean>}
+ */
+async function answerSkillStatusInGate(options, userText) {
+  if (!options.home || !isSkillStatusQuestion(userText)) return false
+  if (isRunAutomationIntent(userText)) return false
+  const pet = options.petId || 'main'
+  const list = await listLearnedIndex(options.home)
+  const q = String(userText).toLowerCase()
+  if (!list.length) {
+    await sayConclusionToPet(
+      '还没学会呢。开「实时看屏幕」教我一遍，做完告诉我；问清后我会写成学习文件并建对应自动化。',
+      { pet, duration: 14_000, memoryPath: options.petMemoryPath },
+    )
+    return true
+  }
+  let hit = null
+  for (const row of list) {
+    const goal = String(row.goal || '').trim()
+    if (!goal) continue
+    const g = goal.toLowerCase()
+    if (q.includes(g) || g.split(/[\s，,。、]+/).filter((t) => t.length >= 2).some((tok) => q.includes(tok))) {
+      hit = row
+      break
+    }
+  }
+  if (hit) {
+    const { readLearned } = await import('./learned-automation.js')
+    const learn = await readLearned(options.home, hit.id)
+    if (learn?.status === 'deprecated-reteach' || learn?.deprecatedReason) {
+      await sayConclusionToPet(
+        `「${String(hit.goal).slice(0, 36)}」旧记录已作废（教完曾误动手）。请开实时看屏幕再教一遍。`,
+        { pet, duration: 14_000, memoryPath: options.petMemoryPath },
+      )
+      return true
+    }
+    await sayConclusionToPet(
+      `学会了「${String(hit.goal).slice(0, 40)}」，对应自动化已建好。要我跑一次吗？`,
+      { pet, duration: 12_000, memoryPath: options.petMemoryPath },
+    )
+  } else {
+    const recent = list.slice(0, 3).map((r) => `「${String(r.goal || '?').slice(0, 24)}」`).join('、')
+    await sayConclusionToPet(
+      `这件事我还没学会。最近学习记录：${recent || '（空）'}。想教我直接说。`,
+      { pet, duration: 14_000, memoryPath: options.petMemoryPath },
+    )
+  }
+  return true
 }

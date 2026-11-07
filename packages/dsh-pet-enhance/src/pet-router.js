@@ -217,16 +217,18 @@ export function createPetRouter(options) {
       }
       case 'chat':
       default: {
-        // 执行口令优先跑自动化，避免落到「学会了吗」闲聊
+        // 执行口令 / 学会了吗 仍处理；纯闲聊已关，不交给 dsh-pet 模型
         if (isRunAutomationIntent(userText)) {
           const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
           if (ran) break
         }
         if (await answerSkillStatus(userText)) break
-        // 「执行一下记录每日心情」等：即便粗分到 chat，也再试匹配已学自动化
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
         if (ran) break
-        // 纯闲聊：不叫醒主会话，留给 dsh-pet 原生聊天回答
+        await sayConclusionToPet(
+          t(getLocale(options.home), 'bubble.chatOff'),
+          { pet, duration: 8_000, memoryPath: options.petMemoryPath },
+        )
         break
       }
     }
