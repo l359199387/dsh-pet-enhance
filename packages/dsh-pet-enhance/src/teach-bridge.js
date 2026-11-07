@@ -96,6 +96,26 @@ export function parseTeachDigestReply(text) {
 }
 
 /**
+ * 是否值得附图理解：键入为主、几乎没点击时只靠文字（省 token）。
+ * @param {object[]} steps
+ */
+export function shouldAttachTeachDigestImages(steps) {
+  const list = Array.isArray(steps) ? steps : []
+  if (!list.length) return false
+  let clicks = 0
+  let typed = 0
+  for (const s of list) {
+    const a = String(s?.action || '')
+    if (a === 'click' || a === 'double_click' || a === 'scroll') clicks += 1
+    if (a === 'type' || a === 'key' || s?.kind === 'typed-text') typed += 1
+  }
+  if (clicks <= 0) return false
+  // 大量键入、极少点击：文字摘要够用
+  if (typed >= Math.max(4, clicks * 2) && clicks <= 2) return false
+  return true
+}
+
+/**
  * 学完写入聊天记录的文案：目标 + 理解 + 更快做法。
  * @param {{ goal?: string, summary?: string, fastPlan?: string, id?: string }} info
  */
@@ -484,74 +504,94 @@ export function createTeachBridge(options) {
    * 用关键帧（必要时补前后帧）喂模型理解；不执行自动化。
    * @returns {Promise<{ summary: string, usedFrames: number, supplemented: boolean }>}
    */
-  async function digestWithFrames(id, runGoal, narrative) {
+  async function digestWithFrames(id, runGoal, narrative, steps = []) {
     if (!frames) {
       return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
     }
     await frames.snapEnd()
+
+    // 键入为主：不附图，只喂文字步骤（省大量视觉 token）
+    if (!shouldAttachTeachDigestImages(steps)) {
+      log('teach digest：键入为主，跳过附图，仅文字理解')
+      const preferred = options.getPreferredSessionId?.() ?? null
+      const prompt = buildTeachDigestPrompt(runGoal, narrative, [])
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        preferredId: preferred,
+        log,
+      })
+      if (!woken.ok) {
+        return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false, textOnly: true }
+      }
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+      const reply = await waitReply(options.ctx, woken.sessionId, {
+        timeoutMs: 60_000,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
+      })
+      const parsed = reply.ok && reply.text
+        ? parseTeachDigestReply(reply.text)
+        : { summary: narrative, fastPlan: '' }
+      return {
+        summary: parsed.summary || narrative,
+        fastPlan: parsed.fastPlan || '',
+        usedFrames: 0,
+        digestImages: 0,
+        mosaic: false,
+        supplemented: false,
+        textOnly: true,
+        frameDir: teachFramesDir(options.home, id),
+      }
+    }
+
     const loadDigest = async () => (
       typeof frames.loadDigestImages === 'function'
         ? frames.loadDigestImages(MAX_DIGEST_IMAGES)
         : frames.loadPngBuffers(MAX_DIGEST_IMAGES)
     )
-    let imgs = await loadDigest()
+    const imgs = await loadDigest()
     if (!imgs.length) {
       return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
     }
 
     const preferred = options.getPreferredSessionId?.() ?? null
-    const askOnce = async (imageList) => {
-      const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
-      // 多张 2×2 拼图分张交给模型（格数硬顶 ≠ 张数硬顶）
-      const maxImages = Math.min(
-        MAX_DIGEST_SHEETS,
-        Math.max(1, imageList.length),
-      )
-      const woken = await wake(options.ctx, {
-        text: prompt,
-        preferredId: preferred,
-        images: imageList,
-        attachments: options.attachments,
-        maxImages,
-        log,
-      })
-      if (!woken.ok) {
-        log(`teach digest 叫醒失败：${woken.reason}`)
-        return { needMore: false, summary: narrative, fastPlan: '' }
-      }
-      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
-      const cells = digestEvidenceCount(imageList)
-      log(
-        `teach digest 附图成功 ${woken.imageCount ?? 0} 张`
-        + `（证据格 ${cells}；失败 ${woken.imageFailed ?? 0}）`,
-      )
-      const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 90_000,
-        isAborted: () => stopped || Boolean(options.isAborted?.()),
-      })
-      if (!reply.ok || !reply.text) {
-        return { needMore: true, summary: narrative, fastPlan: '' }
-      }
-      return parseTeachDigestReply(reply.text)
+    // 默认最多 1 张 2×2（MAX_DIGEST_SHEETS 已随 budget=4 变为 1）
+    const maxImages = Math.min(1, MAX_DIGEST_SHEETS, Math.max(1, imgs.length))
+    const imageList = imgs.slice(0, maxImages)
+    const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
+    const woken = await wake(options.ctx, {
+      text: prompt,
+      preferredId: preferred,
+      images: imageList,
+      attachments: options.attachments,
+      maxImages,
+      log,
+    })
+    if (!woken.ok) {
+      log(`teach digest 叫醒失败：${woken.reason}`)
+      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
     }
-
-    let parsed = await askOnce(imgs)
-    let supplemented = false
-    if (parsed.needMore) {
-      await frames.supplement('before')
-      await frames.supplement('after')
-      imgs = await loadDigest()
-      supplemented = true
-      parsed = await askOnce(imgs)
-    }
+    try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+    const cells = digestEvidenceCount(imageList)
+    log(
+      `teach digest 附图成功 ${woken.imageCount ?? 0} 张`
+      + `（证据格 ${cells}；失败 ${woken.imageFailed ?? 0}；已禁 NEED_MORE 二轮）`,
+    )
+    const reply = await waitReply(options.ctx, woken.sessionId, {
+      timeoutMs: 60_000,
+      isAborted: () => stopped || Boolean(options.isAborted?.()),
+    })
+    const parsed = reply.ok && reply.text
+      ? parseTeachDigestReply(reply.text)
+      : { summary: narrative, fastPlan: '', needMore: false }
+    // 故意不再因 NEED_MORE 补帧二轮喂图（token 杀手）
 
     return {
       summary: parsed.summary || narrative,
       fastPlan: parsed.fastPlan || '',
-      usedFrames: digestEvidenceCount(imgs),
-      digestImages: imgs.length,
-      mosaic: Boolean(imgs[0]?.mosaic),
-      supplemented,
+      usedFrames: digestEvidenceCount(imageList),
+      digestImages: imageList.length,
+      mosaic: Boolean(imageList[0]?.mosaic),
+      supplemented: false,
       frameDir: teachFramesDir(options.home, id),
     }
   }
@@ -640,8 +680,7 @@ export function createTeachBridge(options) {
       return
     }
 
-    // 1) 点击截图（含图内坐标）+ 文字 → 模型理解；不执行
-    await broadcastToDshPet('好，我把关键点击截图拼成一张来理解（省 token）…', { pet, duration: 6_000 })
+    // 1) 文字步骤为主；必要时才附 1 张 2×2 点击拼图 → 模型理解；不执行
     const playbook = buildPlaybook(goal, steps, id)
     if (frames) {
       attachClickFramesToPlaybook(playbook, frames.list())
@@ -653,8 +692,15 @@ export function createTeachBridge(options) {
       text: s.text,
       window: s.window,
     })))
+    const withImages = shouldAttachTeachDigestImages(steps)
+    await broadcastToDshPet(
+      withImages
+        ? '好，我用步骤文字 + 最多一张点击拼图来理解（省 token）…'
+        : '好，这轮以键入为主，我只用步骤文字理解（更省 token）…',
+      { pet, duration: 6_000 },
+    )
     await updateTeachMeta(options.home, id, { status: 'understanding' })
-    const digested = await digestWithFrames(id, goal, narrative)
+    const digested = await digestWithFrames(id, goal, narrative, steps)
     playbook.strategy = {
       approach: 'smart',
       summary: digested.summary || narrative,

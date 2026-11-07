@@ -167,20 +167,36 @@ export function isClassifyEcho(text) {
 }
 
 /**
- * 默认 llm（模型判）；local=只启发式；可用环境变量覆盖。
- * @returns {'llm' | 'local'}
+ * 默认 hybrid：本地优先，仅模糊「闲聊 vs 干活」才短叫醒。
+ * local=只启发式；llm=每句都叫醒（费 token，不推荐）。
+ * @returns {'hybrid' | 'llm' | 'local'}
  */
 export function classifyMode() {
   const v = String(
-    process.env.DSH_PET_ENHANCE_CLASSIFY || process.env.DSH_GLANCE_CLASSIFY || 'llm',
+    process.env.DSH_PET_ENHANCE_CLASSIFY || process.env.DSH_GLANCE_CLASSIFY || 'hybrid',
   ).trim().toLowerCase()
   if (v === '0' || v === 'false' || v === 'off' || v === 'no' || v === 'local' || v === 'regex') {
     return 'local'
   }
-  if (v === 'wake' || v === 'llm' || v === 'session' || v === 'model' || v === '1' || v === 'true' || v === 'yes') {
+  if (v === 'wake' || v === 'llm' || v === 'session' || v === 'model') {
     return 'llm'
   }
-  return 'llm'
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'hybrid' || v === 'auto') {
+    return 'hybrid'
+  }
+  return 'hybrid'
+}
+
+/** 本地已判 chat，但仍可能是「去做学会的事」时，才值得叫醒模型。 */
+export function shouldEscalateChatToModel(text) {
+  const s = String(text ?? '').trim()
+  if (!s || s.length < 6) return false
+  if (isSkillStatusQuestion(s)) return false
+  if (/^(你好|嗨|哈喽|在吗|早上好|晚上好|晚安|谢谢|哈哈+)[.。!！?？…]*$/i.test(s)) {
+    return false
+  }
+  // 有一点「去做/帮忙/弄一下」气味，或点到具体主题
+  return /(?:帮|请|去|做|弄|跑|执行|打开|记录|看看|刷|聊|写|保存|教过|学会|上次|刚才)/.test(s)
 }
 
 /**
@@ -195,7 +211,7 @@ export function classifyMode() {
  *   complete?: (prompt: string) => Promise<string | null | undefined>,
  *   timeoutMs?: number,
  *   log?: (m: string) => void,
- *   mode?: 'llm' | 'local',
+ *   mode?: 'hybrid' | 'llm' | 'local',
  * }} [opts]
  * @returns {Promise<{ label: string, via: 'llm' | 'regex' | 'inject' | 'local', raw?: string }>}
  */
@@ -214,13 +230,18 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     return { label: clear, via: 'local' }
   }
 
+  const localLabel = localClassify(text, { teaching })
+  const mode = opts.mode || classifyMode()
+  const wantModel = mode === 'llm'
+    || (mode === 'hybrid' && localLabel === 'chat' && shouldEscalateChatToModel(text))
+
   const prompt = buildClassifyPrompt(text, {
     teaching,
     learnedGoals: opts.learnedGoals,
   })
 
   // 无工具注入（测试 / 外接小模型）
-  if (typeof opts.complete === 'function') {
+  if (typeof opts.complete === 'function' && wantModel) {
     try {
       const raw = await opts.complete(prompt)
       const label = parseClassifyLabel(raw)
@@ -230,10 +251,8 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     }
   }
 
-  const mode = opts.mode || classifyMode()
-
-  // 模型分流：短超时；失败回落本地
-  if (mode === 'llm' && ctx) {
+  // 仅 llm / hybrid 模糊句才短叫醒；失败回落本地
+  if (wantModel && ctx) {
     const wake = opts.wake ?? wakeSession
     const waitReply = opts.waitReply ?? waitAssistantReply
     try {
@@ -244,13 +263,13 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
       })
       if (woken.ok && woken.sessionId) {
         const reply = await waitReply(ctx, woken.sessionId, {
-          timeoutMs: opts.timeoutMs ?? 12_000,
+          timeoutMs: opts.timeoutMs ?? 8_000,
           pollMs: 350,
         })
         if (reply.ok && reply.text) {
           const label = parseClassifyLabel(reply.text)
           if (label) {
-            log(`classify → ${label}（llm）`)
+            log(`classify → ${label}（llm/${mode}）`)
             return { label, via: 'llm', raw: reply.text }
           }
           log(`classify llm 回复无法解析：${String(reply.text).slice(0, 60)}`)
@@ -265,7 +284,6 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     }
   }
 
-  const label = localClassify(text, { teaching })
-  log(`classify → ${label}（local）`)
-  return { label, via: 'local' }
+  log(`classify → ${localLabel}（local）`)
+  return { label: localLabel, via: 'local' }
 }

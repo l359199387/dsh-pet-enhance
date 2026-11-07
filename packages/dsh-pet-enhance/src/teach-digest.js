@@ -14,15 +14,15 @@ export const DIGEST_SHEET_FRAMES = 4
 export const DIGEST_MOSAIC_QUALITY = 'low'
 
 /**
- * 喂模型预算（自适应，不是死 8）：
- * - 点击/滑轮尽量全留，超过 evidenceCap 才均匀抽
- * - 开场/收尾等普通帧最多 contextCap
- * - absoluteMax 为硬顶（→ 最多几张 2×2）
+ * 喂模型预算（省 token）：
+ * - 点击/滑轮优先，超过 evidenceCap 均匀抽
+ * - 默认不喂开场/收尾整屏（contextCap=0）
+ * - absoluteMax=4 → 最多 1 张 2×2
  */
 export const DIGEST_BUDGET = Object.freeze({
-  evidenceCap: 12,
-  contextCap: 2,
-  absoluteMax: 16,
+  evidenceCap: 4,
+  contextCap: 0,
+  absoluteMax: 4,
   sheetFrames: DIGEST_SHEET_FRAMES,
 })
 

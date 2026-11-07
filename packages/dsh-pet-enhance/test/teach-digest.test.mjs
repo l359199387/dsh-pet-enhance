@@ -25,7 +25,7 @@ test('sampleFramesForDigest：点击过多才均匀抽，保首尾', () => {
   assert.ok(picked.length <= DIGEST_BUDGET.absoluteMax)
 })
 
-test('sampleFramesForDigest：点击优先全留，普通帧少喂', () => {
+test('sampleFramesForDigest：点击优先，受 evidenceCap 限制；默认不喂上下文整屏', () => {
   const clicks = Array.from({ length: 10 }, (_, i) => ({ role: 'click', i, kind: 'c' }))
   const ctx = [
     { role: 'key', i: 100, kind: 'k' },
@@ -35,9 +35,10 @@ test('sampleFramesForDigest：点击优先全留，普通帧少喂', () => {
   const picked = sampleFramesForDigest([...clicks, ...ctx])
   const clickN = picked.filter((f) => f.role === 'click').length
   const ctxN = picked.filter((f) => f.role === 'key' || f.role === 'supplement').length
-  assert.equal(clickN, 10, '10 次点击应全留（未超 evidenceCap）')
-  assert.ok(ctxN <= DIGEST_BUDGET.contextCap)
+  assert.equal(clickN, DIGEST_BUDGET.evidenceCap, '点击受 evidenceCap=4 限制')
+  assert.equal(ctxN, 0, '默认 contextCap=0 不喂整屏')
   assert.ok(picked.length <= DIGEST_BUDGET.absoluteMax)
+  assert.equal(DIGEST_BUDGET.absoluteMax, 4)
 })
 
 test('sampleFramesForDigest：无点击时只少抽上下文', () => {
@@ -113,7 +114,7 @@ test('buildTeachDigestImages：4 帧 → 1 张 2×2', async () => {
   assert.match(legend, /勿用拼图全局坐标/)
 })
 
-test('buildTeachDigestImages：8 帧 → 2 张 2×2（不再丢后 4 帧）', async () => {
+test('buildTeachDigestImages：8 帧 → 1 张 2×2（absoluteMax=4，均匀抽）', async () => {
   const frames = Array.from({ length: 8 }, (_, i) => ({
     role: 'click',
     file: `${i}.png`,
@@ -146,20 +147,17 @@ test('buildTeachDigestImages：8 帧 → 2 张 2×2（不再丢后 4 帧）', as
       return pngs[i++]
     },
   })
-  assert.equal(mosaicCalls, 2)
-  assert.equal(imgs.length, 2)
+  assert.equal(mosaicCalls, 1)
+  assert.equal(imgs.length, 1)
   assert.equal(imgs[0].sheetIndex, 1)
-  assert.equal(imgs[1].sheetIndex, 2)
-  assert.equal(imgs[0].sheetTotal, 2)
-  assert.equal(digestEvidenceCount(imgs), 8)
+  assert.equal(imgs[0].sheetTotal, 1)
+  assert.equal(digestEvidenceCount(imgs), 4)
+  assert.equal(imgs[0].cells.length, 4)
   assert.equal(imgs[0].cells[0].index, 1)
-  assert.equal(imgs[1].cells[0].index, 5)
 
   const legend = describeDigestImagesForPrompt(imgs)
-  assert.match(legend, /2 张拼图/)
-  assert.match(legend, /图1\/2/)
-  assert.match(legend, /图2\/2/)
-  assert.match(legend, /格5/)
+  assert.match(legend, /1 张拼图/)
+  assert.match(legend, /格1/)
 })
 
 test('无 sidecar 时退回多图', async () => {

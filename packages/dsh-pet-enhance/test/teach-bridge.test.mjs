@@ -10,6 +10,7 @@ import {
   isLikelyAddressBarNoise,
   isVagueReplayIntent,
   parseTeachDigestReply,
+  shouldAttachTeachDigestImages,
 } from '../src/teach-bridge.js'
 import { AGENT_WAKE_PREFIX } from '../src/intent.js'
 import { assertLearnedAutomationPair, listLearnedIndex } from '../src/learned-automation.js'
@@ -36,6 +37,21 @@ test('buildLearnedChatNotice：含目标与理解', () => {
   assert.match(t, /理解：/)
   assert.match(t, /更快做法：/)
   assert.match(t, /我学会的/)
+})
+
+test('shouldAttachTeachDigestImages：键入为主不附图', () => {
+  assert.equal(shouldAttachTeachDigestImages([
+    { action: 'click' },
+    { action: 'type', text: 'a' },
+  ]), true)
+  assert.equal(shouldAttachTeachDigestImages([
+    { action: 'click' },
+    { action: 'type' }, { action: 'type' }, { action: 'type' },
+    { action: 'key' }, { action: 'key' }, { action: 'type' },
+  ]), false)
+  assert.equal(shouldAttachTeachDigestImages([
+    { action: 'type' }, { action: 'key' },
+  ]), false)
 })
 
 test('地址栏脏输入与模糊回放口令', () => {

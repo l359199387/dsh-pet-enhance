@@ -10,6 +10,7 @@ import {
   localClassify,
   parseClassifyLabel,
   regexClassifyFallback,
+  shouldEscalateChatToModel,
 } from '../src/classify-utterance.js'
 
 test('buildClassifyPrompt：带分流前缀、禁工具、含已学会列表', () => {
@@ -68,17 +69,37 @@ test('classifyUtterance：新开窗本地优先，不叫醒模型', async () => 
   assert.equal(woke, 0)
 })
 
-test('classifyUtterance：默认优先模型分流', async () => {
+test('hybrid：短问候不叫醒；模糊干活才叫醒', async () => {
   const prev = process.env.DSH_PET_ENHANCE_CLASSIFY
   delete process.env.DSH_PET_ENHANCE_CLASSIFY
-  assert.equal(classifyMode(), 'llm')
+  assert.equal(classifyMode(), 'hybrid')
+  assert.equal(shouldEscalateChatToModel('你好'), false)
+  assert.equal(shouldEscalateChatToModel('帮我参谋一下怎么跟豆包打招呼'), true)
+  // 「按上次学的…」本地直接 task，不必叫醒
+  assert.equal(localClassify('按上次学的帮我和豆包闲聊几句'), 'task')
+
   let woke = 0
-  const r = await classifyUtterance({ fake: true }, '按上次学的帮我和豆包闲聊几句', {
+  const hi = await classifyUtterance({ fake: true }, '你好', {
+    wake: async () => { woke += 1; return { ok: true, sessionId: 's' } },
+    waitReply: async () => ({ ok: true, text: 'task' }),
+  })
+  assert.equal(hi.label, 'chat')
+  assert.equal(hi.via, 'local')
+  assert.equal(woke, 0)
+
+  const localRun = await classifyUtterance({ fake: true }, '按上次学的帮我和豆包闲聊几句', {
+    wake: async () => { woke += 1; return { ok: true, sessionId: 's' } },
+    waitReply: async () => ({ ok: true, text: 'chat' }),
+  })
+  assert.equal(localRun.label, 'task')
+  assert.equal(localRun.via, 'local')
+  assert.equal(woke, 0)
+
+  const r = await classifyUtterance({ fake: true }, '帮我参谋一下怎么跟豆包打招呼', {
     learnedGoals: ['与豆包姐姐聊天'],
     wake: async (_ctx, opts) => {
       woke += 1
       assert.match(opts.text, /与豆包姐姐聊天/)
-      assert.match(opts.text, /禁止调用任何工具/)
       return { ok: true, sessionId: 's' }
     },
     waitReply: async () => ({ ok: true, text: 'task' }),
@@ -115,7 +136,7 @@ test('classifyUtterance：mode=local 不叫醒', async () => {
 })
 
 test('classifyUtterance：inject 路径优先', async () => {
-  const r = await classifyUtterance({}, '你好呀', {
+  const r = await classifyUtterance({}, '帮我参谋一下怎么跟豆包打招呼', {
     complete: async () => 'chat',
   })
   assert.equal(r.label, 'chat')

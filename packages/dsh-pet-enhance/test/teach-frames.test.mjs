@@ -17,6 +17,7 @@ import {
   resolveVirtualBounds,
   sampleFramesForDigest,
 } from '../src/teach-frames.js'
+import { DIGEST_BUDGET } from '../src/teach-digest.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-frames-'))
 after(() => rmSync(home, { recursive: true, force: true }))
@@ -31,7 +32,8 @@ test('sampleFramesForDigest：点击过多时均匀抽且保首尾', () => {
   const list = Array.from({ length: 20 }, (_, i) => ({ role: 'click', i, file: `${i}.png` }))
   const picked = sampleFramesForDigest(list)
   assert.ok(picked.length <= MAX_DIGEST_IMAGES)
-  assert.equal(picked.length, 12)
+  assert.equal(picked.length, DIGEST_BUDGET.evidenceCap)
+  assert.equal(picked.length, 4)
   assert.equal(picked[0].i, 0)
   assert.equal(picked[picked.length - 1].i, 19)
 })
