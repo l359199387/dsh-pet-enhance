@@ -11,6 +11,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isRunAutomationIntent } from './intent.js'
 
 export function learnedRoot(home) {
   return join(home, 'learned')
@@ -297,7 +298,8 @@ export async function findLearnedForQuery(home, query) {
     return learn
   }
 
-  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化|执行一下|运行一下|用你学会的|按你学会的|我教过你|你学过的|我学会的/.test(q)) {
+  // 执行口令统一走 intent.RUN_AUTOMATION_RE，不在此再抄一份关键词表
+  if (isRunAutomationIntent(query)) {
     // 若话里还带了目标关键词，优先精确匹配；否则取最新可用
     let hinted = null
     let hintedScore = 0

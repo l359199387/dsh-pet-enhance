@@ -7,6 +7,7 @@
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { isRunAutomationIntent } from './intent.js'
 import { isDeniedWindow, isPetChromeTitle } from './policy.js'
 
 /**
@@ -560,8 +561,8 @@ export async function findPlaybookForQuery(home, query) {
   const list = await listPlaybookIndex(home)
   if (!list.length) return null
 
-  // 「刚才教的 / 再做一次」→ 最新一条
-  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍/.test(q)) {
+  // 执行口令统一走 intent.RUN_AUTOMATION_RE
+  if (isRunAutomationIntent(query)) {
     return readPlaybook(home, list[0].id)
   }
 
