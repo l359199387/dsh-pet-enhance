@@ -55,7 +55,7 @@ test('坐标越界拒绝', () => {
 
 test('预算第 21 次拒绝', () => {
   const budget = createActionBudget({ max: MAX_ACTIONS_PER_TURN })
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < MAX_ACTIONS_PER_TURN; i += 1) {
     assert.equal(evaluateActPolicy({
       args: { action: 'move', x: 1, y: 1 },
       budget,

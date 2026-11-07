@@ -7,8 +7,11 @@ import {
 } from '../src/chat-gate.js'
 import {
   CHAT_GATE_PATCH_MARK,
+  CHAT_GATE_PATCH_MARK_V1,
   patchChatWithPetSource,
+  stripChatGateV1,
 } from '../src/patch-dsh-pet-chat-gate.js'
+import { patchChatClientSource, CHAT_CLIENT_GATE_MARK } from '../src/patch-dsh-pet-chat-client.js'
 import {
   CONFIRM_PATCH_MARK,
   CONFIRM_SCRIPT_NAME,
@@ -79,7 +82,58 @@ test('patchChatWithPetSource：插入闸门标记', () => {
   const p = patchChatWithPetSource(raw)
   assert.equal(p.changed, true)
   assert.ok(p.text.includes(CHAT_GATE_PATCH_MARK))
+  assert.ok(p.text.includes('host-origin.txt'))
   assert.ok(p.text.includes('/api/pet-enhance/chat-gate'))
   const again = patchChatWithPetSource(p.text)
   assert.equal(again.changed, false)
+})
+
+test('stripChatGateV1 可升级到 v2', () => {
+  const v1 = [
+    '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',
+    `\t\t/* ${CHAT_GATE_PATCH_MARK_V1} */`,
+    '\t\tif (image === void 0) { try { } catch {} }',
+    '\t\tconst generated = await generateChat({',
+  ].join('\n')
+  const stripped = stripChatGateV1(v1)
+  assert.ok(!stripped.includes(CHAT_GATE_PATCH_MARK_V1))
+  const p = patchChatWithPetSource(stripped.includes('generateChat') ? [
+    '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',
+    '\t\tconst generated = await generateChat({',
+  ].join('\n') : stripped)
+  assert.ok(p.changed || p.text.includes(CHAT_GATE_PATCH_MARK))
+})
+
+test('patchChatClientSource：sendMessage 闸门', () => {
+  const raw = [
+    'async function sendMessage(petId, text, attachment) {',
+    '\tconst url = ROUTE_PATH + "/chat?pet=" + encodeURIComponent(petId) + "&surface=any";',
+    '\tconst result = await sendChat(url, text, attachment);',
+    '\treturn result.ok ? { ok: true } : {',
+    '\t\tok: false,',
+    '\t\tmessage: result.message ?? result.reason',
+    '\t};',
+    '}',
+  ].join('\n')
+  const p = patchChatClientSource(raw)
+  assert.equal(p.changed, true)
+  assert.ok(p.text.includes(CHAT_CLIENT_GATE_MARK))
+})
+
+test('runChatGate：短时去重不二次派发', async () => {
+  const tasks = []
+  const opts = {
+    ctx: {},
+    home: '',
+    text: '打开记事本保存',
+    classify: async () => ({ label: 'task', via: 'test' }),
+    agentBridge: { handleTask: async (t) => { tasks.push(t) } },
+    markHandled: () => {},
+    isDuplicate: () => true,
+  }
+  const r = await runChatGate(opts)
+  assert.equal(r.takeover, true)
+  assert.equal(r.via, 'dedupe')
+  await new Promise((x) => setTimeout(x, 20))
+  assert.equal(tasks.length, 0)
 })

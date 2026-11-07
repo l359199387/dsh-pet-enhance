@@ -78,18 +78,22 @@ export async function runChatGate(options) {
   }
 
   const locale = getLocale(options.home)
-  const ack = ackForLabel(teaching && (label === 'teach_end' || label === 'task') ? 'teach_end' : label, locale)
-  try { options.markHandled?.(text) } catch { /* ignore */ }
+  const effectiveLabel = teaching && (label === 'teach_end' || label === 'task') ? 'teach_end' : label
+  const ack = ackForLabel(effectiveLabel, locale)
 
-  // 异步执行，先返回 ack，避免卡住 dsh-pet 的 /chat
-  queueMicrotask(() => {
-    dispatchTakeover(options, label, text, teaching).catch((e) => {
-      log(`chat-gate 执行失败：${e?.message ?? e}`)
+  // 客户端闸门 + 服务端闸门可能连打两次：短时去重，只派发一次
+  const dup = Boolean(options.isDuplicate?.(text))
+  if (!dup) {
+    try { options.markHandled?.(text) } catch { /* ignore */ }
+    queueMicrotask(() => {
+      dispatchTakeover(options, label, text, teaching).catch((e) => {
+        log(`chat-gate 执行失败：${e?.message ?? e}`)
+      })
     })
-  })
+  }
 
-  log(`chat-gate：takeover ${via}/${label}`)
-  return { ok: true, takeover: true, label, via, ack }
+  log(`chat-gate：takeover ${via}/${effectiveLabel}${dup ? '（去重）' : ''}`)
+  return { ok: true, takeover: true, label: effectiveLabel, via: dup ? 'dedupe' : via, ack }
 }
 
 /**

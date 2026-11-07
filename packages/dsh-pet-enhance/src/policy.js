@@ -6,7 +6,8 @@
  * @module src/policy.js
  */
 
-export const MAX_ACTIONS_PER_TURN = 20
+/** 与 C3 验收上限对齐；另存为等对话框应靠快捷路径，勿把预算耗在盲点上。 */
+export const MAX_ACTIONS_PER_TURN = 30
 export const CONFIRM_TIMEOUT_MS = 60_000
 
 /** 07 §7：可读不可点。 */

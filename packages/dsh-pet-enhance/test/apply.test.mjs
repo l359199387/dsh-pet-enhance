@@ -117,7 +117,7 @@ test('apply 注册路由与工具，status 到 C2', async () => {
   assert.equal(body.home, home)
   assert.deepEqual(body.tools, ['glance', 'act'])
   assert.equal(body.pet, 'idle')
-  assert.equal(body.budget.max, 20)
+  assert.equal(body.budget.max, 30)
 
   dispose()
   for (const off of ctx._disposers) off()

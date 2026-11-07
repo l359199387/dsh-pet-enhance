@@ -38,7 +38,9 @@ import { localeTables, menuLabelVariants, t } from './i18n.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { applyDshPetChatGatePatches } from './patch-dsh-pet-chat-gate.js'
+import { applyDshPetChatClientPatches } from './patch-dsh-pet-chat-client.js'
 import { runChatGate } from './chat-gate.js'
+import { writeHostOrigin } from './host-origin.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { c3BudgetExceededBubble } from './c3-task.js'
@@ -227,6 +229,11 @@ async function handle(req, res, connection, log, state) {
         getPreferredSessionId: () => state.lastSessionId,
         markHandled: (content) => {
           state.chatGateHandled = { content: String(content), at: Date.now() }
+        },
+        isDuplicate: (content) => {
+          const h = state.chatGateHandled
+          if (!h?.content || h.content !== String(content)) return false
+          return Date.now() - Number(h.at || 0) < 15_000
         },
       })
       send(res, 200, result)
@@ -655,15 +662,22 @@ function installDshPetBridge(ctx, log, state, disposers) {
       return () => {}
     }
     setDshPetBaseUrl(origin)
+    writeHostOrigin(glanceHome(), origin)
     log(`dsh-pet bridge origin=${origin}`)
 
-    // 桌面独立窗：双击开对话 + 头顶确认；chatWithPet 闸门抑制任务抢答。
+    // 桌面独立窗：双击开对话 + 头顶确认；chatWithPet / chat-panel 闸门抑制任务抢答。
     try {
       const token = ensureDesktopToken(glanceHome())
       const clickPatched = applyDshPetClickPatches()
       const confirmPatched = applyDshPetConfirmPatches({ token })
       const chatGatePatched = applyDshPetChatGatePatches()
-      const all = [...clickPatched.results, ...confirmPatched.results, ...chatGatePatched.results]
+      const chatClientPatched = applyDshPetChatClientPatches()
+      const all = [
+        ...clickPatched.results,
+        ...confirmPatched.results,
+        ...chatGatePatched.results,
+        ...chatClientPatched.results,
+      ]
       const hit = all.filter((r) => r.changed || r.reason === 'already-patched' || r.reason === 'unchanged')
       if (hit.length) {
         log(`dsh-pet 补丁：${hit.map((r) => `${r.reason}`).join(', ')}`)
