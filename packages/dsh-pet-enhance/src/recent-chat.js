@@ -2,7 +2,8 @@
  * 从 dsh-pet memory.json 生成「最近聊天」HTML，用系统浏览器打开。
  * 桌面双击对话只是输入框，没有历史列表——靠这个补上。
  *
- * 图片/头像一律 data URI 内嵌：避免 file:// 下 SVG 裂图，也避开浏览器锁住缓存 png 导致 copy EPERM。
+ * 分页：先显示最新一页；滚到顶部再拼更早一页（微信上滑回看）。
+ * 附图落到 cache 相对路径；头像用 data URI，避免 file:// 裂图。
  *
  * @module src/recent-chat.js
  */
@@ -17,7 +18,11 @@ import { latestGlancePngPath, latestWatchPngPath } from './chat-bridge.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
+/** @deprecated 兼容旧参数；现表示每页条数 */
 export const DEFAULT_RECENT_ROUNDS = 12
+export const DEFAULT_PAGE_SIZE = 12
+/** 最多带入多少条展示行（防 HTML 过大） */
+export const MAX_CHAT_ROWS = 300
 
 export function dshPetMemoryPath() {
   return join(homedir(), '.dsh', 'dsh-pet', 'memory.json')
@@ -131,13 +136,6 @@ function svgDataUri(svg) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
-/** 优先用 assets/avatar-pet.png，内嵌 data URI，避免 file:// 裂图。 */
-export async function resolvePetAvatarDataUri() {
-  const fromPng = await fileToDataUri(petAvatarAssetPath(), 'image/png')
-  if (fromPng) return fromPng
-  return svgDataUri(PET_AVATAR_SVG_FALLBACK)
-}
-
 /**
  * @param {string | null} filePath
  * @param {string} [mime]
@@ -154,12 +152,23 @@ export async function fileToDataUri(filePath, mime = 'image/png') {
   }
 }
 
+/** 优先用 assets/avatar-pet.png，内嵌 data URI，避免 file:// 裂图。 */
+export async function resolvePetAvatarDataUri() {
+  const fromPng = await fileToDataUri(petAvatarAssetPath(), 'image/png')
+  if (fromPng) return fromPng
+  return svgDataUri(PET_AVATAR_SVG_FALLBACK)
+}
+
 /**
  * 把看屏注入的附图挪到下一条小蓝鲸回复上，并去掉重复的「用户原话」气泡。
  * @param {object[]} messages
- * @returns {Promise<object[]>} 展示用行：{ role, content, ts, imageDataUris: string[] }
+ * @param {{ resolveImage?: (attachmentId: string) => Promise<string | null> }} [opts]
+ * @returns {Promise<object[]>} 展示用行：{ role, content, ts, images: string[] }
  */
-export async function prepareChatRows(messages) {
+export async function prepareChatRows(messages, opts = {}) {
+  const resolveImage = opts.resolveImage || (async (attachmentId) => (
+    fileToDataUri(attachmentObjectPath(attachmentId))
+  ))
   /** @type {object[]} */
   const rows = []
   /** @type {string[]} */
@@ -171,7 +180,11 @@ export async function prepareChatRows(messages) {
     const attId = m.image?.attachmentId
     let uri = null
     if (attId) {
-      uri = await fileToDataUri(attachmentObjectPath(attId))
+      try {
+        uri = await resolveImage(attId)
+      } catch {
+        uri = null
+      }
     }
 
     if (m.role !== 'assistant' && isGlanceInject(m.content)) {
@@ -186,30 +199,71 @@ export async function prepareChatRows(messages) {
         role: 'assistant',
         content: displayContent(m.content),
         ts,
-        imageDataUris: images,
+        images,
       })
       continue
     }
 
-    // 普通用户话；若紧跟着会被 inject 覆盖的同文案，仍保留这一条
     rows.push({
       role: 'user',
       content: displayContent(m.content),
       ts,
-      imageDataUris: uri ? [uri] : [],
+      images: uri ? [uri] : [],
     })
   }
 
-  // 末尾还有未接到的图：单独挂一条小蓝鲸「画面」气泡
   if (pendingImages.length) {
     rows.push({
       role: 'assistant',
       content: '',
       ts: rows.at(-1)?.ts,
-      imageDataUris: pendingImages,
+      images: pendingImages,
     })
   }
   return rows
+}
+
+/** 按时间顺序切页：pages[0] 最早，pages[at(-1)] 最新。 */
+export function chunkPages(rows, pageSize = DEFAULT_PAGE_SIZE) {
+  const size = Math.max(1, Math.min(50, Number(pageSize) || DEFAULT_PAGE_SIZE))
+  /** @type {object[][]} */
+  const pages = []
+  for (let i = 0; i < rows.length; i += size) {
+    pages.push(rows.slice(i, i + size))
+  }
+  return pages
+}
+
+/**
+ * 附件落到 cache，返回相对 HTML 的路径（避免 data URI 撑爆多页 JSON，也避开 copy EPERM）。
+ * @param {string} home
+ * @param {string} attachmentId
+ */
+export async function materializeAttachment(home, attachmentId) {
+  const src = attachmentObjectPath(attachmentId)
+  if (!src || !existsSync(src)) return null
+  const id = String(attachmentId).replace(/^sha256:/i, '')
+  const assets = recentChatAssetsDir(home)
+  await mkdir(assets, { recursive: true })
+  const name = `att-${id.slice(0, 20)}.png`
+  const dest = join(assets, name)
+  if (!existsSync(dest)) {
+    await writeFile(dest, await readFile(src))
+  }
+  return `./recent-chat-assets/${name}`
+}
+
+async function materializeLocalPng(home, filePath, name) {
+  if (!filePath || !existsSync(filePath)) return null
+  const assets = recentChatAssetsDir(home)
+  await mkdir(assets, { recursive: true })
+  const dest = join(assets, name)
+  try {
+    await writeFile(dest, await readFile(filePath))
+    return `./recent-chat-assets/${name}`
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -217,15 +271,24 @@ export async function prepareChatRows(messages) {
  *   home: string,
  *   petId?: string,
  *   rounds?: number,
+ *   pageSize?: number,
+ *   maxRows?: number,
  *   memoryPath?: string,
  *   log?: (m: string) => void,
  * }} options
- * @returns {Promise<{ ok: boolean, path?: string, count?: number, error?: string }>}
+ * @returns {Promise<{ ok: boolean, path?: string, count?: number, pages?: number, error?: string }>}
  */
 export async function buildRecentChatHtml(options) {
   const home = options.home
   const petId = options.petId || 'main'
-  const rounds = Math.max(1, Math.min(50, Number(options.rounds) || DEFAULT_RECENT_ROUNDS))
+  const pageSize = Math.max(
+    1,
+    Math.min(50, Number(options.pageSize) || Number(options.rounds) || DEFAULT_PAGE_SIZE),
+  )
+  const maxRows = Math.max(
+    pageSize,
+    Math.min(1000, Number(options.maxRows) || MAX_CHAT_ROWS),
+  )
   const log = options.log ?? (() => {})
   const memoryPath = options.memoryPath || dshPetMemoryPath()
 
@@ -237,8 +300,7 @@ export async function buildRecentChatHtml(options) {
   }
 
   const all = extractPetMessages(mem, petId).filter((m) => m && typeof m.content === 'string')
-  const slice = all.slice(-(rounds * 2))
-  if (!slice.length) {
+  if (!all.length) {
     return { ok: false, error: '还没有聊天记录' }
   }
 
@@ -246,73 +308,48 @@ export async function buildRecentChatHtml(options) {
 
   const petAvatar = await resolvePetAvatarDataUri()
   const meAvatar = svgDataUri(USER_AVATAR_SVG)
-  const rows = await prepareChatRows(slice)
+  let rows = await prepareChatRows(all, {
+    resolveImage: (id) => materializeAttachment(home, id),
+  })
+  if (rows.length > maxRows) {
+    rows = rows.slice(-maxRows)
+  }
 
   // 若整页没有任何附图，兜底挂上最近盯屏/看一眼落盘图
-  const anyImg = rows.some((r) => r.imageDataUris?.length)
+  const anyImg = rows.some((r) => r.images?.length)
   if (!anyImg) {
-    for (const p of [latestWatchPngPath(home), latestGlancePngPath(home)]) {
-      const uri = await fileToDataUri(p)
+    for (const [name, p] of [
+      ['watch-latest.png', latestWatchPngPath(home)],
+      ['glance-latest.png', latestGlancePngPath(home)],
+    ]) {
+      const uri = await materializeLocalPng(home, p, name)
       if (!uri) continue
       const lastPet = [...rows].reverse().find((r) => r.role === 'assistant')
-      if (lastPet) lastPet.imageDataUris.push(uri)
+      if (lastPet) lastPet.images.push(uri)
       else {
         rows.push({
           role: 'assistant',
           content: '最近画面',
           ts: Date.now(),
-          imageDataUris: [uri],
+          images: [uri],
         })
       }
       break
     }
   }
 
-  /** @type {string[]} */
-  const blocks = []
-  let prevTs = 0
-  for (const row of rows) {
-    const when = formatTs(row.ts)
-    if (shouldShowTimeChip(prevTs, row.ts) && when) {
-      blocks.push(`<div class="time-chip"><span>${escapeHtml(when)}</span></div>`)
-    }
-    prevTs = Number(row.ts) || prevTs
-
-    const imgs = (row.imageDataUris || [])
-      .map((u) => (
-        `<button type="button" class="attach" data-zoom aria-label="查看大图">`
-        + `<img src="${u}" alt="拼图" loading="lazy"/>`
-        + `</button>`
-      ))
-      .join('')
-    const text = escapeHtml(row.content || '')
-    const bubbleInner = (text ? `<div class="text">${text}</div>` : '') + imgs
-    if (!bubbleInner) continue
-
-    if (row.role === 'assistant') {
-      blocks.push(
-        `<div class="row pet">`
-        + `<img class="avatar" src="${petAvatar}" alt="小蓝鲸" width="42" height="42"/>`
-        + `<div class="side"><div class="bubble">${bubbleInner}</div></div>`
-        + `</div>`,
-      )
-    } else {
-      blocks.push(
-        `<div class="row me">`
-        + `<div class="side"><div class="bubble">${bubbleInner}</div></div>`
-        + `<img class="avatar" src="${meAvatar}" alt="我" width="42" height="42"/>`
-        + `</div>`,
-      )
-    }
+  const pages = chunkPages(rows, pageSize)
+  if (!pages.length) {
+    return { ok: false, error: '还没有聊天记录' }
   }
 
-  // 顶部快捷缩略（也内嵌，避免裂图）
+  // 顶部快捷缩略
   const shortcuts = []
-  for (const [label, p] of [
-    ['最近盯屏拼图', latestWatchPngPath(home)],
-    ['最近看一眼', latestGlancePngPath(home)],
+  for (const [label, name, p] of [
+    ['最近盯屏拼图', 'watch-latest.png', latestWatchPngPath(home)],
+    ['最近看一眼', 'glance-latest.png', latestGlancePngPath(home)],
   ]) {
-    const uri = await fileToDataUri(p)
+    const uri = await materializeLocalPng(home, p, name)
     if (!uri) continue
     shortcuts.push(
       `<button type="button" class="quick-chip" data-zoom>`
@@ -320,6 +357,16 @@ export async function buildRecentChatHtml(options) {
       + `<span>${escapeHtml(label)}</span></button>`,
     )
   }
+
+  const payload = {
+    pageSize,
+    total: rows.length,
+    pageCount: pages.length,
+    petAvatar,
+    meAvatar,
+    pages,
+  }
+  const payloadJson = JSON.stringify(payload).replace(/</g, '\\u003c')
 
   void log
   void HERE
@@ -374,9 +421,14 @@ export async function buildRecentChatHtml(options) {
   }
   main.chat {
     max-width: 680px; margin: 0 auto;
-    padding: 14px 12px 36px;
+    padding: 8px 12px 36px;
     display: flex; flex-direction: column; gap: 16px;
   }
+  .load-tip {
+    text-align: center; font-size: 12px; color: var(--muted);
+    padding: 8px 0 2px; min-height: 28px;
+  }
+  .load-tip.is-busy { color: var(--link); }
   .time-chip { display: flex; justify-content: center; margin: 2px 0; }
   .time-chip span {
     font-size: 11px; color: #fff; background: rgba(0,0,0,.16);
@@ -481,11 +533,13 @@ export async function buildRecentChatHtml(options) {
 <body>
 <header class="bar">
   <h1>小蓝鲸</h1>
-  <p>最近 ${rounds} 轮 · ${rows.length} 条 · 点图可放大</p>
+  <p id="header-sub">共 ${rows.length} 条 · ${pages.length} 页 · 上滑加载更早</p>
 </header>
 ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
 <main class="chat">
-${blocks.join('\n')}
+  <div class="load-tip" id="load-tip">上滑可查看更早聊天</div>
+  <div id="top-sentinel" aria-hidden="true"></div>
+  <div id="chat-list"></div>
 </main>
 <div class="lightbox" id="lightbox" hidden>
   <div class="lightbox-stage"><img alt="大图预览"/></div>
@@ -497,27 +551,161 @@ ${blocks.join('\n')}
     </div>
   </div>
 </div>
+<script type="application/json" id="chat-data">${payloadJson}</script>
 <script>
 (function () {
+  var data = JSON.parse(document.getElementById('chat-data').textContent);
+  var pages = data.pages || [];
+  var list = document.getElementById('chat-list');
+  var tip = document.getElementById('load-tip');
+  var sentinel = document.getElementById('top-sentinel');
+  var sub = document.getElementById('header-sub');
+  var cursor = pages.length; // 下一页要加载的是 cursor-1
+  var loading = false;
+  var lastTs = 0;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatTs(ts) {
+    var n = Number(ts);
+    if (!isFinite(n) || n <= 0) return '';
+    var d = new Date(n);
+    var cur = new Date();
+    var pad = function (x) { return String(x).padStart(2, '0'); };
+    var hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    var same = d.getFullYear() === cur.getFullYear() && d.getMonth() === cur.getMonth() && d.getDate() === cur.getDate();
+    if (same) return '今天 ' + hm;
+    var y = new Date(cur); y.setDate(y.getDate() - 1);
+    if (d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate()) return '昨天 ' + hm;
+    return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
+  }
+
+  function shouldTime(prev, ts) {
+    var a = Number(prev), b = Number(ts);
+    if (!isFinite(b) || b <= 0) return false;
+    if (!isFinite(a) || a <= 0) return true;
+    return Math.abs(b - a) >= 5 * 60 * 1000;
+  }
+
+  function rowHtml(row) {
+    var imgs = (row.images || []).map(function (u) {
+      return '<button type="button" class="attach" data-zoom aria-label="查看大图">'
+        + '<img src="' + esc(u) + '" alt="拼图" loading="lazy"/></button>';
+    }).join('');
+    var text = esc(row.content || '');
+    var inner = (text ? '<div class="text">' + text + '</div>' : '') + imgs;
+    if (!inner) return '';
+    if (row.role === 'assistant') {
+      return '<div class="row pet">'
+        + '<img class="avatar" src="' + data.petAvatar + '" alt="小蓝鲸" width="42" height="42"/>'
+        + '<div class="side"><div class="bubble">' + inner + '</div></div></div>';
+    }
+    return '<div class="row me">'
+      + '<div class="side"><div class="bubble">' + inner + '</div></div>'
+      + '<img class="avatar" src="' + data.meAvatar + '" alt="我" width="42" height="42"/></div>';
+  }
+
+  function pageHtml(pageRows, seedTs) {
+    var html = '';
+    var prev = seedTs;
+    for (var i = 0; i < pageRows.length; i++) {
+      var row = pageRows[i];
+      var when = formatTs(row.ts);
+      if (shouldTime(prev, row.ts) && when) {
+        html += '<div class="time-chip"><span>' + esc(when) + '</span></div>';
+      }
+      html += rowHtml(row);
+      prev = Number(row.ts) || prev;
+    }
+    return { html: html, lastTs: prev };
+  }
+
+  function updateTip() {
+    var shownPages = pages.length - cursor;
+    if (cursor <= 0) {
+      tip.textContent = '已经到最早了';
+      tip.className = 'load-tip';
+    } else if (loading) {
+      tip.textContent = '正在加载更早消息…';
+      tip.className = 'load-tip is-busy';
+    } else {
+      tip.textContent = '上滑加载更早 · 已显示 ' + shownPages + '/' + pages.length + ' 页';
+      tip.className = 'load-tip';
+    }
+    if (sub) {
+      sub.textContent = '共 ' + data.total + ' 条 · 已加载 ' + shownPages + '/' + pages.length + ' 页 · 上滑看更早';
+    }
+  }
+
+  function prependPage() {
+    if (loading || cursor <= 0) { updateTip(); return; }
+    loading = true;
+    updateTip();
+    var next = cursor - 1;
+    var pageRows = pages[next] || [];
+    var built = pageHtml(pageRows, 0);
+    var holder = document.createElement('div');
+    holder.innerHTML = built.html;
+    var prevHeight = document.documentElement.scrollHeight;
+    var nodes = [];
+    while (holder.firstChild) nodes.push(holder.firstChild);
+    for (var i = 0; i < nodes.length; i++) {
+      list.insertBefore(nodes[i], list.firstChild);
+    }
+    var newHeight = document.documentElement.scrollHeight;
+    window.scrollTo(0, window.scrollY + (newHeight - prevHeight));
+    cursor = next;
+    loading = false;
+    updateTip();
+  }
+
+  function loadLatest() {
+    if (!pages.length) return;
+    cursor = pages.length - 1;
+    var built = pageHtml(pages[cursor], 0);
+    list.innerHTML = built.html;
+    lastTs = built.lastTs;
+    updateTip();
+    // 滚到底（最新）
+    requestAnimationFrame(function () {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    });
+  }
+
+  loadLatest();
+
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) prependPage();
+      });
+    }, { root: null, rootMargin: '80px 0px 0px 0px', threshold: 0 });
+    io.observe(sentinel);
+  } else {
+    window.addEventListener('scroll', function () {
+      if (window.scrollY < 80) prependPage();
+    }, { passive: true });
+  }
+
+  // —— 灯箱 ——
   var box = document.getElementById('lightbox');
   var stage = box.querySelector('.lightbox-stage');
   var big = stage.querySelector('img');
   var meta = document.getElementById('lightbox-meta');
-  var list = [];
-  var index = 0;
-  var scale = 1;
-  var rotate = 0;
-  var tx = 0;
-  var ty = 0;
-  var dragging = false;
-  var lastX = 0;
-  var lastY = 0;
-  var MIN = 0.4;
-  var MAX = 6;
+  var glist = [];
+  var gindex = 0;
+  var scale = 1, rotate = 0, tx = 0, ty = 0;
+  var dragging = false, lastX = 0, lastY = 0;
+  var MIN = 0.4, MAX = 6;
 
   function gallery() {
-    var out = [];
-    var seen = Object.create(null);
+    var out = [], seen = Object.create(null);
     document.querySelectorAll('[data-zoom] img').forEach(function (img) {
       var src = img.currentSrc || img.src;
       if (!src || seen[src]) return;
@@ -526,44 +714,32 @@ ${blocks.join('\n')}
     });
     return out;
   }
-
   function applyTransform(animate) {
     big.style.transition = animate ? 'transform .16s ease' : 'none';
     big.style.transform = 'translate(' + tx + 'px,' + ty + 'px) rotate(' + rotate + 'deg) scale(' + scale + ')';
-    var pct = Math.round(scale * 100);
-    meta.textContent = (index + 1) + ' / ' + Math.max(list.length, 1) + ' · ' + pct + '%';
+    meta.textContent = (gindex + 1) + ' / ' + Math.max(glist.length, 1) + ' · ' + Math.round(scale * 100) + '%';
   }
-
   function resetView(animate) {
-    scale = 1;
-    rotate = 0;
-    tx = 0;
-    ty = 0;
+    scale = 1; rotate = 0; tx = 0; ty = 0;
     applyTransform(animate !== false);
   }
-
   function showAt(i, animate) {
-    if (!list.length) return;
-    index = (i + list.length) % list.length;
-    big.src = list[index];
+    if (!glist.length) return;
+    gindex = (i + glist.length) % glist.length;
+    big.src = glist[gindex];
     resetView(animate);
   }
-
   function openZoom(src) {
     if (!src) return;
-    list = gallery();
-    var i = list.indexOf(src);
-    if (i < 0) {
-      list.push(src);
-      i = list.length - 1;
-    }
-    index = i;
+    glist = gallery();
+    var i = glist.indexOf(src);
+    if (i < 0) { glist.push(src); i = glist.length - 1; }
+    gindex = i;
     box.hidden = false;
-    showAt(index, false);
+    showAt(gindex, false);
     requestAnimationFrame(function () { box.classList.add('is-open'); });
     document.body.classList.add('is-zooming');
   }
-
   function closeZoom() {
     box.classList.remove('is-open');
     document.body.classList.remove('is-zooming');
@@ -573,15 +749,13 @@ ${blocks.join('\n')}
       if (!box.classList.contains('is-open')) {
         box.hidden = true;
         big.removeAttribute('src');
-        list = [];
+        glist = [];
       }
     }, 180);
   }
-
   function zoomBy(factor, cx, cy) {
     var next = Math.min(MAX, Math.max(MIN, scale * factor));
     if (next === scale) return;
-    // 以视口中心为默认锚点；有指针则绕指针缩放
     if (typeof cx === 'number' && typeof cy === 'number') {
       var rect = big.getBoundingClientRect();
       var mx = cx - (rect.left + rect.width / 2);
@@ -593,7 +767,6 @@ ${blocks.join('\n')}
     scale = next;
     applyTransform(true);
   }
-
   function isOpen() { return box.classList.contains('is-open'); }
 
   document.addEventListener('click', function (e) {
@@ -606,28 +779,21 @@ ${blocks.join('\n')}
     }
     if (isOpen() && (e.target === box || e.target === stage)) closeZoom();
   });
-
   big.addEventListener('dblclick', function (e) {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     if (scale > 1.05) resetView(true);
     else zoomBy(2, e.clientX, e.clientY);
   });
-
   big.addEventListener('pointerdown', function (e) {
     if (!isOpen() || e.button !== 0) return;
-    dragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
     box.classList.add('is-panning');
     big.setPointerCapture(e.pointerId);
   });
   big.addEventListener('pointermove', function (e) {
     if (!dragging) return;
-    tx += e.clientX - lastX;
-    ty += e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    tx += e.clientX - lastX; ty += e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
     applyTransform(false);
   });
   function endDrag(e) {
@@ -638,14 +804,11 @@ ${blocks.join('\n')}
   }
   big.addEventListener('pointerup', endDrag);
   big.addEventListener('pointercancel', endDrag);
-
   box.addEventListener('wheel', function (e) {
     if (!isOpen()) return;
     e.preventDefault();
-    var factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    zoomBy(factor, e.clientX, e.clientY);
+    zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
   }, { passive: false });
-
   document.addEventListener('keydown', function (e) {
     if (!isOpen()) return;
     var k = e.key;
@@ -654,8 +817,8 @@ ${blocks.join('\n')}
     if (k === '-' || k === '_') { e.preventDefault(); zoomBy(1 / 1.2); return; }
     if (k === '0') { e.preventDefault(); resetView(true); return; }
     if (k === 'r' || k === 'R') { e.preventDefault(); rotate = (rotate + 90) % 360; applyTransform(true); return; }
-    if (k === 'ArrowLeft') { e.preventDefault(); showAt(index - 1, false); return; }
-    if (k === 'ArrowRight') { e.preventDefault(); showAt(index + 1, false); return; }
+    if (k === 'ArrowLeft') { e.preventDefault(); showAt(gindex - 1, false); return; }
+    if (k === 'ArrowRight') { e.preventDefault(); showAt(gindex + 1, false); return; }
     if (k === 'ArrowUp') { e.preventDefault(); ty += 40; applyTransform(true); return; }
     if (k === 'ArrowDown') { e.preventDefault(); ty -= 40; applyTransform(true); return; }
   });
@@ -667,7 +830,7 @@ ${blocks.join('\n')}
   const out = recentChatHtmlPath(home)
   await mkdir(dirname(out), { recursive: true })
   await writeFile(out, html, 'utf8')
-  return { ok: true, path: out, count: rows.length }
+  return { ok: true, path: out, count: rows.length, pages: pages.length }
 }
 
 /** Windows：用默认浏览器打开本地 HTML。 */
@@ -685,7 +848,7 @@ export function openPathDefault(filePath) {
 }
 
 /**
- * @param {{ home: string, petId?: string, rounds?: number, memoryPath?: string, log?: (m: string) => void }} options
+ * @param {{ home: string, petId?: string, rounds?: number, pageSize?: number, maxRows?: number, memoryPath?: string, log?: (m: string) => void }} options
  */
 export async function openRecentChat(options) {
   const built = await buildRecentChatHtml(options)

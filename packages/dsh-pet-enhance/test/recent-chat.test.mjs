@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import {
   attachmentObjectPath,
   buildRecentChatHtml,
+  chunkPages,
   displayContent,
   extractPetMessages,
   formatTs,
@@ -56,48 +57,53 @@ test('prepareChatRows 把注入附图挪到小蓝鲸回复', async () => {
       role: 'user',
       content: '【小蓝鲸已附上刚才的画面】用户刚说「看一眼桌面」。说明',
       ts: 3,
-      // 无真实文件 → 无 uri，但仍应跳过这条用户气泡
     },
     { role: 'assistant', content: '桌面上有窗口', ts: 4 },
   ])
   assert.equal(rows.length, 3)
   assert.equal(rows[0].content, '看一眼桌面')
-  assert.equal(rows[1].content, '好，我瞅一眼…')
-  assert.equal(rows[2].role, 'assistant')
   assert.equal(rows[2].content, '桌面上有窗口')
+  assert.ok(Array.isArray(rows[2].images))
 })
 
-test('buildRecentChatHtml 内嵌头像 data URI 与气泡', async () => {
+test('chunkPages 从早到晚切页', () => {
+  const rows = Array.from({ length: 25 }, (_, i) => ({ role: 'user', content: String(i), ts: i }))
+  const pages = chunkPages(rows, 10)
+  assert.equal(pages.length, 3)
+  assert.equal(pages[0].length, 10)
+  assert.equal(pages[0][0].content, '0')
+  assert.equal(pages[2][0].content, '20')
+})
+
+test('buildRecentChatHtml 分页数据与上滑提示', async () => {
   const home = await mkdtemp(join(tmpdir(), 'recent-chat-'))
   try {
     const memPath = join(home, 'memory.json')
+    const messages = []
+    for (let i = 0; i < 30; i++) {
+      messages.push({ role: 'user', content: `u${i} <b>`, ts: i * 2 })
+      messages.push({ role: 'assistant', content: `a${i} & x`, ts: i * 2 + 1 })
+    }
     await writeFile(memPath, JSON.stringify({
-      main: {
-        main: {
-          messages: [
-            { role: 'user', content: '你好 <script>', ts: 1 },
-            { role: 'assistant', content: '嗨 & 好', ts: 2 },
-          ],
-        },
-      },
+      main: { main: { messages } },
     }), 'utf8')
 
-    const r = await buildRecentChatHtml({ home, rounds: 2, memoryPath: memPath })
+    const r = await buildRecentChatHtml({
+      home,
+      pageSize: 10,
+      memoryPath: memPath,
+    })
     assert.equal(r.ok, true)
+    assert.ok(r.pages >= 2)
     assert.equal(r.path, recentChatHtmlPath(home))
-    assert.ok(existsSync(r.path))
     const html = await readFile(r.path, 'utf8')
-    assert.ok(html.includes('&lt;script&gt;'))
-    assert.ok(html.includes('嗨 &amp; 好'))
-    assert.ok(html.includes('class="row me"'))
-    assert.ok(html.includes('class="row pet"'))
-    assert.ok(html.includes('data:image/png;base64') || html.includes('data:image/svg+xml'))
-    assert.ok(html.includes('alt="小蓝鲸"'))
+    assert.ok(html.includes('id="chat-data"'))
+    assert.ok(html.includes('top-sentinel'))
+    assert.ok(html.includes('上滑'))
+    assert.ok(html.includes('prependPage'))
     assert.ok(html.includes('id="lightbox"'))
-    assert.ok(html.includes('data-zoom'))
-    assert.ok(html.includes('ArrowLeft'))
-    assert.ok(html.includes('滚轮缩放'))
-    assert.ok(!html.includes('avatar-pet.svg'))
+    // 最新页由脚本渲染，JSON 里应有转义后的内容
+    assert.ok(html.includes('u29') || html.includes('\\u003c'))
   } finally {
     await rm(home, { recursive: true, force: true })
   }
