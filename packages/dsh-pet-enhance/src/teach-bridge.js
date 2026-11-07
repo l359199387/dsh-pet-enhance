@@ -7,6 +7,7 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
+import { isPetChromeTitle } from './policy.js'
 import {
   isTeachEndIntent,
   isTeachStartIntent,
@@ -415,15 +416,18 @@ export function createTeachBridge(options) {
       stepIndex += 1
       lastEventAt = Date.now()
       askedIdle = false
+      const winTitle = norm.window?.title || null
+      // 点桌宠「我教完了」：不截图、不进 digest（本地 jsonl 仍可留痕）
+      const petChrome = isPetChromeTitle(winTitle)
       // 左/右/中/侧键任意点击 → 鼠标附近小图
-      if (isTeachMouseClickKind(norm.kind) && frames) {
+      if (isTeachMouseClickKind(norm.kind) && frames && !petChrome) {
         shotJobs.push(frames.snapOnClick({
           eventI: norm.i,
           x: norm.x,
           y: norm.y,
           button: normalizeMouseButton(norm.button, norm.kind),
           action: norm.kind,
-          window: norm.window?.title || null,
+          window: winTitle,
         }))
       } else if (isTeachScrollBoundaryKind(norm.kind) && frames) {
         // 滑轮：只在手势开始/结束截，中间每格不截
@@ -436,8 +440,8 @@ export function createTeachBridge(options) {
           horizontal: norm.horizontal,
           window: norm.window?.title || null,
         }))
-      } else if (norm.window?.title && frames) {
-        shotJobs.push(frames.maybeOnWindow(norm.window.title))
+      } else if (winTitle && frames && !petChrome) {
+        shotJobs.push(frames.maybeOnWindow(winTitle))
       }
       if (norm.sensitive && norm.kind === 'type') {
         await broadcastToDshPet('嗯，敏感输入我只记在本地了。', { pet, duration: 5_000 })

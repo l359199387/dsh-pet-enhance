@@ -242,6 +242,9 @@ export function buildPublicPlan(events) {
   let lastTyped = null
   for (const ev of events) {
     if (isTeachMouseClickKind(ev.kind)) {
+      const winTitle = ev.window?.title || null
+      // 「我教完了」点在桌宠头顶确认上：不当业务步骤、不上模型
+      if (isPetChromeTitle(winTitle)) continue
       const button = normalizeMouseButton(ev.button, ev.kind)
       steps.push({
         eventI: ev.i,
@@ -249,8 +252,8 @@ export function buildPublicPlan(events) {
         x: ev.x,
         y: ev.y,
         button,
-        window: ev.window?.title || null,
-        reason: `教学步骤 #${ev.i} ${formatMouseButtonLabel(button)}${ev.window?.title ? ` @ ${ev.window.title}` : ''}`,
+        window: winTitle,
+        reason: `教学步骤 #${ev.i} ${formatMouseButtonLabel(button)}${winTitle ? ` @ ${winTitle}` : ''}`,
       })
     } else if (isTeachScrollBoundaryKind(ev.kind)) {
       const phase = ev.kind === 'scroll_start' ? '开始' : '结束'

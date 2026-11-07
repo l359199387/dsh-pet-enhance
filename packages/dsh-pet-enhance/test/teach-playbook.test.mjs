@@ -55,6 +55,16 @@ test('buildPublicPlan：丢掉教完了噪声与桌宠窗键入', () => {
   assert.deepEqual(steps.map((s) => s.text), ['hello'])
 })
 
+test('buildPublicPlan：丢掉点「我教完了」的桌宠窗点击', () => {
+  const steps = buildPublicPlan([
+    { kind: 'click', i: 0, x: 10, y: 20, button: 'left', window: { title: '豆包' } },
+    { kind: 'click', i: 1, x: 2055, y: 939, button: 'left', window: { title: 'dsh-pet 桌宠（桌面模式）' } },
+  ])
+  assert.equal(steps.length, 1)
+  assert.equal(steps[0].window, '豆包')
+  assert.equal(steps[0].eventI, 0)
+})
+
 test('detectTeachAmbiguities：目标不清 / 步少会提问', () => {
   assert.ok(detectTeachAmbiguities('完成刚才教的流程', [{ action: 'key', keys: 'a' }]).some((q) => q.code === 'goal'))
   assert.ok(detectTeachAmbiguities('保存', [{ action: 'key', keys: 'a' }]).some((q) => q.code === 'short'))
