@@ -243,6 +243,7 @@ function stepToActArgs(step, sessionId) {
  *   runAct?: (args: object) => Promise<{ text?: string, meta?: object }>,
  *   resetActBudget?: () => void,
  *   isAborted?: () => boolean,
+ *   onSession?: (sessionId: string) => void,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
  *   pollChat?: boolean,
@@ -486,6 +487,7 @@ export function createTeachBridge(options) {
         log(`teach digest 叫醒失败：${woken.reason}`)
         return { needMore: false, summary: narrative, fastPlan: '' }
       }
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       log(`teach digest 附图成功 ${woken.imageCount ?? 0} 张（失败 ${woken.imageFailed ?? 0}）`)
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 90_000,
@@ -792,6 +794,7 @@ export function createTeachBridge(options) {
           { pet, duration: 10_000 },
         )
       } else {
+        try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
         const reply = await waitReply(options.ctx, woken.sessionId, {
           timeoutMs: 180_000,
           isAborted: () => stopped || Boolean(options.isAborted?.()),
@@ -904,6 +907,7 @@ export function createTeachBridge(options) {
     }
 
     log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(playbook)}`)
+    try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
     const reply = await waitReply(options.ctx, woken.sessionId, {
       timeoutMs: 180_000,
       isAborted: () => stopped || Boolean(options.isAborted?.()),

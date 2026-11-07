@@ -187,6 +187,46 @@ export async function wakeSession(ctx, {
 }
 
 /**
+ * 急停：打断主会话当前 turn（等同用户点停止），并默认清空排队 followup。
+ * @param {object} ctx
+ * @param {{
+ *   sessionId?: string | null,
+ *   preferredId?: string | null,
+ *   cause?: { kind: string, reason?: string },
+ *   keepInbox?: boolean,
+ * }} [opts]
+ * @returns {Promise<{ ok: boolean, reason?: string, sessionId?: string, canceled?: boolean }>}
+ */
+export async function cancelAgentSession(ctx, {
+  sessionId = null,
+  preferredId = null,
+  cause = { kind: 'user' },
+  keepInbox = false,
+} = {}) {
+  const sc = serviceOf(ctx, 'sessionController')
+  if (!sc?.resolveAgent) return { ok: false, reason: 'no-session-controller' }
+
+  const sid = sessionId || pickSessionId(ctx, preferredId)
+  if (!sid) return { ok: false, reason: 'no-session-id' }
+
+  try {
+    const resolved = await sc.resolveAgent(sid)
+    if (!resolved || resolved.error || !resolved.agent) {
+      const reason = resolved?.error?.message ?? resolved?.error ?? 'resolve-failed'
+      return { ok: false, reason: String(reason).slice(0, 160), sessionId: sid }
+    }
+    const agent = resolved.agent
+    if (typeof agent.cancel !== 'function') {
+      return { ok: false, reason: 'no-cancel', sessionId: sid }
+    }
+    agent.cancel(cause && typeof cause === 'object' ? cause : { kind: 'user' }, { keepInbox: Boolean(keepInbox) })
+    return { ok: true, canceled: true, sessionId: sid }
+  } catch (e) {
+    return { ok: false, reason: String(e?.message ?? e).slice(0, 160), sessionId: sid }
+  }
+}
+
+/**
  * 等本轮 turn 结束后取出助手文本（给桌宠冒泡）。
  * @returns {Promise<{ ok: boolean, text?: string, reason?: string }>}
  */

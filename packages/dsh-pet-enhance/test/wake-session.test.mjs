@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildImageContentBlocks, followupMessage, pickSessionId, wakeSession } from '../src/wake-session.js'
+import {
+  buildImageContentBlocks,
+  cancelAgentSession,
+  followupMessage,
+  pickSessionId,
+  wakeSession,
+} from '../src/wake-session.js'
 
 const tinyPng = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
@@ -38,6 +44,52 @@ test('wakeSession：无 controller 时明确失败', async () => {
   const r = await wakeSession({}, { text: 'hi' })
   assert.equal(r.ok, false)
   assert.equal(r.reason, 'no-session-controller')
+})
+
+test('cancelAgentSession：调用 agent.cancel({ kind: user })', async () => {
+  const canceled = []
+  const ctx = {
+    get(name) {
+      if (name === 'sessionController') {
+        return {
+          async resolveAgent(id) {
+            assert.equal(id, 's1')
+            return {
+              agent: {
+                cancel(cause, opts) {
+                  canceled.push({ cause, opts })
+                },
+              },
+            }
+          },
+        }
+      }
+      return null
+    },
+  }
+  const r = await cancelAgentSession(ctx, { sessionId: 's1' })
+  assert.equal(r.ok, true)
+  assert.equal(r.canceled, true)
+  assert.equal(canceled[0].cause.kind, 'user')
+  assert.equal(canceled[0].opts.keepInbox, false)
+})
+
+test('cancelAgentSession：无 cancel 时明确失败', async () => {
+  const ctx = {
+    get(name) {
+      if (name === 'sessionController') {
+        return {
+          async resolveAgent() {
+            return { agent: { followup() {} } }
+          },
+        }
+      }
+      return null
+    },
+  }
+  const r = await cancelAgentSession(ctx, { sessionId: 's1' })
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no-cancel')
 })
 
 test('wakeSession：resolveAgent + followup + flush', async () => {

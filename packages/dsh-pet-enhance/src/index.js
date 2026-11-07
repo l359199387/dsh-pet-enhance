@@ -45,6 +45,7 @@ import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { c3BudgetExceededBubble } from './c3-task.js'
 import { createConfirmGate } from './confirm.js'
+import { cancelAgentSession } from './wake-session.js'
 import {
   deleteLearnedPair,
   getLearnedDetail,
@@ -148,6 +149,51 @@ async function refreshDshPet(state) {
     error: probed.error,
   }
   return state._dshPet
+}
+
+/**
+ * 急停：停动手 + 取消主会话当前 turn（agent.cancel）。
+ * @param {object} state
+ * @param {(m: string) => void} log
+ * @param {string} via
+ */
+async function runUserPanic(state, log, via = 'panic') {
+  state.confirmGate?.cancelAll('panic')
+  state.budget?.reset()
+  state.rememberedConfirms?.clear()
+  state.glance.panic()
+  try {
+    await state.sidecar?.abort?.()
+  } catch (e) {
+    log(`急停 abort sidecar 失败：${e?.message ?? e}`)
+  }
+
+  let agentCanceled = false
+  try {
+    const ctx = state.hostCtx || state.chatGateCtx || {}
+    const cancel = await cancelAgentSession(ctx, {
+      sessionId: state.lastAgentSessionId || state.lastSessionId,
+      preferredId: state.lastSessionId,
+      cause: { kind: 'user' },
+    })
+    agentCanceled = Boolean(cancel.ok && cancel.canceled)
+    log(
+      `急停（${via}）：agent ${agentCanceled ? `已 cancel ${cancel.sessionId}` : `未 cancel（${cancel.reason || 'n/a'}）`}`,
+    )
+  } catch (e) {
+    log(`急停 cancel agent 失败：${e?.message ?? e}`)
+  }
+
+  try {
+    await broadcastToDshPet(
+      agentCanceled
+        ? '已急停：动手和主会话这轮都停了。要继续再说一声。'
+        : '已急停：动手已停。主会话若还在跑，可在会话里再点一次停止。',
+      { duration: 10_000 },
+    )
+  } catch { /* ignore */ }
+
+  return { agentCanceled }
 }
 
 async function handle(req, res, connection, log, state) {
@@ -329,20 +375,14 @@ async function handle(req, res, connection, log, state) {
       send(res, 405, { ok: false, rejected: ['只支持 POST'] })
       return
     }
-    state.confirmGate?.cancelAll('panic')
-    state.budget?.reset()
-    state.rememberedConfirms?.clear()
-    state.glance.panic()
-    try {
-      await state.sidecar?.abort?.()
-    } catch (e) {
-      log(`急停 abort 失败：${e?.message ?? e}`)
-    }
-    log('用户急停')
-    try {
-      await broadcastToDshPet('已急停。这轮不再动手；要继续再说一声。', { duration: 10_000 })
-    } catch { /* ignore */ }
-    send(res, 200, { ok: true, pet: 'alarmed', armed: false, aborted: true })
+    const panic = await runUserPanic(state, log, 'http')
+    send(res, 200, {
+      ok: true,
+      pet: 'alarmed',
+      armed: false,
+      aborted: true,
+      agentCanceled: Boolean(panic?.agentCanceled),
+    })
     return
   }
 
@@ -730,6 +770,9 @@ function installDshPetBridge(ctx, log, state, disposers) {
         state.rememberedConfirms?.clear()
         state.glance.clearPanicHold?.()
       },
+      onSession: (sid) => {
+        if (sid) state.lastAgentSessionId = String(sid)
+      },
       onActing: () => state.glance.setPet('acting'),
       onIdle: () => {
         if (state.glance.snapshot().pet.state.data === 'acting') {
@@ -761,6 +804,9 @@ function installDshPetBridge(ctx, log, state, disposers) {
         state.glance.clearPanicHold?.()
       },
       isAborted: () => state.glance.isPanicking?.() || !state.glance.snapshot().guard.armed.data,
+      onSession: (sid) => {
+        if (sid) state.lastAgentSessionId = String(sid)
+      },
       runAct: (args) => {
         if (typeof state.runAct === 'function') return state.runAct(args)
         return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })
@@ -774,6 +820,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     state.chatBridge = bridge
     state.agentBridge = agent
     state.chatGateCtx = ctx
+    state.hostCtx = ctx
     state.chatGateReady = true
     const router = createPetRouter({
       ctx,
@@ -834,16 +881,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     const doPanicFromMenu = async (via) => {
-      state.confirmGate?.cancelAll('panic')
-      state.budget?.reset()
-      state.rememberedConfirms?.clear()
-      state.glance.panic()
-      try {
-        await state.sidecar?.abort?.()
-      } catch { /* ignore */ }
-      log(`dsh-pet 菜单触发小蓝鲸急停（${via}）`)
-      await broadcastToDshPet('已急停。这轮不再动手；要继续再说一声。', { duration: 10_000 })
-      // 文案未变，勿 force 重注册（会清掉同拍其它菜单事件）
+      await runUserPanic(state, log, via)
       await pushMenu()
     }
 
@@ -1052,6 +1090,8 @@ export async function apply(ctx) {
     chatGateReady: false,
     chatGateHandled: null,
     chatGateCtx: null,
+    hostCtx: null,
+    lastAgentSessionId: null,
     chatBridge: null,
     agentBridge: null,
     teachBridge: null,

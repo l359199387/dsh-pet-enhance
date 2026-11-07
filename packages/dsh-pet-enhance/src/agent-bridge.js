@@ -77,6 +77,8 @@ function clipBubble(text, max = 160) {
  *   onActing?: () => void,
  *   onIdle?: () => void,
  *   resetActBudget?: () => void,
+ *   isAborted?: () => boolean,
+ *   onSession?: (sessionId: string) => void,
  * }} options
  */
 export function createAgentBridge(options) {
@@ -126,11 +128,12 @@ export function createAgentBridge(options) {
       }
 
       log(`agent-bridge 已叫醒会话 ${woken.sessionId}`)
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 180_000,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
-      if (options.isAborted?.()) {
+      if (options.isAborted?.() || reply.reason === 'aborted') {
         await broadcastToDshPet('已急停，这轮不动手了。', { pet, duration: 8_000 })
         return
       }
