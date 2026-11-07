@@ -242,6 +242,7 @@ function stepToActArgs(step, sessionId) {
  *   attachments?: { saveImage?: Function },
  *   runAct?: (args: object) => Promise<{ text?: string, meta?: object }>,
  *   resetActBudget?: () => void,
+ *   isAborted?: () => boolean,
  *   wake?: typeof wakeSession,
  *   waitReply?: typeof waitAssistantReply,
  *   pollChat?: boolean,
@@ -488,7 +489,7 @@ export function createTeachBridge(options) {
       log(`teach digest 附图成功 ${woken.imageCount ?? 0} 张（失败 ${woken.imageFailed ?? 0}）`)
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 90_000,
-        isAborted: () => stopped,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       if (!reply.ok || !reply.text) {
         return { needMore: true, summary: narrative, fastPlan: '' }
@@ -793,7 +794,7 @@ export function createTeachBridge(options) {
       } else {
         const reply = await waitReply(options.ctx, woken.sessionId, {
           timeoutMs: 180_000,
-          isAborted: () => stopped,
+          isAborted: () => stopped || Boolean(options.isAborted?.()),
         })
         if (reply.ok && reply.text) {
           await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })
@@ -905,7 +906,7 @@ export function createTeachBridge(options) {
     log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(playbook)}`)
     const reply = await waitReply(options.ctx, woken.sessionId, {
       timeoutMs: 180_000,
-      isAborted: () => stopped,
+      isAborted: () => stopped || Boolean(options.isAborted?.()),
     })
     if (reply.ok && reply.text) {
       await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })

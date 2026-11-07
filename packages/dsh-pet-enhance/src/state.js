@@ -15,8 +15,13 @@ export function normalizePetState(value) {
   return PET_STATES.has(s) ? s : 'idle'
 }
 
+/** 急停后保持 disarm 的时长：避免客户端 3s 回 idle 又立刻允许动手。 */
+export const PANIC_HOLD_MS = 120_000
+
 export function createGlanceState() {
   let counter = 0
+  /** @type {number} */
+  let panicUntil = 0
   /** @type {{
    *   pet: string,
    *   bubble: null | { text: string, kind: string },
@@ -41,6 +46,10 @@ export function createGlanceState() {
     return counter
   }
 
+  function inPanicHold() {
+    return Date.now() < panicUntil
+  }
+
   return {
     get counter() { return counter },
 
@@ -48,8 +57,10 @@ export function createGlanceState() {
       const state = normalizePetState(next)
       if (data.pet === state) return counter
       data.pet = state
-      // 从急停恢复：回到 idle/sleeping 时重新武装。
-      if (state === 'idle' || state === 'sleeping') data.armed = true
+      // 急停保持期内回 idle 只改表情，不重新武装（否则菜单急停秒后再被点动）。
+      if (state === 'idle' || state === 'sleeping') {
+        if (!inPanicHold()) data.armed = true
+      }
       return bump()
     },
 
@@ -64,9 +75,22 @@ export function createGlanceState() {
 
     setArmed(armed) {
       const v = Boolean(armed)
+      if (v) panicUntil = 0
       if (data.armed === v) return counter
       data.armed = v
       return bump()
+    },
+
+    /** 新任务开始：解除急停保持并重新武装。 */
+    clearPanicHold() {
+      panicUntil = 0
+      if (data.armed) return counter
+      data.armed = true
+      return bump()
+    },
+
+    isPanicking() {
+      return !data.armed || inPanicHold()
     },
 
     setBubble(bubble) {
@@ -89,12 +113,13 @@ export function createGlanceState() {
       return bump()
     },
 
-    /** 急停：宠物 alarmed，armed 暂时 false（C 阶段真正打断动作）。 */
+    /** 急停：宠物 alarmed，armed=false，并短时保持 disarm。 */
     panic() {
       data.pet = 'alarmed'
       data.armed = false
       data.pendingConfirm = null
       data.teachEndOffer = false
+      panicUntil = Date.now() + PANIC_HOLD_MS
       return bump()
     },
 
@@ -114,6 +139,7 @@ export function createGlanceState() {
           armed: { counter, data: data.armed },
           pendingConfirm: { counter, data: data.pendingConfirm },
           teachEndOffer: { counter, data: data.teachEndOffer },
+          panicHold: { counter, data: inPanicHold() },
         },
       }
     },

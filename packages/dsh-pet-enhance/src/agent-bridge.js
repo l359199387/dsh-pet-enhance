@@ -128,8 +128,12 @@ export function createAgentBridge(options) {
       log(`agent-bridge 已叫醒会话 ${woken.sessionId}`)
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 180_000,
-        isAborted: () => stopped,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
+      if (options.isAborted?.()) {
+        await broadcastToDshPet('已急停，这轮不动手了。', { pet, duration: 8_000 })
+        return
+      }
       if (reply.ok && reply.text) {
         await broadcastToDshPet(clipBubble(reply.text), { pet, duration: 14_000 })
         log(`agent-bridge 已回灌气泡（${reply.text.slice(0, 40)}）`)

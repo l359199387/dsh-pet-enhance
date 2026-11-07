@@ -339,6 +339,9 @@ async function handle(req, res, connection, log, state) {
       log(`急停 abort 失败：${e?.message ?? e}`)
     }
     log('用户急停')
+    try {
+      await broadcastToDshPet('已急停。这轮不再动手；要继续再说一声。', { duration: 10_000 })
+    } catch { /* ignore */ }
     send(res, 200, { ok: true, pet: 'alarmed', armed: false, aborted: true })
     return
   }
@@ -721,9 +724,11 @@ function installDshPetBridge(ctx, log, state, disposers) {
       log,
       pollChat: false,
       getPreferredSessionId: () => state.lastSessionId,
+      isAborted: () => state.glance.isPanicking?.() || !state.glance.snapshot().guard.armed.data,
       resetActBudget: () => {
         state.budget?.reset()
         state.rememberedConfirms?.clear()
+        state.glance.clearPanicHold?.()
       },
       onActing: () => state.glance.setPet('acting'),
       onIdle: () => {
@@ -753,7 +758,9 @@ function installDshPetBridge(ctx, log, state, disposers) {
       resetActBudget: () => {
         state.budget?.reset()
         state.rememberedConfirms?.clear()
+        state.glance.clearPanicHold?.()
       },
+      isAborted: () => state.glance.isPanicking?.() || !state.glance.snapshot().guard.armed.data,
       runAct: (args) => {
         if (typeof state.runAct === 'function') return state.runAct(args)
         return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })
@@ -790,10 +797,25 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
 
     let locale = getLocale(home)
+    /** 避免反复 register 冲掉未取走的菜单点击（急停点了却像没反应）。 */
+    let lastMenuSig = ''
 
     const menuHit = (ev, key) => menuLabelVariants(key).some((label) => Boolean(ev?.[label]))
 
-    const pushMenu = async () => {
+    const menuSignature = () => {
+      const pending = state.confirmGate?.getPending?.()
+        ?? state.glance.snapshot().guard.pendingConfirm.data
+      return [
+        locale,
+        liveWatch ? '1' : '0',
+        actEnabled ? '1' : '0',
+        pending?.id ? '1' : '0',
+      ].join('|')
+    }
+
+    const pushMenu = async ({ force = false } = {}) => {
+      const sig = menuSignature()
+      if (!force && registered && sig === lastMenuSig) return true
       const pending = state.confirmGate?.getPending?.()
         ?? state.glance.snapshot().guard.pendingConfirm.data
       const r = await registerGlanceMenu({
@@ -804,10 +826,25 @@ function installDshPetBridge(ctx, log, state, disposers) {
       })
       if (r.ok) {
         registered = true
+        lastMenuSig = sig
         return true
       }
       log(`挂菜单失败：${r.error || r.status || JSON.stringify(r.data)}`)
       return false
+    }
+
+    const doPanicFromMenu = async (via) => {
+      state.confirmGate?.cancelAll('panic')
+      state.budget?.reset()
+      state.rememberedConfirms?.clear()
+      state.glance.panic()
+      try {
+        await state.sidecar?.abort?.()
+      } catch { /* ignore */ }
+      log(`dsh-pet 菜单触发小蓝鲸急停（${via}）`)
+      await broadcastToDshPet('已急停。这轮不再动手；要继续再说一声。', { duration: 10_000 })
+      // 文案未变，勿 force 重注册（会清掉同拍其它菜单事件）
+      await pushMenu()
     }
 
     /** 挂起确认：只刷新右键「好/不要」；头顶按钮由 Helper 确认补丁负责，不另发说话冒泡。 */
@@ -872,15 +909,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (!r.ok || !r.data?.ok || !r.data.events) return
       const ev = r.data.events
       if (menuHit(ev, 'menu.stop')) {
-        state.confirmGate?.cancelAll('panic')
-        state.budget?.reset()
-        state.rememberedConfirms?.clear()
-        state.glance.panic()
-        try {
-          await state.sidecar?.abort?.()
-        } catch { /* ignore */ }
-        log('dsh-pet 菜单触发小蓝鲸急停')
-        await pushMenu()
+        await doPanicFromMenu('menu')
       }
       // 点当前文案即翻转；中英文开/关两态都认，避免重注册竞态漏点。
       if (menuHit(ev, 'menu.liveOn') || menuHit(ev, 'menu.liveOff')) {
@@ -921,12 +950,9 @@ function installDshPetBridge(ctx, log, state, disposers) {
     let menuTicks = 0
     const timer = setInterval(() => {
       menuTicks += 1
-      // 有待确认时加快菜单事件轮询，避免点「好」要等好几秒才生效
-      const pending = Boolean(state.confirmGate?.getPending?.()?.id)
-      if (pending || menuTicks % 4 === 0) {
-        pollMenu().catch(() => {})
-      }
-      if (menuTicks % 4 === 0) {
+      // 每秒捞菜单事件：急停/确认不能等；重注册仅在文案变化时（见 pushMenu）
+      pollMenu().catch(() => {})
+      if (menuTicks % 8 === 0) {
         ensureMenu().catch(() => {})
       }
     }, 1_000)
