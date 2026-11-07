@@ -24,7 +24,7 @@ import {
   parseWatchSeconds,
   shouldSkipGlanceBridge,
 } from './intent.js'
-import { runWatch } from './watch-loop.js'
+import { runWatch, watchFrameBudget } from './watch-loop.js'
 
 /** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
 export function latestWatchPngPath(home) {
@@ -206,7 +206,8 @@ export function createChatBridge(options) {
 
   async function handleWatchIntent(userText) {
     const seconds = parseWatchSeconds(userText, 60)
-    const frames = seconds >= 45 ? 4 : 2
+    // 按时长估最多留帧；真正盯满 seconds，不再「凑满 2 帧就提前停」
+    const frames = watchFrameBudget(seconds)
     busy = true
     const t0 = Date.now()
     try {
@@ -217,7 +218,7 @@ export function createChatBridge(options) {
       }).catch(() => {})
 
       const notice = await broadcastToDshPet(
-        `好，我盯大约 ${seconds} 秒（有变化才留帧）；盯完把拼图给你。`,
+        `好，我盯满大约 ${seconds} 秒（有变化才多留帧，最多 ${frames} 格）；盯完把拼图给你。`,
         { pet, duration: Math.min(12_000, seconds * 200) },
       )
       if (!notice.ok || notice.data?.ok === false) {

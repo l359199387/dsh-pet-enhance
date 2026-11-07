@@ -68,6 +68,18 @@ function clampInt(v, lo, hi, fallback) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)))
 }
 
+/** 按时长给「最多留几帧」：约每 8 秒一格，2–8。 */
+export function watchFrameBudget(seconds) {
+  const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
+  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 8)))
+}
+
+/** 静止兜底间隔：短盯密一点，长盯最多 20s。 */
+export function watchSilentFloorSec(seconds) {
+  const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
+  return Math.min(20, Math.max(8, Math.round(s / 3)))
+}
+
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -103,11 +115,24 @@ function sleep(ms, signal) {
 export async function runWatch(options = {}) {
   const quality = normalizeQuality(options.quality)
   const seconds = clampInt(options.seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  const targetFrames = clampInt(options.frames, 1, WATCH_DEFAULTS.maxFrames, WATCH_DEFAULTS.frames)
+  const targetFrames = clampInt(
+    options.frames ?? watchFrameBudget(seconds),
+    1,
+    WATCH_DEFAULTS.maxFrames,
+    watchFrameBudget(seconds),
+  )
   const sampleMs = clampInt(options.sampleMs, 200, 5_000, WATCH_DEFAULTS.sampleMs)
+  const silentFloorSec = clampInt(
+    options.silentFloorSec ?? watchSilentFloorSec(seconds),
+    5,
+    60,
+    watchSilentFloorSec(seconds),
+  )
   const log = options.log ?? (() => {})
   const signal = options.signal
   const sidecar = options.sidecar
+  // 用户说了盯 N 秒就盯满；frames 只是「最多留几格」，不能凑满就提前收工
+  const earlyStop = options.earlyStop === true
 
   if (!sidecar || typeof sidecar.call !== 'function') {
     throw Object.assign(new Error('watch 需要 Python sidecar'), { code: 'SIDECAR_DOWN' })
@@ -118,7 +143,10 @@ export async function runWatch(options = {}) {
     await sidecar.call('diff', { reset: true }, 5_000)
   } catch { /* ignore */ }
 
-  const selector = createFrameSelector({ fps: Math.max(0.5, 1000 / sampleMs) })
+  const selector = createFrameSelector({
+    fps: Math.max(0.5, 1000 / sampleMs),
+    silentFloorSec,
+  })
   const started = Date.now()
   const deadline = started + seconds * 1000
   /** @type {{ png: Buffer, label: string, score: number, reason: string, t: number }[]} */
@@ -128,6 +156,7 @@ export async function runWatch(options = {}) {
   let lastScore = 0
 
   selector.reset(0)
+  log(`watch 开始：${seconds}s · 最多 ${targetFrames} 帧 · 静止兜底 ${silentFloorSec}s`)
 
   while (Date.now() < deadline) {
     if (signal?.aborted) {
@@ -190,16 +219,19 @@ export async function runWatch(options = {}) {
 
     const decision = selector.push({ score, t: tRel, isFirst })
     if (decision.keep) {
-      const label = `${kept.length + 1}  +${tRel.toFixed(1)}s`
-      kept.push({
-        png: shot.png,
-        label,
-        score: score ?? 0,
-        reason: decision.reason || 'first',
-        t: tRel,
-      })
-      log(`watch 留帧 #${kept.length} reason=${decision.reason} score=${(score ?? 0).toFixed(2)}`)
-      if (kept.length >= targetFrames) break
+      if (kept.length < targetFrames) {
+        const label = `${kept.length + 1}  +${tRel.toFixed(1)}s`
+        kept.push({
+          png: shot.png,
+          label,
+          score: score ?? 0,
+          reason: decision.reason || 'first',
+          t: tRel,
+        })
+        log(`watch 留帧 #${kept.length} reason=${decision.reason} score=${(score ?? 0).toFixed(2)}`)
+      }
+      // 仅显式 earlyStop 时才「帧满提前收工」；默认盯满用户说的秒数
+      if (earlyStop && kept.length >= targetFrames) break
     }
 
     const remain = deadline - Date.now()

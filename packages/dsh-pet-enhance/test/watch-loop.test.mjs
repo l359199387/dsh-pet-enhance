@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createWakeBudget, WATCH_DEFAULTS } from '../src/watch-loop.js'
+import {
+  createWakeBudget,
+  WATCH_DEFAULTS,
+  watchFrameBudget,
+  watchSilentFloorSec,
+} from '../src/watch-loop.js'
+
+test('watchFrameBudget 按时长估最多帧数', () => {
+  assert.equal(watchFrameBudget(30), 4)
+  assert.equal(watchFrameBudget(60), 8)
+  assert.equal(watchFrameBudget(10), 2)
+})
+
+test('watchSilentFloorSec 短盯更密', () => {
+  assert.equal(watchSilentFloorSec(30), 10)
+  assert.equal(watchSilentFloorSec(60), 20)
+  assert.ok(watchSilentFloorSec(15) >= 8)
+})
 
 test('叫醒预算：第 9 次拒绝', () => {
   const b = createWakeBudget(8)
