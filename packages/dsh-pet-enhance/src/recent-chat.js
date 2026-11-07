@@ -115,28 +115,27 @@ const USER_AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64
   <ellipse cx="32" cy="54" rx="20" ry="16" fill="#FFFFFF"/>
 </svg>`
 
-/** 简洁可靠的小蓝鲸头像（不依赖外部 pet.svg，避免 file:// 裂图）。 */
-const PET_AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="g" x1="12" y1="8" x2="52" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7DD3FC"/>
-      <stop offset="1" stop-color="#2563EB"/>
-    </linearGradient>
-  </defs>
+/** 资源缺失时的兜底小蓝鲸头像。 */
+const PET_AVATAR_SVG_FALLBACK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="10" fill="#DBEAFE"/>
-  <ellipse cx="32" cy="34" rx="22" ry="16" fill="url(#g)"/>
-  <circle cx="46" cy="22" r="7" fill="url(#g)"/>
-  <path d="M50 16 C56 12 60 18 56 22" fill="#38BDF8"/>
-  <circle cx="26" cy="32" r="3.2" fill="#0F172A"/>
-  <circle cx="38" cy="32" r="3.2" fill="#0F172A"/>
-  <circle cx="25" cy="31" r="1" fill="#fff"/>
-  <circle cx="37" cy="31" r="1" fill="#fff"/>
-  <path d="M28 40 Q32 44 36 40" stroke="#1E3A8A" stroke-width="1.8" fill="none" stroke-linecap="round"/>
-  <ellipse cx="18" cy="36" rx="5" ry="3" fill="#60A5FA" opacity=".85"/>
+  <ellipse cx="32" cy="34" rx="22" ry="16" fill="#3B82F6"/>
+  <circle cx="26" cy="32" r="3" fill="#0F172A"/>
+  <circle cx="38" cy="32" r="3" fill="#0F172A"/>
 </svg>`
+
+export function petAvatarAssetPath() {
+  return join(HERE, '..', 'assets', 'avatar-pet.png')
+}
 
 function svgDataUri(svg) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+/** 优先用 assets/avatar-pet.png，内嵌 data URI，避免 file:// 裂图。 */
+export async function resolvePetAvatarDataUri() {
+  const fromPng = await fileToDataUri(petAvatarAssetPath(), 'image/png')
+  if (fromPng) return fromPng
+  return svgDataUri(PET_AVATAR_SVG_FALLBACK)
 }
 
 /**
@@ -245,7 +244,7 @@ export async function buildRecentChatHtml(options) {
 
   await mkdir(recentChatAssetsDir(home), { recursive: true }).catch(() => {})
 
-  const petAvatar = svgDataUri(PET_AVATAR_SVG)
+  const petAvatar = await resolvePetAvatarDataUri()
   const meAvatar = svgDataUri(USER_AVATAR_SVG)
   const rows = await prepareChatRows(slice)
 
