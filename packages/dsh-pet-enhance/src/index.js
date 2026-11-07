@@ -655,6 +655,7 @@ function installTools(ctx, log, state) {
         state.attachments = scoped.attachments
         state.wakeBudget = state.wakeBudget || createWakeBudget()
         state.lastGlanceMap = null
+        state.lastInputClick = null
         state.glanceTool = createGlanceTool({
           home: glanceHome(),
           attachments: scoped.attachments,
@@ -683,6 +684,8 @@ function installTools(ctx, log, state) {
           getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
           getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
           getLastGlanceMap: () => state.lastGlanceMap,
+          getLastInputClick: () => state.lastInputClick,
+          onInputClick: (p) => { state.lastInputClick = p },
           onConfirmAsk: async () => {
             // 可见性：confirmGate.onPending → 说话气泡 + 右键「好/不要」；头顶 UI 仍由 overlay / Helper 补丁负责。
           },

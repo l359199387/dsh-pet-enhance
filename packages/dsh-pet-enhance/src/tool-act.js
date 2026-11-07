@@ -19,6 +19,7 @@ import {
 import { readTeachSecrets } from './teach-store.js'
 import { c3MaybeNoopHint } from './c3-task.js'
 import { mapImageToScreen, maybeRemapImageCoordsAsScreen } from './coords.js'
+import { isSubmitFamily } from './policy.js'
 
 /**
  * 把图内坐标 / 误把缩略图当屏幕坐标 换算成物理像素。
@@ -60,8 +61,22 @@ export function resolveActCoords(args, map) {
 }
 
 /**
+ * 窗口标题 → focus 匹配片段（「小蓝鲸问候 - 豆包」→「豆包」）。
+ * @param {string | null | undefined} title
+ */
+export function focusMatchFromTitle(title) {
+  const t = String(title || '').trim()
+  if (!t || /dsh-pet|桌宠/i.test(t)) return ''
+  const dash = t.lastIndexOf(' - ')
+  if (dash > 0 && dash < t.length - 3) {
+    return t.slice(dash + 3).trim() || t
+  }
+  return t
+}
+
+/**
  * 确认框/桌宠会抢焦点：点击类动作前尽量把目标窗拉回前台。
- * @param {object} args
+ * @param {object[]} actions
  * @param {string | null | undefined} windowTitle
  * @param {boolean} needsRefocus
  */
@@ -70,17 +85,45 @@ export function prependFocusIfNeeded(actions, windowTitle, needsRefocus) {
   const kind = String(actions[0]?.kind || '')
   const pointy = ['move', 'click', 'double_click', 'right_click', 'drag', 'type', 'key', 'scroll'].includes(kind)
   if (!pointy) return actions
-  const title = String(windowTitle || '').trim()
-  if (!title) return actions
-  // 桌宠自己不要 focus
-  if (/dsh-pet|桌宠/i.test(title)) return actions
-  // 用标题里更稳的片段（「小蓝鲸问候 - 豆包」→「豆包」）
-  let match = title
-  const dash = title.lastIndexOf(' - ')
-  if (dash > 0 && dash < title.length - 3) {
-    match = title.slice(dash + 3).trim() || title
-  }
+  const match = focusMatchFromTitle(windowTitle)
+  if (!match) return actions
   return [{ kind: 'focus', window: match }, ...actions]
+}
+
+/**
+ * 确认后组装真实输入序列：focus →（回车前先点回输入框）→ 原动作。
+ * 点确认会抢走输入框光标；只 focus 窗口不够，回车发不出去。
+ *
+ * @param {object[]} actions
+ * @param {{
+ *   windowTitle?: string | null,
+ *   needsRefocus?: boolean,
+ *   confirmed?: boolean,
+ *   keys?: string,
+ *   lastInputClick?: { x: number, y: number, at?: number } | null,
+ * }} opts
+ */
+export function buildGuardedInputActions(actions, opts = {}) {
+  let out = prependFocusIfNeeded(actions, opts.windowTitle, Boolean(opts.needsRefocus))
+  const kind = String(actions?.[0]?.kind || '')
+  const keys = String(opts.keys || '').trim().toLowerCase().replace(/\s+/g, '')
+  const isEnter = kind === 'key' && (keys === 'enter' || keys === 'return')
+  const click = opts.lastInputClick
+  const fresh = click
+    && Number.isFinite(Number(click.x))
+    && Number.isFinite(Number(click.y))
+    && (!click.at || (Date.now() - Number(click.at)) < 180_000)
+  if (opts.confirmed && isEnter && fresh) {
+    const head = out[0]?.kind === 'focus' ? [out[0]] : []
+    const rest = out[0]?.kind === 'focus' ? out.slice(1) : out
+    out = [
+      ...head,
+      { kind: 'click', x: Number(click.x), y: Number(click.y) },
+      { kind: 'wait', ms: 120 },
+      ...rest,
+    ]
+  }
+  return out
 }
 
 function buildActions(args) {
@@ -139,6 +182,8 @@ function auditArgs(args) {
  *   onConfirmAsk?: (summary: string) => void | Promise<void>,
  *   onPolicyDeny?: (info: { code?: string, reason?: string, userBubble?: string, tier?: string }) => void | Promise<void>,
  *   getLastGlanceMap?: () => import('./coords.js').GlanceMap | null,
+ *   getLastInputClick?: () => { x: number, y: number, at?: number } | null,
+ *   onInputClick?: (p: { x: number, y: number, at: number, reason?: string }) => void,
  * }} options
  */
 export function createActTool(options = {}) {
@@ -368,7 +413,7 @@ export function createActTool(options = {}) {
         }
 
         const kind = actions[0].kind
-        // 确认框/桌宠抢焦点后，点击会落到错误窗口——先 focus 再动手
+        // 确认框/桌宠抢焦点后：先 focus；若是回车发送再点回输入框恢复光标
         const focusHint = args?.window
           || glanceMap?.windowTitle
           || windowTitle
@@ -379,7 +424,13 @@ export function createActTool(options = {}) {
           || Boolean(args?.window)
           || Boolean(glanceMap?.windowTitle)
         )
-        const actionsOut = prependFocusIfNeeded(actions, focusHint, needsRefocus)
+        const actionsOut = buildGuardedInputActions(actions, {
+          windowTitle: focusHint,
+          needsRefocus,
+          confirmed: Boolean(confirmed),
+          keys: args?.keys,
+          lastInputClick: options.getLastInputClick?.() ?? null,
+        })
 
         if (shouldVerifyAction(kind)) {
           beforeHash = await captureScreenFingerprint(sidecar)
@@ -436,6 +487,22 @@ export function createActTool(options = {}) {
           maybeNoop = cmp.maybeNoop
           beforeHash = cmp.before
           afterHash = cmp.after
+        }
+
+        // 记住非「发送」类点击，供确认后回车前点回输入框
+        if (
+          (kind === 'click' || kind === 'double_click')
+          && args?.x != null && args?.y != null
+          && !isSubmitFamily(args)
+        ) {
+          try {
+            options.onInputClick?.({
+              x: Number(args.x),
+              y: Number(args.y),
+              at: Date.now(),
+              reason: String(args?.reason || '').slice(0, 80),
+            })
+          } catch { /* ignore */ }
         }
 
         const cur = resp.cursor ? `${resp.cursor.x},${resp.cursor.y}` : '?'

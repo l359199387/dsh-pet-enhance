@@ -284,13 +284,39 @@ def tap_keys(spec: str, abort_event, dry_run: bool) -> None:
         _key_vk(vk, True)
 
 
-def focus_hwnd(hwnd: int, dry_run: bool) -> None:
+def focus_hwnd(hwnd: int, dry_run: bool) -> bool:
+    """尽量拉前台。失败不抛错：绝对坐标点击仍可打到未遮挡窗口。"""
     if dry_run:
-        return
-    user32.ShowWindow(int(hwnd), 9)  # SW_RESTORE
-    if not user32.SetForegroundWindow(int(hwnd)):
-        raise RuntimeError("SetForegroundWindow 失败")
-    time.sleep(0.05)
+        return True
+    hwnd = int(hwnd)
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # AttachThreadInput：系统常拒 SetForegroundWindow，绑一下前台线程再试
+    try:
+        fg = int(user32.GetForegroundWindow() or 0)
+        pid = w.DWORD()
+        fg_tid = int(user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))) if fg else 0
+        cur_tid = int(kernel32.GetCurrentThreadId())
+        attached = False
+        if fg_tid and fg_tid != cur_tid:
+            attached = bool(user32.AttachThreadInput(cur_tid, fg_tid, True))
+        try:
+            user32.BringWindowToTop(hwnd)
+            ok = bool(user32.SetForegroundWindow(hwnd))
+            if not ok:
+                # 再试一次：先 Alt 一下放开前台锁（不少机器有效）
+                _key_vk(VK["alt"], False)
+                _key_vk(VK["alt"], True)
+                ok = bool(user32.SetForegroundWindow(hwnd))
+        finally:
+            if attached:
+                user32.AttachThreadInput(cur_tid, fg_tid, False)
+        time.sleep(0.05)
+        return ok
+    except Exception:
+        try:
+            return bool(user32.SetForegroundWindow(hwnd))
+        except Exception:
+            return False
 
 
 def run_actions(
@@ -353,12 +379,14 @@ def run_actions(
             if resolve_focus is None:
                 raise ValueError("focus 需要 resolve_focus")
             info = resolve_focus(str(raw.get("window") or raw.get("match") or ""))
-            focus_hwnd(int(info["hwnd"]), dry_run)
+            focused = focus_hwnd(int(info["hwnd"]), dry_run)
             done.append({
                 "kind": kind,
                 "ms": int((time.perf_counter() - t0) * 1000),
                 "title": info.get("title"),
+                "focused": bool(focused),
             })
+            # 聚焦失败不中断后续 click/key：未遮挡窗口上的绝对坐标点击仍有效
             continue
         else:
             raise ValueError(f"未知 action.kind: {kind}")

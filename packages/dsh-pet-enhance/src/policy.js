@@ -140,11 +140,30 @@ export function validateActionCoords(args, screen) {
 }
 
 /**
+ * 是否「提交/发送」族（回车发送与点发送按钮应共用一次确认）。
+ * @param {{ action?: string, keys?: string, reason?: string }} args
+ */
+export function isSubmitFamily(args = {}) {
+  const action = String(args?.action ?? '').toLowerCase()
+  const keys = String(args?.keys ?? '').trim().toLowerCase().replace(/\s+/g, '')
+  const reason = String(args?.reason ?? '')
+  if (SUBMIT_REASON_RE.test(reason)) return true
+  if (action === 'key' && (keys === 'enter' || keys === 'return' || keys === 'ctrl+enter' || keys === 'ctrl+s' || keys === 'meta+s')) {
+    return true
+  }
+  return false
+}
+
+/**
  * 生成本任务内「同类已确认」签名（L2 rememberWithinTask）。
+ * 发送族统一为 `L2|family:submit`，避免「先确认回车、再确认点发送」连弹两次。
  * @param {{ action?: string, keys?: string, reason?: string }} args
  * @param {string} tier
  */
 export function confirmSignature(args, tier) {
+  if (String(tier) === 'L2' && isSubmitFamily(args)) {
+    return `${tier}|family:submit`
+  }
   const action = String(args?.action ?? '').toLowerCase()
   const keys = String(args?.keys ?? '').toLowerCase()
   const reasonClass = SUBMIT_REASON_RE.test(String(args?.reason ?? '')) ? 'submit' : 'plain'

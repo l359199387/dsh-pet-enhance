@@ -6,7 +6,12 @@ import {
   mapImageToScreen,
   maybeRemapImageCoordsAsScreen,
 } from '../src/coords.js'
-import { prependFocusIfNeeded, resolveActCoords } from '../src/tool-act.js'
+import {
+  buildGuardedInputActions,
+  prependFocusIfNeeded,
+  resolveActCoords,
+} from '../src/tool-act.js'
+import { confirmSignature, evaluateActPolicy, isSubmitFamily } from '../src/policy.js'
 
 test('mapImageToScreen：整屏缩略图换算', () => {
   const map = {
@@ -82,4 +87,40 @@ test('prependFocusIfNeeded：确认后补 focus，标题取破折号后段', () 
   assert.equal(out.length, 2)
   assert.deepEqual(out[0], { kind: 'focus', window: '豆包' })
   assert.equal(out[1].kind, 'click')
+})
+
+test('buildGuardedInputActions：确认后回车先点回输入框', () => {
+  const out = buildGuardedInputActions(
+    [{ kind: 'key', keys: 'enter' }],
+    {
+      windowTitle: '小蓝鲸问候 - 豆包',
+      needsRefocus: true,
+      confirmed: true,
+      keys: 'enter',
+      lastInputClick: { x: 780, y: 726, at: Date.now() },
+    },
+  )
+  assert.equal(out[0].kind, 'focus')
+  assert.equal(out[1].kind, 'click')
+  assert.equal(out[1].x, 780)
+  assert.equal(out[2].kind, 'wait')
+  assert.equal(out[3].kind, 'key')
+})
+
+test('发送族确认签名统一，回车与点发送只确认一次', () => {
+  assert.equal(isSubmitFamily({ action: 'key', keys: 'enter', reason: '回车发送' }), true)
+  assert.equal(isSubmitFamily({ action: 'click', x: 1, y: 2, reason: '点蓝色发送按钮' }), true)
+  const a = confirmSignature({ action: 'key', keys: 'enter', reason: '回车发送' }, 'L2')
+  const b = confirmSignature({ action: 'click', x: 1, y: 2, reason: '点发送' }, 'L2')
+  assert.equal(a, 'L2|family:submit')
+  assert.equal(b, a)
+
+  const remembered = new Set([a])
+  const second = evaluateActPolicy({
+    args: { action: 'click', x: 10, y: 10, reason: '点蓝色发送箭头' },
+    screen: { w: 2560, h: 1440 },
+    remembered,
+  })
+  assert.equal(second.ok, true)
+  assert.equal(second.needsConfirm, false)
 })
