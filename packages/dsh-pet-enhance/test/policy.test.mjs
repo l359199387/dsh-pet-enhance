@@ -53,7 +53,7 @@ test('坐标越界拒绝', () => {
   assert.equal(r.code, 'COORDS_OUT_OF_SCREEN')
 })
 
-test('预算第 21 次拒绝', () => {
+test('预算超过上限拒绝', () => {
   const budget = createActionBudget({ max: MAX_ACTIONS_PER_TURN })
   for (let i = 0; i < MAX_ACTIONS_PER_TURN; i += 1) {
     assert.equal(evaluateActPolicy({
