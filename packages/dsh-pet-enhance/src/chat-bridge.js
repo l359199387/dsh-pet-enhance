@@ -11,6 +11,8 @@ import {
   callDshPet,
   chatWithDshPet,
 } from './dsh-pet.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { captureFrame } from './capture.js'
 import { appendEpisode, buildGlanceEpisode } from './episode.js'
 import { glancePersonaBlock } from './persona.js'
@@ -23,6 +25,28 @@ import {
   shouldSkipGlanceBridge,
 } from './intent.js'
 import { runWatch } from './watch-loop.js'
+
+/** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
+export function latestWatchPngPath(home) {
+  return join(home, 'cache', 'watch-latest.png')
+}
+
+export function latestGlancePngPath(home) {
+  return join(home, 'cache', 'glance-latest.png')
+}
+
+async function saveLatestPng(home, filePath, png, log) {
+  if (!home || !png?.byteLength) return null
+  try {
+    await mkdir(join(home, 'cache'), { recursive: true })
+    await writeFile(filePath, png)
+    log?.(`chat-bridge 已落盘：${filePath}`)
+    return filePath
+  } catch (e) {
+    log?.(`chat-bridge 落盘失败：${e?.message ?? e}`)
+    return null
+  }
+}
 
 export {
   GLANCE_FOLLOWUP_PREFIX,
@@ -49,27 +73,25 @@ export function followUpPrompt(userText, shot) {
     : (shot.screen?.w && shot.screen?.h
       ? `整屏 ${shot.screen.w}×${shot.screen.h}`
       : '整屏')
+  // 文案要短：会原样出现在对话面板「用户」气泡里；长提示难翻找附图。
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
-    + `用户刚说「${String(userText).slice(0, 80)}」。`
-    + `我已抓到${where} → ${shot.width}×${shot.height}。`
-    + '请根据附图用一两句口语告诉用户桌面/屏幕上现在有什么，说具体内容。'
-    + `\n\n${glancePersonaBlock()}`
+    + `（附图）主人说「${String(userText).slice(0, 40)}」。`
+    + `已抓到${where} ${shot.width}×${shot.height}。`
+    + '请看图用一两句口语说屏幕上有什么，说具体内容。'
+    + ` ${glancePersonaBlock().replace(/\n/g, ' ')}`
   )
 }
 
 export function followUpWatchPrompt(userText, result) {
-  const silent = result?.silent
-    ? '这段时间屏幕基本没变。'
-    : `这段时间最大变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
+  const silent = result?.silent ? '屏幕基本没变。' : `变化分约 ${Number(result?.maxScore || 0).toFixed(1)}。`
   return (
     `${GLANCE_FOLLOWUP_PREFIX}`
-    + `用户刚说「${String(userText).slice(0, 80)}」。`
-    + `我已盯屏约 ${result?.elapsedSec ?? '?'} 秒，留了 ${result?.framesKept ?? 0} 帧拼成一张图`
-    + `（${result?.width}×${result?.height} · ~${result?.tokens ?? 222} token）。`
+    + `（盯屏拼图）主人说「${String(userText).slice(0, 40)}」。`
+    + `盯了约 ${result?.elapsedSec ?? '?'}s，${result?.framesKept ?? 0} 帧→一张图。`
     + silent
-    + '请根据拼图用两三句口语告诉用户屏幕上发生了什么（或确认没变）；不要假装自己在眨眼发酸。'
-    + `\n\n${glancePersonaBlock()}`
+    + '请看拼图用两三句口语说发生了什么；别装眼睛酸。'
+    + ` ${glancePersonaBlock().replace(/\n/g, ' ')}`
   )
 }
 
@@ -228,11 +250,21 @@ export function createChatBridge(options) {
         return
       }
 
+      const saved = await saveLatestPng(
+        options.home,
+        latestWatchPngPath(options.home),
+        result.png,
+        log,
+      )
+
       await broadcastToDshPet(
-        result.silent
+        (result.silent
           ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧）。`
-          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧拼成一张。`,
-        { pet, duration: 8_000 },
+          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧拼成一张。`)
+        + (saved
+          ? ' 拼图在对话面板最底下（滚到底）；也可打开文件夹里的 watch-latest.png。双击桌宠是开/关对话，不是会话列表。'
+          : ' 拼图在对话面板最底下，请滚到底看。'),
+        { pet, duration: 14_000 },
       )
 
       const shot = {
@@ -301,6 +333,7 @@ export function createChatBridge(options) {
         return
       }
 
+      await saveLatestPng(options.home, latestGlancePngPath(options.home), shot.png, log)
       await deliverShot(userText, shot, t0, followUpPrompt)
     } finally {
       await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
