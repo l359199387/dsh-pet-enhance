@@ -4,6 +4,8 @@
  * @module src/teach-smart.js
  */
 
+import { buildC3DisciplineBlock } from './c3-task.js'
+
 /**
  * @param {string} goal
  * @param {string} narrative
@@ -109,7 +111,9 @@ export function buildSmartRunPrompt(playbook, extras = {}) {
     + (fast
       ? `优先按快捷路径做：${fast}。不要机械复刻教学时的每一次点击坐标；`
       : '请拆解目标，用电脑最快方式达成（网址/文件/快捷键优先于逐步点鼠标）；')
-    + '先 glance 看清当前屏幕再 act。一两句汇报。'
+    + '先 glance 看清当前屏幕再 act。'
+    + buildC3DisciplineBlock({ includeScenario: false })
+    + '一两句汇报。'
     + (playbook?.id ? `（learnedId=${playbook.id}）` : '')
   )
 }

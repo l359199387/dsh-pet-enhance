@@ -17,6 +17,7 @@ import {
   shouldVerifyAction,
 } from './verify-act.js'
 import { readTeachSecrets } from './teach-store.js'
+import { c3MaybeNoopHint } from './c3-task.js'
 
 function buildActions(args) {
   const action = String(args?.action ?? '').trim().toLowerCase()
@@ -350,7 +351,7 @@ export function createActTool(options = {}) {
         }
 
         const cur = resp.cursor ? `${resp.cursor.x},${resp.cursor.y}` : '?'
-        const warn = maybeNoop ? ' 画面几乎没变，可能没生效——请先 glance 再决定是否重试一次。' : ''
+        const warn = maybeNoop ? ` ${c3MaybeNoopHint()}` : ''
         return finishAudit({
           text: `已执行 ${kind}（${Date.now() - t0}ms），光标现在 (${cur})。${warn}`,
           meta: {

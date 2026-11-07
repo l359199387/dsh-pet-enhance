@@ -47,6 +47,7 @@ test('buildAgentWakePrompt：含用户原话与工具指引', () => {
   assert.ok(p.includes('把记事本最小化'))
   assert.ok(p.includes('glance'))
   assert.ok(p.includes('act'))
+  assert.match(p, /动手纪律·C3/)
 })
 
 test('act 关闭时只冒泡提示，不叫醒', async () => {

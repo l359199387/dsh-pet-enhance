@@ -50,6 +50,7 @@ test('buildSmartRunPrompt 含快捷路径', () => {
   })
   assert.match(p, /bilibili/)
   assert.match(p, /不要机械复刻/)
+  assert.match(p, /动手纪律·C3/)
 })
 
 test('glance state：teachEndOffer', () => {

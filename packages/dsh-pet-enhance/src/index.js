@@ -39,6 +39,7 @@ import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
+import { c3BudgetExceededBubble } from './c3-task.js'
 import { createConfirmGate } from './confirm.js'
 import {
   deleteLearnedPair,
@@ -574,7 +575,7 @@ function installTools(ctx, log, state) {
               || (code === 'DENIED_WINDOW'
                 ? '这个窗口在黑名单里，我不能点也不能打字。'
                 : code === 'BUDGET_EXCEEDED'
-                  ? '这轮动作次数用完了。再说一次「去看看… / 执行一下…」，我会开新一轮再试。'
+                  ? c3BudgetExceededBubble()
                   : (reason || '这个动作被策略拦住了。'))
             await broadcastToDshPet(text, { duration: 12_000 })
           },

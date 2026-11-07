@@ -4,6 +4,8 @@
  * @module src/tool-spec-act.js
  */
 
+import { buildC3DisciplineBlock } from './c3-task.js'
+
 export const ACT_TOOL_NAME = 'act'
 export const ACT_TOOL_TIMEOUT_MS = 120_000
 
@@ -17,6 +19,8 @@ export function actToolSpec() {
       + '密码/银行/支付/UAC 等黑名单窗口可读不可点：若返回 DENIED_WINDOW，必须原样告诉用户「黑名单拦截」，不要说成需要点「好」或重启。\n'
       + 'L2/L3 会等用户点「好」；点「不要」或超时就停，不要换方式再试。\n'
       + '用户把光标甩到左上角 (0,0) 或点了急停 → 立即停，返回后不要重试。\n'
+      + buildC3DisciplineBlock({ includeScenario: false })
+      + '\n'
       + '未启用时请告诉用户：右键「更多」→ 允许动手，或 settings.actEnabled / DSH_PET_ENHANCE_ACT=1。',
     parameters: {
       type: 'object',
