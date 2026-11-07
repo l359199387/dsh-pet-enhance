@@ -48,6 +48,7 @@ import { createActionBudget } from './policy.js'
 import { c3BudgetExceededBubble } from './c3-task.js'
 import { createConfirmGate } from './confirm.js'
 import { cancelAgentSession } from './wake-session.js'
+import { openNewWorkspaceSession } from './session-spawn.js'
 import {
   deleteLearnedPair,
   getLearnedDetail,
@@ -277,6 +278,7 @@ async function handle(req, res, connection, log, state) {
         agentBridge: state.agentBridge,
         teachBridge: state.teachBridge,
         getPreferredSessionId: () => state.lastSessionId,
+        openNewSession: () => openOwnerWorkspaceSession(state, log),
         markHandled: (content) => {
           state.chatGateHandled = { content: String(content), at: Date.now() }
         },
@@ -837,6 +839,13 @@ function installDshPetBridge(ctx, log, state, disposers) {
       agentBridge: agent,
       teachBridge: teach,
       getPreferredSessionId: () => state.lastSessionId,
+      onSession: (sid) => {
+        if (sid) {
+          state.lastSessionId = String(sid)
+          state.lastAgentSessionId = String(sid)
+        }
+      },
+      openNewSession: () => openOwnerWorkspaceSession(state, log),
       wasHandledByChatGate: (user) => {
         const h = state.chatGateHandled
         if (!h?.content) return false
@@ -1058,6 +1067,38 @@ function installDshPetBridge(ctx, log, state, disposers) {
     return
   }
   disposers.push(run(resolveDshOrigin(ctx?.webServer)))
+}
+
+/**
+ * 主人说新开窗：建工作区会话、复制权限、模式默认标准，并切到该会话。
+ * @param {object} state
+ * @param {(m: string) => void} log
+ */
+async function openOwnerWorkspaceSession(state, log) {
+  const ctx = state.hostCtx || state.chatGateCtx || {}
+  const r = await openNewWorkspaceSession(ctx, {
+    preferredId: state.lastSessionId,
+    log,
+  })
+  if (!r.ok) {
+    await broadcastToDshPet(
+      `新开聊天窗失败：${r.reason || '未知'}。也可在 Harness 里点「新建会话」。`,
+      { duration: 12_000 },
+    )
+    return r
+  }
+  state.lastSessionId = r.sessionId
+  state.lastAgentSessionId = r.sessionId
+  const perm = r.permission
+    ? (r.permissionCopied
+      ? `权限已对齐上一窗（${r.permission}）`
+      : `权限复制未成功（上一窗 ${r.permission}）`)
+    : '上一窗无明确权限可复制'
+  await broadcastToDshPet(
+    `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。${perm}；模式默认标准。之后交办走这个窗。`,
+    { duration: 14_000 },
+  )
+  return r
 }
 
 /** 跟踪最近有事件的会话，供 L→Agent 叫醒时使用。 */

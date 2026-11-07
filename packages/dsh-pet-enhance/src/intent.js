@@ -57,12 +57,18 @@ export const TEACH_END_RE =
   /(?:教完了|教好了|学完了|结束教学|停止教学|不教了|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
 
 /**
- * 「执行一下 / 去记录一下 / 去看看 / 继续刷 / 跑自动化」→ 跑已学会的自动化（不是闲聊）。
- * 例：执行一下记录每日心情、去看看B站、继续去刷刷B站、再做一次。
+ * 「执行一下 / 去记录一下 / 去看看 / 继续刷 / 跑自动化 / 用你学会的…」→ 跑已学会的自动化（不是闲聊）。
+ * 例：执行一下记录每日心情、用你学会的去刷B站、我教过你和豆包聊天、去看我学会的然后执行。
  * 注意：不要用裸「帮我看」——会抢走「帮我看屏幕」的 glance。
  */
 export const RUN_AUTOMATION_RE =
-  /(?:再做一次|再来一遍|跑(?:一下)?自动化|照着做|按刚才(?:教的)?(?:去做|做)?|继续(?:去)?(?:做|看|刷|逛|玩|吧)?|接着(?:做|弄|干|来)|^(?:继续|接着)$)|(?:执行|运行|跑|去做|去记|去写|帮我做|帮我记|帮我写)(?:一下|一遍|一回)?|(?:去看看|去刷刷|去逛逛|去溜达|帮我刷刷)/i
+  /(?:再做一次|再来一遍|跑(?:一下)?自动化|照着做|按刚才(?:教的)?(?:去做|做)?|继续(?:去)?(?:做|看|刷|逛|玩|吧)?|接着(?:做|弄|干|来)|^(?:继续|接着)$)|(?:执行|运行|跑|去做|去记|去写|帮我做|帮我记|帮我写)(?:一下|一遍|一回)?|(?:去看看|去刷刷|去逛逛|去溜达|帮我刷刷)|(?:用(?:你|小蓝鲸)?学会的|按(?:你|小蓝鲸)?学会的|用学会的|按学会的|我教过你|你(?:已经)?学过的|按我教(?:过|的)|照我教的)|(?:去?看(?:一?下|看)?我学会的(?:东西|技能|条目|自动化)?(?:然后|再|并)?(?:去)?(?:执行|去做|跑|运行|做一遍)?)/i
+
+/**
+ * 「新开一个窗口聊天 / 开个新会话」→ 新建工作区聊天窗（不是闲聊）。
+ */
+export const NEW_SESSION_RE =
+  /(?:新开|另开|再开)(?:一个)?(?:新的)?(?:工作区)?(?:聊天窗口|聊天窗|窗口聊天|窗口|会话|对话|聊天)|(?:开|建)(?:一?个)?新(?:的)?(?:工作区)?(?:聊天窗口|聊天窗|窗口|会话|对话|聊天)|新建(?:一个)?(?:会话|对话|聊天窗口|聊天)|开个新(?:窗口|会话|对话|聊天)/i
 
 function isBridgeEcho(s) {
   return (
@@ -85,6 +91,13 @@ export function isRunAutomationIntent(text) {
   return RUN_AUTOMATION_RE.test(s)
 }
 
+/** 主人主动要求新开工作区聊天窗口。 */
+export function isNewSessionIntent(text) {
+  const s = String(text ?? '').trim()
+  if (!s || isBridgeEcho(s)) return false
+  return NEW_SESSION_RE.test(s)
+}
+
 export function isComputerTaskIntent(text) {
   const s = String(text ?? '').trim()
   if (!s || isBridgeEcho(s)) return false
@@ -103,12 +116,17 @@ export function isTeachEndIntent(text) {
   return TEACH_END_RE.test(s)
 }
 
-/** 干活 / 教学意图优先；chat-bridge 应跳过，避免又抓一帧抢话。 */
+/** 干活 / 教学 / 新开会话优先；chat-bridge 应跳过，避免又抓一帧抢话。 */
 export function shouldSkipGlanceBridge(text) {
-  return isComputerTaskIntent(text) || isTeachStartIntent(text) || isTeachEndIntent(text)
+  return (
+    isComputerTaskIntent(text)
+    || isTeachStartIntent(text)
+    || isTeachEndIntent(text)
+    || isNewSessionIntent(text)
+  )
 }
 
-/** agent-bridge 应让路给教学模式。 */
+/** agent-bridge 应让路给教学模式 / 新开会话。 */
 export function shouldSkipAgentBridge(text) {
-  return isTeachStartIntent(text) || isTeachEndIntent(text)
+  return isTeachStartIntent(text) || isTeachEndIntent(text) || isNewSessionIntent(text)
 }

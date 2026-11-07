@@ -18,15 +18,32 @@ import {
   patchHelperConfirmHtml,
 } from '../src/patch-dsh-pet-confirm.js'
 
-test('shouldTakeoverChat：任务/看屏/教学接管，闲聊不接管', () => {
+test('shouldTakeoverChat：任务/看屏/教学/新开会话接管，闲聊不接管', () => {
   assert.equal(shouldTakeoverChat('task'), true)
   assert.equal(shouldTakeoverChat('glance'), true)
   assert.equal(shouldTakeoverChat('teach'), true)
+  assert.equal(shouldTakeoverChat('new_session'), true)
   assert.equal(shouldTakeoverChat('chat'), false)
 })
 
 test('ackForLabel 含任务接手', () => {
   assert.match(ackForLabel('task', 'zh'), /这事我来办/)
+  assert.match(ackForLabel('new_session', 'zh'), /新开/)
+})
+
+test('runChatGate：new_session 接管并开窗', async () => {
+  const opens = []
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '新开一个窗口聊天',
+    classify: async () => ({ label: 'new_session', via: 'test' }),
+    openNewSession: async () => { opens.push(1) },
+  })
+  assert.equal(result.takeover, true)
+  assert.equal(result.label, 'new_session')
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(opens.length, 1)
 })
 
 test('ackForLabel：盯屏口令说明秒数', () => {

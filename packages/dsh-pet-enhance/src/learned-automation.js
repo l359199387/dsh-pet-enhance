@@ -297,7 +297,7 @@ export async function findLearnedForQuery(home, query) {
     return learn
   }
 
-  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化|执行一下|运行一下/.test(q)) {
+  if (/刚才教的|再做一次|照着做|按教学|上次教的|再来一遍|跑自动化|执行一下|运行一下|用你学会的|按你学会的|我教过你|你学过的|我学会的/.test(q)) {
     // 若话里还带了目标关键词，优先精确匹配；否则取最新可用
     let hinted = null
     let hintedScore = 0

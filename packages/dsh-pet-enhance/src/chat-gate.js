@@ -10,7 +10,7 @@ import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
 /** 需要插件接手、跳过 dsh-pet 闲聊模型的标签。 */
-export const TAKEOVER_LABELS = new Set(['task', 'glance', 'teach', 'teach_end'])
+export const TAKEOVER_LABELS = new Set(['task', 'glance', 'teach', 'teach_end', 'new_session'])
 
 /**
  * @param {string} label
@@ -38,6 +38,8 @@ export function ackForLabel(label, locale = 'zh', text = '') {
       return '好，我按刚才学的去做…'
     case 'task':
       return t(loc, 'bubble.taskTakeover')
+    case 'new_session':
+      return '好，我新开一个工作区聊天窗…'
     default:
       return ''
   }
@@ -58,6 +60,7 @@ export function ackForLabel(label, locale = 'zh', text = '') {
  *     tryRunMatchingPlaybook?: (text: string) => Promise<boolean>,
  *   },
  *   getPreferredSessionId?: () => string | null,
+ *   openNewSession?: (text: string) => Promise<unknown>,
  *   classify?: typeof classifyUtterance,
  *   markHandled?: (text: string) => void,
  * }} options
@@ -129,6 +132,9 @@ async function dispatchTakeover(options, label, text, teaching) {
       if (!ran) await options.agentBridge?.handleTask?.(text)
       break
     }
+    case 'new_session':
+      await options.openNewSession?.(text)
+      break
     default:
       break
   }

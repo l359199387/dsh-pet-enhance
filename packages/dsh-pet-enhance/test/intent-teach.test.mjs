@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   isComputerTaskIntent,
+  isNewSessionIntent,
   isRunAutomationIntent,
   isTeachEndIntent,
   isTeachStartIntent,
@@ -33,5 +34,18 @@ test('执行已学自动化口令', () => {
   assert.equal(isRunAutomationIntent('继续去看看B站'), true)
   assert.equal(isRunAutomationIntent('继续去刷刷B站'), true)
   assert.equal(isComputerTaskIntent('继续去看看B站'), true)
+  assert.equal(isRunAutomationIntent('用你学会的去刷B站'), true)
+  assert.equal(isRunAutomationIntent('我教过你和豆包聊天'), true)
+  assert.equal(isRunAutomationIntent('去看我学会的东西然后执行'), true)
+  assert.equal(isComputerTaskIntent('用你学会的记录心情'), true)
   assert.equal(isRunAutomationIntent('今天天气真好'), false)
+})
+
+test('新开工作区聊天窗口口令', () => {
+  assert.equal(isNewSessionIntent('新开一个窗口聊天'), true)
+  assert.equal(isNewSessionIntent('开个新会话'), true)
+  assert.equal(isNewSessionIntent('新建一个会话'), true)
+  assert.equal(isNewSessionIntent('今天天气真好'), false)
+  assert.equal(shouldSkipGlanceBridge('新开一个窗口聊天'), true)
+  assert.equal(shouldSkipAgentBridge('新开一个窗口聊天'), true)
 })

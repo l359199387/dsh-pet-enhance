@@ -11,7 +11,9 @@ import {
   isClassifyEcho,
   isSkillStatusQuestion,
 } from './classify-utterance.js'
+import { isRunAutomationIntent } from './intent.js'
 import { listLearnedIndex } from './learned-automation.js'
+import { openNewWorkspaceSession } from './session-spawn.js'
 import { getLocale } from './settings.js'
 import { t } from './i18n.js'
 
@@ -43,6 +45,8 @@ function lastUserMessage(messages) {
  *   },
  *   classify?: typeof classifyUtterance,
  *   getPreferredSessionId?: () => string | null,
+ *   onSession?: (sessionId: string) => void,
+ *   openNewSession?: (text: string) => Promise<unknown>,
  *   wasHandledByChatGate?: (user: { content: string, ts: number }) => boolean,
  * }} options
  */
@@ -73,9 +77,39 @@ export function createPetRouter(options) {
     }
   }
 
+  /** 新开工作区聊天窗：复制权限、模式默认标准。 */
+  async function handleNewSession(userText) {
+    if (typeof options.openNewSession === 'function') {
+      await options.openNewSession(userText)
+      return
+    }
+    const preferredId = options.getPreferredSessionId?.() ?? null
+    const r = await openNewWorkspaceSession(options.ctx, {
+      preferredId,
+      log,
+    })
+    if (!r.ok) {
+      await broadcastToDshPet(
+        `新开聊天窗失败：${r.reason || '未知'}。也可在 Harness 里点「新建会话」。`,
+        { pet, duration: 12_000 },
+      )
+      return
+    }
+    try { options.onSession?.(r.sessionId) } catch { /* ignore */ }
+    const perm = r.permission
+      ? (r.permissionCopied ? `权限已对齐上一窗（${r.permission}）` : `权限复制未成功（上一窗 ${r.permission}）`)
+      : '上一窗无明确权限可复制'
+    await broadcastToDshPet(
+      `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。${perm}；模式默认标准。之后交办走这个窗。`,
+      { pet, duration: 14_000 },
+    )
+  }
+
   /** 「学会了吗」对照本地学习文件（与自动化 1:1），不叫醒主会话。 */
   async function answerSkillStatus(userText) {
     if (!options.home || !isSkillStatusQuestion(userText)) return false
+    // 执行口令绝不能停在「要我跑一次吗」
+    if (isRunAutomationIntent(userText)) return false
     const list = await listLearnedIndex(options.home)
     const q = String(userText).toLowerCase()
     if (!list.length) {
@@ -150,6 +184,9 @@ export function createPetRouter(options) {
       case 'teach_end':
         await options.teachBridge.stopAndRun()
         break
+      case 'new_session':
+        await handleNewSession(userText)
+        break
       case 'task': {
         // 已学 playbook 优先：再次执行少消化 token
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
@@ -160,6 +197,11 @@ export function createPetRouter(options) {
       }
       case 'chat':
       default: {
+        // 执行口令优先跑自动化，避免落到「学会了吗」闲聊
+        if (isRunAutomationIntent(userText)) {
+          const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
+          if (ran) break
+        }
         if (await answerSkillStatus(userText)) break
         // 「执行一下记录每日心情」等：即便粗分到 chat，也再试匹配已学自动化
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)

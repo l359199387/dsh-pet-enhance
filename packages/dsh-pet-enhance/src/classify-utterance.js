@@ -15,6 +15,8 @@ import {
   TEACH_FOLLOWUP_PREFIX,
   isComputerTaskIntent,
   isGlanceIntent,
+  isNewSessionIntent,
+  isRunAutomationIntent,
   isTeachEndIntent,
   isTeachStartIntent,
 } from './intent.js'
@@ -29,15 +31,17 @@ export const CLASSIFY_LABELS = Object.freeze([
   'teach',
   'teach_end',
   'task',
+  'new_session',
 ])
 
 const LABEL_SET = new Set(CLASSIFY_LABELS)
 
+/** 仅「问会不会」；不含「我教过你去做…」这类执行口令。 */
 const SKILL_STATUS_RE = new RegExp(
   [
     '学会.{0,24}(?:了吗|了没|了嘛|了没呀|了\\?|了？)',
-    '(?:会不会|有没有学会|记不记得|教过)',
-    '(?:记得|教过).{0,24}[吗嘛没]',
+    '(?:会不会|有没有学会|记不记得).{0,24}[吗嘛没？?]?',
+    '(?:记得|教过).{0,24}[吗嘛没？?]',
     '你(?:会|能|可以).{0,16}(?:吗|嘛|不|\\?|？)',
   ].join('|'),
 )
@@ -61,7 +65,7 @@ export function buildClassifyPrompt(userText, { teaching = false } = {}) {
     + '只输出一个标签词，禁止工具与解释。'
     + 'chat=闲聊问候或询问是否学会；glance=看屏幕/截图/盯着看一会儿；'
     + 'teach=用户要演示教你；teach_end=演示结束要你照做；'
-    + 'task=要你操作电脑。'
+    + 'task=要你操作电脑或执行已学会的；new_session=新开聊天窗口/新会话。'
     + `用户：「${clipped}」`
   )
 }
@@ -75,16 +79,17 @@ export function parseClassifyLabel(reply) {
   const raw = String(reply ?? '').trim()
   if (!raw) return null
   const lower = raw.toLowerCase()
-  const m = lower.match(/\b(teach_end|teach|glance|task|chat)\b/)
+  const m = lower.match(/\b(teach_end|teach|glance|task|new_session|chat)\b/)
   if (m && LABEL_SET.has(m[1])) return m[1]
 
   if (/教完|学完|结束教学|照着做|按刚才/.test(raw)) return 'teach_end'
   if (/教你|跟我学|看我做|开始教学/.test(raw)) return 'teach'
+  if (/新开|新会话|新窗口|新聊天/.test(raw)) return 'new_session'
   if (/(?:看(?:一?眼|看)|截图|桌面|屏幕|盯着|陪看|watch)/.test(raw) && !/点|输入|关掉|最小化/.test(raw)) {
     return 'glance'
   }
-  if (/干活|任务|操作|点击|输入/.test(raw)) return 'task'
-  if (/闲聊|聊天|问候|学会/.test(raw)) return 'chat'
+  if (/干活|任务|操作|点击|输入|学会的|教过你/.test(raw)) return 'task'
+  if (/闲聊|问候|学会了吗|会不会/.test(raw)) return 'chat'
   return null
 }
 
@@ -92,6 +97,8 @@ export function parseClassifyLabel(reply) {
 export function isSkillStatusQuestion(text) {
   const s = String(text ?? '').trim()
   if (!s) return false
+  // 执行口令 / 新开窗优先，不进状态问答
+  if (isRunAutomationIntent(s) || isNewSessionIntent(s)) return false
   return SKILL_STATUS_RE.test(s)
 }
 
@@ -109,9 +116,11 @@ export function localClassify(text, { teaching = false } = {}) {
   }
   if (isTeachEndIntent(s)) return 'teach_end'
   if (isTeachStartIntent(s)) return 'teach'
-  // 先拦「学会了吗」类，避免被 task 粗筛误伤
+  if (isNewSessionIntent(s)) return 'new_session'
+  // 「用你学会的 / 我教过你…」先于「学会了吗」
+  if (isRunAutomationIntent(s)) return 'task'
+  // 「学会了吗 / 会不会」问状态，避免被「保存」等 task 粗筛误伤
   if (isSkillStatusQuestion(s)) return 'chat'
-  // 「执行一下记录每日心情 / 去记录一下…」→ task，走已学自动化
   if (isComputerTaskIntent(s)) return 'task'
   if (isGlanceIntent(s)) return 'glance'
   return 'chat'
