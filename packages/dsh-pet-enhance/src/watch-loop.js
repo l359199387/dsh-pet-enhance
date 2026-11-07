@@ -68,16 +68,16 @@ function clampInt(v, lo, hi, fallback) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)))
 }
 
-/** 按时长给「最多留几帧」：约每 8 秒一格，2–8。 */
+/** 按时长给「最多留几帧」：约每 5 秒一格，2–8（30 秒约 6 格）。 */
 export function watchFrameBudget(seconds) {
   const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 8)))
+  return Math.min(WATCH_DEFAULTS.maxFrames, Math.max(2, Math.ceil(s / 5)))
 }
 
 /** 静止兜底间隔：短盯密一点，长盯最多 20s。 */
 export function watchSilentFloorSec(seconds) {
   const s = clampInt(seconds, 1, WATCH_DEFAULTS.maxSeconds, WATCH_DEFAULTS.seconds)
-  return Math.min(20, Math.max(8, Math.round(s / 3)))
+  return Math.min(20, Math.max(6, Math.round(s / 4)))
 }
 
 function sleep(ms, signal) {

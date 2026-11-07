@@ -8,15 +8,16 @@ import {
 } from '../src/watch-loop.js'
 
 test('watchFrameBudget 按时长估最多帧数', () => {
-  assert.equal(watchFrameBudget(30), 4)
+  assert.equal(watchFrameBudget(30), 6)
   assert.equal(watchFrameBudget(60), 8)
   assert.equal(watchFrameBudget(10), 2)
+  assert.equal(watchFrameBudget(20), 4)
 })
 
 test('watchSilentFloorSec 短盯更密', () => {
-  assert.equal(watchSilentFloorSec(30), 10)
-  assert.equal(watchSilentFloorSec(60), 20)
-  assert.ok(watchSilentFloorSec(15) >= 8)
+  assert.equal(watchSilentFloorSec(30), 8)
+  assert.equal(watchSilentFloorSec(60), 15)
+  assert.ok(watchSilentFloorSec(15) >= 6)
 })
 
 test('叫醒预算：第 9 次拒绝', () => {
