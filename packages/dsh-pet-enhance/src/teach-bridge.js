@@ -7,6 +7,7 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
+import { appendPetChatMessages } from './pet-chat-memory.js'
 import { isPetChromeTitle } from './policy.js'
 import {
   isTeachEndIntent,
@@ -92,6 +93,26 @@ export function parseTeachDigestReply(text) {
     summary: smart.summary,
     fastPlan: smart.fastPlan || '',
   }
+}
+
+/**
+ * 学完写入聊天记录的文案：目标 + 理解 + 更快做法。
+ * @param {{ goal?: string, summary?: string, fastPlan?: string, id?: string }} info
+ */
+export function buildLearnedChatNotice(info = {}) {
+  const goal = clip(String(info.goal || '这件事'), 48)
+  const lines = [`我学会了「${goal}」。`]
+  const summary = String(info.summary || '').trim()
+  if (summary) lines.push(`理解：${clip(summary, 180)}`)
+  const fast = String(info.fastPlan || '').trim()
+  if (fast) lines.push(`更快做法：${clip(fast, 140)}`)
+  const id = String(info.id || '').trim()
+  lines.push(
+    id
+      ? `已写入「我学会的」（id=${clip(id, 28)}）。要跑时跟我说一声。`
+      : '已写入「我学会的」。要跑时跟我说一声。',
+  )
+  return lines.join('\n')
 }
 
 export const TEACH_POLL_MS = 350
@@ -537,8 +558,8 @@ export function createTeachBridge(options) {
 
   /** 歧义追问：不懂就问清（confirm 气泡）。 */
   /**
-   * 理解后追问；返回已澄清的 code 列表。不懂就停，不创建自动化。
-   * @returns {Promise<{ ok: boolean, clarified: string[], reason?: string }>}
+   * 理解后追问；「不要」只记偏好，不再整单取消（学会条目仍会创建）。
+   * @returns {Promise<{ ok: boolean, clarified: string[], denied: string[], reason?: string }>}
    */
   /**
    * @param {string} id
@@ -550,23 +571,17 @@ export function createTeachBridge(options) {
     const mandatory = buildTeachFollowupQuestions(runGoal, steps, smart)
     const questions = mergeTeachQuestions(detectTeachAmbiguities(runGoal, steps), mandatory)
     const clarified = []
-    if (!questions.length) return { ok: true, clarified }
+    const denied = []
+    if (!questions.length) return { ok: true, clarified, denied }
 
     await broadcastToDshPet(
-      `学完了，我要连问 ${questions.length} 件小事（头顶点「好/不要」），问清再建成自动化。`,
+      `学完了，我要连问 ${questions.length} 件小事（头顶点「好/不要」）。点「不要」也先学会，只是按你的偏好记。`,
       { pet, duration: 10_000 },
     )
 
     if (!options.confirmGate?.ask) {
-      if (questions.some((q) => q.code === 'goal' || q.code === 'empty')) {
-        await broadcastToDshPet(
-          `我还不懂：${questions[0].summary}请再说清楚目标后再教一次。`,
-          { pet, duration: 14_000 },
-        )
-        return { ok: false, clarified, reason: 'need-clarify' }
-      }
-      // 无确认闸时仍记下必问项（视为主人默许变通）
-      return { ok: true, clarified: questions.map((q) => q.code) }
+      // 无确认闸：默许必问项，照常建学会条目
+      return { ok: true, clarified: questions.map((q) => q.code), denied }
     }
     for (const q of questions) {
       await broadcastToDshPet(`问：${clip(q.summary, 80)}`, { pet, duration: 8_000 })
@@ -576,13 +591,16 @@ export function createTeachBridge(options) {
         action: { teachSession: id, clarify: q.code },
       })
       if (!verdict.allow) {
-        await broadcastToDshPet('好，先不建自动化。想清楚了再教我。', { pet, duration: 8_000 })
-        await updateTeachMeta(options.home, id, { status: 'cancelled', clarify: q.code })
-        return { ok: false, clarified, reason: 'user-deny' }
+        denied.push(q.code)
+        await broadcastToDshPet(
+          '好，记下你的选择；不影响先写入「我学会的」。',
+          { pet, duration: 6_000 },
+        )
+        continue
       }
       clarified.push(q.code)
     }
-    return { ok: true, clarified }
+    return { ok: true, clarified, denied }
   }
 
   async function stopAndRun() {
@@ -644,16 +662,23 @@ export function createTeachBridge(options) {
     }
     playbook.approach = 'smart'
 
-    // 2) 主动多问几句，问清才继续
+    // 2) 主动多问几句；「不要」只记偏好，不撤学会
     const clarified = await clarifyAmbiguities(id, goal, steps, {
       summary: digested.summary,
       fastPlan: digested.fastPlan,
     })
-    if (!clarified.ok) {
-      await turnOffLiveWatchQuiet()
-      frames = null
-      sessionId = null
-      return
+
+    // 点「不要」的偏好：不强行变通时收紧 fastPlan
+    let fastPlan = digested.fastPlan || ''
+    if (clarified.denied?.includes('fast-ok') || clarified.denied?.includes('adapt')) {
+      fastPlan = ''
+      playbook.strategy = {
+        ...(playbook.strategy || {}),
+        approach: 'replay',
+        fastPlan: '',
+        summary: digested.summary || narrative,
+      }
+      playbook.approach = 'replay'
     }
 
     // 3) 关键帧落入 learned/<id>/frames（仅学习用）
@@ -669,10 +694,11 @@ export function createTeachBridge(options) {
       teachSessionId: id,
       understanding: {
         summary: digested.summary || narrative,
-        fastPlan: digested.fastPlan || '',
-        approach: 'smart',
+        fastPlan,
+        approach: playbook.approach || 'smart',
         stats: playbook.stats,
         clarified: clarified.clarified,
+        denied: clarified.denied || [],
         framesUsed: digested.usedFrames,
         framesSupplemented: digested.supplemented,
       },
@@ -687,7 +713,7 @@ export function createTeachBridge(options) {
     const scheduleText = [
       goal,
       digested.summary,
-      digested.fastPlan,
+      fastPlan,
       ...(clarified.clarified || []),
     ].filter(Boolean).join('\n')
     const harness = await registerHarnessAutomation(options.ctx, {
@@ -720,32 +746,45 @@ export function createTeachBridge(options) {
       harnessReason: harness.reason || null,
       playbookStats: playbook.stats,
       frameCount: frameMeta.count,
+      denied: clarified.denied || [],
     })
 
-    // 6) 学完自动关实时看屏幕
+    // 6) 学完写进聊天记录（不只头顶气泡）
+    const notice = buildLearnedChatNotice({
+      goal,
+      summary: digested.summary || narrative,
+      fastPlan,
+      id,
+    })
+    const chatMem = await appendPetChatMessages(
+      [
+        { role: 'user', content: '【教学结束】我教完了' },
+        { role: 'assistant', content: notice },
+      ],
+      {
+        petId: pet,
+        memoryPath: options.petMemoryPath,
+      },
+    ).catch((e) => ({ ok: false, error: e?.message ?? e }))
+    if (!chatMem?.ok) {
+      log(`teach：写入聊天记录失败：${chatMem?.error || 'unknown'}`)
+    } else {
+      log(`teach：已写入聊天记录（学会「${clip(goal, 24)}」）`)
+    }
+
+    // 7) 学完自动关实时看屏幕
     await turnOffLiveWatchQuiet()
     frames = null
 
+    let bubble = notice
     if (harness.ok && harness.scheduled) {
-      await broadcastToDshPet(
-        `理解清楚了。本地学习/自动化已建（id=${clip(id, 20)}）。`
-        + `已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`,
-        { pet, duration: 18_000 },
-      )
+      bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`
     } else if (harness.ok) {
-      await broadcastToDshPet(
-        `理解清楚了。本地学习文件与自动化已建（id=${clip(id, 20)}）。`
-        + '未设定运行时间，也未开启定时——你没说每周几/几点就先不排程。'
-        + '要跑时说「再做一次」；若要定时，教的时候说明「每天几点/每周几」。这次不动手。',
-        { pet, duration: 18_000 },
-      )
+      bubble += '\n未设定运行时间（你没说每周几/几点就先不排程）。这次不动手。'
     } else {
-      await broadcastToDshPet(
-        `本地学习/自动化已建（id=${clip(id, 20)}，含 ${frameMeta.count} 张教学截图）；`
-        + `Harness 登记失败：${harness.reason || '无 schedule'}。可说「再做一次」跑本地版。这次不动手。`,
-        { pet, duration: 18_000 },
-      )
+      bubble += `\nHarness 登记失败：${harness.reason || '无 schedule'}。这次不动手。`
     }
+    await broadcastToDshPet(bubble, { pet, duration: 18_000 })
     sessionId = null
   }
 

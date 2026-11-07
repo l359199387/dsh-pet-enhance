@@ -89,6 +89,9 @@ export async function createLearnedAutomationPair(home, spec) {
       clarified: Array.isArray(spec.understanding?.clarified)
         ? spec.understanding.clarified
         : [],
+      denied: Array.isArray(spec.understanding?.denied)
+        ? spec.understanding.denied
+        : [],
     },
     frames: {
       count: Number(spec.frames?.count) || 0,

@@ -1,12 +1,12 @@
 /**
- * 直接读写 dsh-pet 的 memory.json（用于盯屏分张：保留附图、去掉「嗯/好」短回复）。
+ * 直接读写 dsh-pet 的 memory.json（盯屏分张清短应答；教学结果写入聊天记录）。
  *
  * @module src/pet-chat-memory.js
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 export function defaultPetMemoryPath() {
   return join(homedir(), '.dsh', 'dsh-pet', 'memory.json')
@@ -17,6 +17,76 @@ export function isShortAckReply(text) {
   const s = String(text ?? '').trim()
   if (!s || s.length > 8) return false
   return /^(嗯+|好+|哦+|喔+|啊+|行+|ok|okay|yes|收到|明白)[.。!！…]*$/i.test(s)
+}
+
+/**
+ * @param {object} mem
+ * @param {string} entry
+ * @param {string} petId
+ * @returns {{ messages: object[] } | null}
+ */
+function ensurePetLeaf(mem, entry, petId) {
+  if (!mem[entry] || typeof mem[entry] !== 'object' || Array.isArray(mem[entry])) {
+    mem[entry] = {}
+  }
+  const bucket = mem[entry]
+  if (!bucket[petId] || typeof bucket[petId] !== 'object' || Array.isArray(bucket[petId])) {
+    bucket[petId] = { messages: [] }
+  }
+  if (!Array.isArray(bucket[petId].messages)) {
+    bucket[petId].messages = []
+  }
+  return bucket[petId]
+}
+
+/**
+ * 往 dsh-pet 对话记忆追加消息（不叫醒模型），让「学会了什么」出现在聊天记录里。
+ * @param {Array<{ role: 'user'|'assistant', content: string, ts?: number }>} messages
+ * @returns {Promise<{ ok: boolean, added: number, error?: string }>}
+ */
+export async function appendPetChatMessages(messages, {
+  petId = 'main',
+  memoryPath = defaultPetMemoryPath(),
+  entry = 'main',
+  maxMessages = 400,
+} = {}) {
+  const list = (Array.isArray(messages) ? messages : [])
+    .map((m) => ({
+      role: m?.role === 'user' ? 'user' : 'assistant',
+      content: String(m?.content ?? '').trim().slice(0, 2000),
+      ts: Number.isFinite(Number(m?.ts)) ? Number(m.ts) : Date.now(),
+    }))
+    .filter((m) => m.content)
+  if (!list.length) return { ok: true, added: 0 }
+
+  let mem
+  try {
+    mem = JSON.parse(await readFile(memoryPath, 'utf8'))
+  } catch {
+    mem = {}
+  }
+  if (!mem || typeof mem !== 'object' || Array.isArray(mem)) mem = {}
+
+  const pet = ensurePetLeaf(mem, entry, petId)
+  const base = Date.now()
+  for (let i = 0; i < list.length; i += 1) {
+    pet.messages.push({
+      role: list[i].role,
+      content: list[i].content,
+      ts: list[i].ts || (base + i),
+    })
+  }
+  if (pet.messages.length > maxMessages) {
+    pet.messages = pet.messages.slice(-maxMessages)
+  }
+
+  try {
+    await mkdir(dirname(memoryPath), { recursive: true })
+    await writeFile(memoryPath, `${JSON.stringify(mem, null, 2)}\n`, 'utf8')
+  } catch (e) {
+    return { ok: false, added: 0, error: String(e?.message ?? e) }
+  }
+  return { ok: true, added: list.length }
 }
 
 /**

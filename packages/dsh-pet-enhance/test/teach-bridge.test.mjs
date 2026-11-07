@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import {
+  buildLearnedChatNotice,
   buildTeachDigestPrompt,
   createTeachBridge,
   isLikelyAddressBarNoise,
@@ -23,6 +24,19 @@ const tinyPng = Buffer.from(
   + '0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
   'hex',
 )
+
+test('buildLearnedChatNotice：含目标与理解', () => {
+  const t = buildLearnedChatNotice({
+    goal: '和豆包聊天',
+    summary: '示范闲聊并看回复',
+    fastPlan: '打开豆包会话直接说你好',
+    id: 'sid-1',
+  })
+  assert.match(t, /我学会了「和豆包聊天」/)
+  assert.match(t, /理解：/)
+  assert.match(t, /更快做法：/)
+  assert.match(t, /我学会的/)
+})
 
 test('地址栏脏输入与模糊回放口令', () => {
   assert.equal(isLikelyAddressBarNoise('bilibli1'), true)
@@ -69,8 +83,21 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
   const prevDsh = process.env.DSH_HOME
   process.env.DSH_HOME = home
 
+  const memoryPath = join(home, 'pet-memory.json')
+  const denyCodes = []
   const bridge = createTeachBridge({
     home,
+    petMemoryPath: memoryPath,
+    confirmGate: {
+      async ask({ action }) {
+        // 第一问点「不要」也不应取消学会
+        if (action?.clarify === 'purpose') {
+          denyCodes.push(action.clarify)
+          return { allow: false }
+        }
+        return { allow: true }
+      },
+    },
     ctx: {
       get(name) {
         if (name === 'schedule') {
@@ -161,6 +188,13 @@ test('教完：点击截图+坐标喂模型、建对、关实时看屏幕、不�
     assert.ok(scrolls.every((s) => s.hint?.frameFile), '滑轮起止都应有截图')
     assert.ok(wakes.some((w) => /滚动开始|滚动结束/.test(w.text)), '理解提示应含滑轮起止')
     assert.equal(schedules.length, 0, '未说明几点/每周几时不应登记 Harness 定时')
+    assert.deepEqual(denyCodes, ['purpose'])
+    assert.deepEqual(pair.learn.understanding?.denied, ['purpose'])
+    const mem = JSON.parse(readFileSync(memoryPath, 'utf8'))
+    const last = mem.main.main.messages.at(-1)
+    assert.equal(last.role, 'assistant')
+    assert.match(last.content, /我学会了/)
+    assert.match(last.content, /我学会的/)
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh
