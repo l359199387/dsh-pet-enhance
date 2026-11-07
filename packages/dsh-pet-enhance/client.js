@@ -1668,7 +1668,8 @@ window.__ModuleLoader__.load({
           filtered.map((item, idx) => {
             const understanding = understandingOf(item)
             const runs = Array.isArray(item.runs) ? item.runs : []
-            const open = runsOpen[item.id] !== false
+            // 默认收起；只有点过「展开」才为 true
+            const open = runsOpen[item.id] === true
             return h('article', { key: item.id, className: 'dg-learn-card' },
               h('div', { className: 'dg-learn-card-top' },
                 h('div', { className: 'dg-learn-row-title' },
