@@ -279,7 +279,11 @@ export async function buildRecentChatHtml(options) {
     prevTs = Number(row.ts) || prevTs
 
     const imgs = (row.imageDataUris || [])
-      .map((u) => `<a class="attach" href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="拼图"/></a>`)
+      .map((u) => (
+        `<button type="button" class="attach" data-zoom aria-label="查看大图">`
+        + `<img src="${u}" alt="拼图" loading="lazy"/>`
+        + `</button>`
+      ))
       .join('')
     const text = escapeHtml(row.content || '')
     const bubbleInner = (text ? `<div class="text">${text}</div>` : '') + imgs
@@ -311,9 +315,9 @@ export async function buildRecentChatHtml(options) {
     const uri = await fileToDataUri(p)
     if (!uri) continue
     shortcuts.push(
-      `<a class="quick-chip" href="${uri}" target="_blank" rel="noopener">`
+      `<button type="button" class="quick-chip" data-zoom>`
       + `<img src="${uri}" alt=""/>`
-      + `<span>${escapeHtml(label)}</span></a>`,
+      + `<span>${escapeHtml(label)}</span></button>`,
     )
   }
 
@@ -340,6 +344,7 @@ export async function buildRecentChatHtml(options) {
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body.is-zooming { overflow: hidden; }
   header.bar {
     position: sticky; top: 0; z-index: 2;
     background: rgba(247,247,247,.92);
@@ -357,13 +362,15 @@ export async function buildRecentChatHtml(options) {
   }
   .quick-chip {
     display: inline-flex; align-items: center; gap: 8px;
-    text-decoration: none; color: var(--link);
+    color: var(--link); cursor: zoom-in;
     background: #fff; border-radius: 10px; padding: 6px 10px 6px 6px;
     border: 1px solid #e3e3e3; font-size: 12px;
     box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    font: inherit;
   }
   .quick-chip img {
     width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: #f0f0f0;
+    pointer-events: none;
   }
   main.chat {
     max-width: 680px; margin: 0 auto;
@@ -409,23 +416,95 @@ export async function buildRecentChatHtml(options) {
     border-color: transparent transparent transparent var(--me-bubble);
   }
   .text + .attach { margin-top: 8px; }
-  .attach { display: block; }
+  .attach {
+    display: block; padding: 0; margin: 0; border: 0; background: transparent;
+    cursor: zoom-in; border-radius: 6px; overflow: hidden;
+  }
   .attach + .attach { margin-top: 8px; }
   .attach img {
     display: block; max-width: min(260px, 62vw);
     border-radius: 6px; background: #f3f3f3;
+    pointer-events: none;
+  }
+  .lightbox {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(0,0,0,.82);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .18s ease, visibility .18s ease;
+    cursor: zoom-out;
+  }
+  .lightbox.is-open {
+    opacity: 1; visibility: visible; pointer-events: auto;
+  }
+  .lightbox img {
+    max-width: min(96vw, 1200px);
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.45);
+    transform: scale(.96);
+    transition: transform .18s ease;
+    cursor: zoom-out;
+    background: #111;
+  }
+  .lightbox.is-open img { transform: scale(1); }
+  .lightbox-hint {
+    position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: rgba(255,255,255,.72);
+    pointer-events: none; user-select: none;
   }
 </style>
 </head>
 <body>
 <header class="bar">
   <h1>小蓝鲸</h1>
-  <p>最近 ${rounds} 轮 · ${rows.length} 条</p>
+  <p>最近 ${rounds} 轮 · ${rows.length} 条 · 点图可放大</p>
 </header>
 ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
 <main class="chat">
 ${blocks.join('\n')}
 </main>
+<div class="lightbox" id="lightbox" hidden>
+  <img alt="大图预览"/>
+  <div class="lightbox-hint">点击空白处或按 Esc 关闭</div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('lightbox');
+  var big = box.querySelector('img');
+  function openZoom(src) {
+    if (!src) return;
+    big.src = src;
+    box.hidden = false;
+    requestAnimationFrame(function () { box.classList.add('is-open'); });
+    document.body.classList.add('is-zooming');
+  }
+  function closeZoom() {
+    box.classList.remove('is-open');
+    document.body.classList.remove('is-zooming');
+    setTimeout(function () {
+      if (!box.classList.contains('is-open')) {
+        box.hidden = true;
+        big.removeAttribute('src');
+      }
+    }, 180);
+  }
+  document.addEventListener('click', function (e) {
+    var hit = e.target.closest('[data-zoom]');
+    if (hit && !box.contains(hit)) {
+      e.preventDefault();
+      var thumb = hit.querySelector('img') || (hit.tagName === 'IMG' ? hit : null);
+      openZoom(thumb && (thumb.currentSrc || thumb.src));
+      return;
+    }
+    if (box.classList.contains('is-open') && (e.target === box || e.target === big)) closeZoom();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeZoom();
+  });
+})();
+</script>
 </body>
 </html>`
 
