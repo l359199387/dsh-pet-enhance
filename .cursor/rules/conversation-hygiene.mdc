@@ -1,0 +1,30 @@
+---
+description: 控制对话上下文膨胀：短线程、现状卡、少贴大段
+alwaysApply: true
+---
+
+# 对话上下文卫生
+
+## 节奏
+
+- **一个里程碑一个对话**：闸门/大修合完（急停、chat-gate、C3…）后，引导用户开新对话；不要无限续写超长线程。
+- **开新对话先贴现状卡**（用户或助手补齐），不要假设对方记得上一条 50 轮细节。
+- 旧对话只作查阅；需要细节时 `@` 文件或给提交号。
+
+## 现状卡模板（新对话开场）
+
+```text
+【现状卡】
+- 包：packages/dsh-pet-enhance（安装 link 到 ~/.dsh/profiles/desktop）
+- 阶段：C3 纪律已落地；急停含 agent.cancel；对话闸门 v2
+- 最近提交：<git log -3 --oneline>
+- 数据：~/.dsh/pet-enhance/（API /api/pet-enhance）
+- 下一步：<一句>
+- 已知坑：闸门需 host-origin；Helper 确认靠 pet-enhance-confirm；另存为优先完整路径
+```
+
+## 提问/答复体积
+
+- 优先 `@路径`，少整文件粘贴。
+- Bug：现象 + 少量日志/`actions.jsonl` 尾部，勿贴整夜。
+- 步骤 ≥3 先列计划确认；少于 3 步直接做。中文回复；不自动编译/启动项目。
