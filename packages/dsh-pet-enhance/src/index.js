@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
 import { createGlanceTool } from './tool-glance.js'
+import { createWakeBudget } from './watch-loop.js'
 import { createActTool, ACT_TOOL_NAME } from './tool-act.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
@@ -258,6 +259,8 @@ async function handle(req, res, connection, log, state) {
       send(res, 200, { ok: true, takeover: false, label: 'chat' })
       return
     }
+    // 用户开口 → 清零 watch 叫醒预算（即使本条不接管）
+    try { state.glanceTool?.noteUserTurn?.() } catch { /* ignore */ }
     if (!state.chatGateReady) {
       // 桥未就绪：不接管，避免丢消息
       send(res, 200, { ok: true, takeover: false, label: 'chat', via: 'bridge-not-ready' })
@@ -646,14 +649,17 @@ function installTools(ctx, log, state) {
           },
         }
         state.attachments = scoped.attachments
-        disposers.push(scoped.tools.register(createGlanceTool({
+        state.wakeBudget = state.wakeBudget || createWakeBudget()
+        state.glanceTool = createGlanceTool({
           home: glanceHome(),
           attachments: scoped.attachments,
           log,
           sidecar: state.sidecar,
           onLooking: petHooks.onLooking,
           onIdle: petHooks.onIdle,
-        })))
+          wakeBudget: state.wakeBudget,
+        })
+        disposers.push(scoped.tools.register(state.glanceTool))
         state.tools.push(TOOL_NAME)
         log(`工具已注册：${TOOL_NAME}`)
 
@@ -1082,6 +1088,8 @@ export async function apply(ctx) {
     tools: [],
     sidecar: null,
     glance: createGlanceState(),
+    glanceTool: null,
+    wakeBudget: createWakeBudget(),
     lastSessionId: null,
     budget: createActionBudget(),
     rememberedConfirms: new Set(),

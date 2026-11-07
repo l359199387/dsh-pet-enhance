@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { createWakeBudget, WATCH_DEFAULTS } from '../src/watch-loop.js'
+
+test('叫醒预算：第 9 次拒绝', () => {
+  const b = createWakeBudget(8)
+  for (let i = 0; i < 8; i += 1) {
+    const r = b.beginWatch()
+    assert.equal(r.ok, true, `第 ${i + 1} 次应放行`)
+  }
+  const denied = b.beginWatch()
+  assert.equal(denied.ok, false)
+  assert.match(denied.reason, /8 次/)
+  assert.equal(b.status().stopped, true)
+})
+
+test('用户发言清零', () => {
+  const b = createWakeBudget(2)
+  assert.equal(b.beginWatch().ok, true)
+  assert.equal(b.beginWatch().ok, true)
+  assert.equal(b.beginWatch().ok, false)
+  b.noteUserTurn()
+  assert.equal(b.beginWatch().ok, true)
+  assert.equal(b.status().wakes, 1)
+})
+
+test('默认 maxAutonomousWakes=8', () => {
+  assert.equal(WATCH_DEFAULTS.maxAutonomousWakes, 8)
+})

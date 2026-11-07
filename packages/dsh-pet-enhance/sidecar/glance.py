@@ -38,8 +38,44 @@ _stats = {
     "started_at": time.time(),
     "requests": 0,
     "captures": 0,
+    "diffs": 0,
+    "mosaics": 0,
     "errors": 0,
 }
+
+# 流式变化分：跨 capture/diff 请求记住上一帧 HSV（同进程）。
+_frame_scorer = None
+
+
+def _get_scorer():
+    global _frame_scorer
+    if _frame_scorer is None:
+        from diff_score import FrameScorer
+        _frame_scorer = FrameScorer()
+    return _frame_scorer
+
+
+def _decode_png_b64(raw: str):
+    from PIL import Image
+
+    data = base64.b64decode(str(raw or ""), validate=False)
+    return Image.open(io.BytesIO(data)).convert("RGB")
+
+
+def _apply_privacy(image, capture_rect, extra_patterns=None):
+    from privacy_mask import apply_mask, compile_patterns
+
+    pats = compile_patterns(extra_patterns)
+    try:
+        windows = list_windows()
+    except Exception:
+        windows = []
+    return apply_mask(
+        image,
+        capture_rect=capture_rect,
+        windows=windows,
+        patterns=pats,
+    )
 
 
 def _reconfigure_stdio() -> None:
@@ -423,9 +459,7 @@ def capture_window_hwnd(hwnd: int):
     return image, (left, top, right, bottom)
 
 
-def capture_screen_image(region: dict | None = None):
-    from PIL import ImageGrab
-
+def screen_bbox(region: dict | None = None) -> tuple[int, int, int, int]:
     screen = _screen_info()
     virtual = screen["virtual"]
     if region:
@@ -435,14 +469,19 @@ def capture_screen_image(region: dict | None = None):
         h = int(region["h"])
         if w <= 0 or h <= 0:
             raise ValueError("region empty")
-        bbox = (x, y, x + w, y + h)
-    else:
-        bbox = (
-            virtual["x"],
-            virtual["y"],
-            virtual["x"] + virtual["w"],
-            virtual["y"] + virtual["h"],
-        )
+        return x, y, x + w, y + h
+    return (
+        virtual["x"],
+        virtual["y"],
+        virtual["x"] + virtual["w"],
+        virtual["y"] + virtual["h"],
+    )
+
+
+def capture_screen_image(region: dict | None = None):
+    from PIL import ImageGrab
+
+    bbox = screen_bbox(region)
     image = ImageGrab.grab(bbox=bbox, all_screens=True)
     return image
 
@@ -496,6 +535,9 @@ def handle_capture(req: dict) -> dict:
     source = req.get("source") or {"kind": "screen"}
     kind = str(source.get("kind") or "screen").lower()
     max_width = req.get("max_width")
+    want_score = bool(req.get("score") or req.get("with_score"))
+    mask = req.get("mask", True)
+    extra_mask = req.get("mask_patterns") or req.get("maskPatterns")
     try:
         max_width_i = int(max_width) if max_width is not None else None
     except (TypeError, ValueError):
@@ -505,6 +547,8 @@ def handle_capture(req: dict) -> dict:
     active = _active_window()
     cursor = _cursor_pos()
     meta_window = None
+    capture_rect = None
+    masked_titles: list[str] = []
 
     try:
         if kind == "window":
@@ -526,6 +570,7 @@ def handle_capture(req: dict) -> dict:
                 )
             assert win is not None
             image, rect = capture_window_hwnd(win["hwnd"])
+            capture_rect = tuple(rect)
             meta_window = {
                 "hwnd": win["hwnd"],
                 "title": win["title"],
@@ -540,6 +585,7 @@ def handle_capture(req: dict) -> dict:
                 )
         elif kind == "screen":
             region = parse_region(source.get("region"))
+            capture_rect = screen_bbox(region)
             image = capture_screen_image(region)
         else:
             return _err("BAD_REQUEST", f"未知 source.kind: {kind}")
@@ -547,6 +593,20 @@ def handle_capture(req: dict) -> dict:
         return _err("BAD_REQUEST", str(e))
     except Exception as e:
         return _err("CAPTURE_FAILED", f"抓屏失败：{e}")
+
+    if mask is not False and capture_rect is not None:
+        try:
+            image, masked_titles = _apply_privacy(image, capture_rect, extra_mask)
+        except Exception:
+            masked_titles = []
+
+    # 遮罩后再打分：与模型/缩略图看到的画面一致。
+    score_val = None
+    if want_score:
+        try:
+            score_val = _get_scorer().push_image(image)
+        except Exception:
+            score_val = None
 
     image = _resize_max_width(image, max_width_i)
     png = _png_b64(image)
@@ -560,11 +620,97 @@ def handle_capture(req: dict) -> dict:
         "ms": ms,
         "active": active,
         "cursor": cursor,
-        "score": 0.0,
+        "score": 0.0 if score_val is None else float(score_val),
+        "scoreReady": score_val is not None,
+        "masked": masked_titles,
     }
     if meta_window is not None:
         out["window"] = meta_window
     return out
+
+
+def handle_diff(req: dict) -> dict:
+    """比较两张 PNG，或对流式 scorer 推一帧 / 重置。"""
+    from diff_score import score_images
+
+    t0 = time.perf_counter()
+    if req.get("reset"):
+        _get_scorer().reset()
+        return {"ok": True, "reset": True, "ms": int((time.perf_counter() - t0) * 1000)}
+
+    png_a = req.get("pngA") or req.get("png_a")
+    png_b = req.get("pngB") or req.get("png_b")
+    png = req.get("png")
+
+    try:
+        if png_a is not None and png_b is not None:
+            img_a = _decode_png_b64(png_a)
+            img_b = _decode_png_b64(png_b)
+            score = float(score_images(img_a, img_b))
+            _stats["diffs"] += 1
+            return {
+                "ok": True,
+                "score": score,
+                "first": False,
+                "ms": int((time.perf_counter() - t0) * 1000),
+            }
+
+        if png is not None:
+            img = _decode_png_b64(png)
+            score = _get_scorer().push_image(img)
+            _stats["diffs"] += 1
+            return {
+                "ok": True,
+                "score": 0.0 if score is None else float(score),
+                "first": score is None,
+                "ms": int((time.perf_counter() - t0) * 1000),
+            }
+    except Exception as e:
+        return _err("DIFF_FAILED", f"变化分失败：{e}")
+
+    return _err("BAD_REQUEST", "diff 需要 png，或 pngA+pngB，或 reset:true")
+
+
+def handle_mosaic(req: dict) -> dict:
+    """把多帧 PNG 拼成一张（2×2 / 2×4），宽度对齐 42。"""
+    from mosaic import compose_mosaic, encode_png, normalize_quality
+
+    frames_raw = req.get("frames")
+    if not isinstance(frames_raw, list) or not frames_raw:
+        return _err("BAD_REQUEST", "mosaic 需要 frames: [{png, label?}, ...]")
+
+    quality = normalize_quality(req.get("quality"))
+    packed = []
+    labels = []
+    try:
+        for i, item in enumerate(frames_raw[:8]):
+            if isinstance(item, dict):
+                png = item.get("png")
+                label = item.get("label") or str(i + 1)
+            else:
+                png = item
+                label = str(i + 1)
+            if not png:
+                return _err("BAD_REQUEST", f"frames[{i}] 缺 png")
+            packed.append({"image": _decode_png_b64(png), "label": label})
+            labels.append(str(label))
+        image, meta = compose_mosaic(packed, quality=quality, labels=labels)
+        png_bytes = encode_png(image)
+    except Exception as e:
+        return _err("MOSAIC_FAILED", f"拼图失败：{e}")
+
+    _stats["mosaics"] += 1
+    return {
+        "ok": True,
+        "png": base64.b64encode(png_bytes).decode("ascii"),
+        "w": meta["w"],
+        "h": meta["h"],
+        "quality": meta["quality"],
+        "cols": meta["cols"],
+        "rows": meta["rows"],
+        "frames": meta["frames"],
+        "ms": 0,
+    }
 
 
 def handle_thumb(req: dict) -> dict:
@@ -572,8 +718,15 @@ def handle_thumb(req: dict) -> dict:
     if width < 32 or width > 1280:
         return _err("BAD_REQUEST", "thumb.width 范围 32–1280")
     t0 = time.perf_counter()
+    masked_titles: list[str] = []
     try:
+        bbox = screen_bbox(None)
         image = capture_screen_image(None)
+        if req.get("mask", True) is not False:
+            try:
+                image, masked_titles = _apply_privacy(image, bbox)
+            except Exception:
+                masked_titles = []
         image = _resize_max_width(image, width)
         jpeg = _jpeg_b64(image)
     except Exception as e:
@@ -584,6 +737,7 @@ def handle_thumb(req: dict) -> dict:
         "w": image.width,
         "h": image.height,
         "ms": int((time.perf_counter() - t0) * 1000),
+        "masked": masked_titles,
     }
 
 
@@ -722,6 +876,8 @@ HANDLERS = {
     "abort": handle_abort,
     "input": handle_input,
     "observe": handle_observe,
+    "diff": handle_diff,
+    "mosaic": handle_mosaic,
 }
 
 

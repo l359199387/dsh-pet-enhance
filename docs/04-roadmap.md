@@ -122,11 +122,13 @@
 
 ## 阶段 D · 陪看（watch 与多帧）
 
-- 变化分（64×36 HSV 加权差）
+- 变化分（64×36 HSV 加权差）→ `sidecar/diff_score.py` + Host `select-frames.js`
 - 选帧：切点 + 积分 + 静止兜底（20s）
-- 多帧 2×2 / 2×4 拼图
-- `watch` 阻塞 + `seconds` 上限 + `maxAutonomousWakes` 预算
-- 隐私遮罩（按窗口标题）
+- 多帧 2×2 / 2×4 拼图 → `sidecar/mosaic.py`（画布对齐 42）
+- `watch` 阻塞 + `seconds` 上限 + `maxAutonomousWakes` 预算（默认 8）
+- 隐私遮罩（按窗口标题）→ `sidecar/privacy_mask.py`
+
+**工程落地**：`glance({action:"watch"})`；单测覆盖变化分 / 选帧 / token 表 / 叫醒预算 / 拼图对齐。
 
 **验收**
 
