@@ -6,6 +6,7 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
+import { sayConclusionToPet } from './pet-chat-memory.js'
 import {
   classifyUtterance,
   isClassifyEcho,
@@ -89,9 +90,9 @@ export function createPetRouter(options) {
       log,
     })
     if (!r.ok) {
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         `新开聊天窗失败：${r.reason || '未知'}。也可在 Harness 里点「新建会话」。`,
-        { pet, duration: 12_000 },
+        { pet, duration: 12_000, memoryPath: options.petMemoryPath },
       )
       return
     }
@@ -99,9 +100,9 @@ export function createPetRouter(options) {
     const perm = r.permission
       ? (r.permissionCopied ? `权限已对齐上一窗（${r.permission}）` : `权限复制未成功（上一窗 ${r.permission}）`)
       : '上一窗无明确权限可复制'
-    await broadcastToDshPet(
+    await sayConclusionToPet(
       `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。${perm}；模式默认标准。之后交办走这个窗。`,
-      { pet, duration: 14_000 },
+      { pet, duration: 14_000, memoryPath: options.petMemoryPath },
     )
   }
 
@@ -113,9 +114,9 @@ export function createPetRouter(options) {
     const list = await listLearnedIndex(options.home)
     const q = String(userText).toLowerCase()
     if (!list.length) {
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         '还没学会呢。开「实时看屏幕」教我一遍，做完告诉我；问清后我会写成学习文件并建对应自动化。',
-        { pet, duration: 14_000 },
+        { pet, duration: 14_000, memoryPath: options.petMemoryPath },
       )
       return true
     }
@@ -133,21 +134,21 @@ export function createPetRouter(options) {
       const { readLearned } = await import('./learned-automation.js')
       const learn = await readLearned(options.home, hit.id)
       if (learn?.status === 'deprecated-reteach' || learn?.deprecatedReason) {
-        await broadcastToDshPet(
+        await sayConclusionToPet(
           `「${String(hit.goal).slice(0, 36)}」旧记录已作废（教完曾误动手）。请开实时看屏幕再教一遍。`,
-          { pet, duration: 14_000 },
+          { pet, duration: 14_000, memoryPath: options.petMemoryPath },
         )
         return true
       }
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         `学会了「${String(hit.goal).slice(0, 40)}」，对应自动化已建好。要我跑一次吗？`,
-        { pet, duration: 12_000 },
+        { pet, duration: 12_000, memoryPath: options.petMemoryPath },
       )
     } else {
       const recent = list.slice(0, 3).map((r) => `「${String(r.goal || '?').slice(0, 24)}」`).join('、')
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         `这件事我还没学会。最近学习记录：${recent || '（空）'}。想教我直接说。`,
-        { pet, duration: 14_000 },
+        { pet, duration: 14_000, memoryPath: options.petMemoryPath },
       )
     }
     return true

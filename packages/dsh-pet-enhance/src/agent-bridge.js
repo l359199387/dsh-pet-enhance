@@ -9,6 +9,7 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
+import { sayConclusionToPet } from './pet-chat-memory.js'
 import { isActEnabled } from './settings.js'
 import {
   AGENT_WAKE_PREFIX,
@@ -99,9 +100,9 @@ export function createAgentBridge(options) {
     busy = true
     try {
       if (!actOn(options.home)) {
-        await broadcastToDshPet(
+        await sayConclusionToPet(
           '这件事要动手。请先右键「更多」打开「允许动手」，再说一遍。',
-          { pet, duration: 12_000 },
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
         )
         log('agent-bridge：act 未启用，已提示')
         return
@@ -109,7 +110,7 @@ export function createAgentBridge(options) {
 
       try { options.resetActBudget?.() } catch { /* ignore */ }
       const preferred = options.getPreferredSessionId?.() ?? null
-      // 与 i18n bubble.taskTakeover 对齐：任务走插件，闲聊留给 dsh-pet
+      // 与 i18n bubble.taskTakeover 对齐：任务走插件，闲聊留给 dsh-pet（进度不落盘）
       await broadcastToDshPet('这事我来办——去主会话看屏幕再动手…', { pet, duration: 8_000 })
       try { options.onActing?.() } catch { /* ignore */ }
 
@@ -117,11 +118,11 @@ export function createAgentBridge(options) {
       const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
       if (!woken.ok) {
         const why = woken.reason || 'unknown'
-        await broadcastToDshPet(
+        await sayConclusionToPet(
           why.includes('no-session')
             ? '我找不到可叫醒的主会话。请先在 Harness 里打开一个对话，再说一遍。'
             : `没叫醒主会话（${why}）。你可以在主会话里直接让我调 glance/act。`,
-          { pet, duration: 12_000 },
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
         )
         log(`agent-bridge 叫醒失败：${why}`)
         return
@@ -134,18 +135,26 @@ export function createAgentBridge(options) {
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       if (options.isAborted?.() || reply.reason === 'aborted') {
-        await broadcastToDshPet('已急停，这轮不动手了。', { pet, duration: 8_000 })
+        await sayConclusionToPet('已急停，这轮不动手了。', {
+          pet,
+          duration: 8_000,
+          memoryPath: options.petMemoryPath,
+        })
         return
       }
       if (reply.ok && reply.text) {
-        await broadcastToDshPet(clipBubble(reply.text), { pet, duration: 14_000 })
-        log(`agent-bridge 已回灌气泡（${reply.text.slice(0, 40)}）`)
+        await sayConclusionToPet(clipBubble(reply.text), {
+          pet,
+          duration: 14_000,
+          memoryPath: options.petMemoryPath,
+        })
+        log(`agent-bridge 已回灌结论（${reply.text.slice(0, 40)}）`)
       } else {
-        await broadcastToDshPet(
+        await sayConclusionToPet(
           reply.reason === 'timeout'
             ? '主会话还在忙或超时了。你可以去主会话看进度，或再说一遍。'
             : '主会话这轮没给出文字结果；去主会话里看看工具有没有跑完。',
-          { pet, duration: 12_000 },
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
         )
         log(`agent-bridge 等待回复：${reply.reason || 'empty'}`)
       }

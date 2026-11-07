@@ -25,7 +25,7 @@ import {
   shouldSkipGlanceBridge,
 } from './intent.js'
 import { runWatch } from './watch-loop.js'
-import { stripTrailingShortAcks } from './pet-chat-memory.js'
+import { sayConclusionToPet, stripTrailingShortAcks } from './pet-chat-memory.js'
 
 /** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
 export function latestWatchPngPath(home) {
@@ -173,7 +173,10 @@ export function createChatBridge(options) {
       pngs.push(shot.png)
     }
     if (!pngs.length) {
-      await broadcastToDshPet('盯完了，但图数据坏了。', { pet })
+      await sayConclusionToPet('盯完了，但图数据坏了。', {
+        pet,
+        memoryPath: options.petMemoryPath,
+      })
       await remember({
         userText,
         shot,
@@ -223,7 +226,11 @@ export function createChatBridge(options) {
         + `共 ${shot.mosaicCount || total} 张拼图。`
         + `附图对话失败（${lastError || 'unknown'}）；请打开 cache/watch-latest.png 看。`
       )
-      await broadcastToDshPet(fallback, { pet, duration: 18_000 })
+      await sayConclusionToPet(fallback, {
+        pet,
+        duration: 18_000,
+        memoryPath: options.petMemoryPath,
+      })
       await remember({
         userText,
         shot,
@@ -246,7 +253,10 @@ export function createChatBridge(options) {
 
   async function deliverShot(userText, shot, t0, promptBuilder = followUpPrompt) {
     if (!shot?.png || !Buffer.isBuffer(shot.png)) {
-      await broadcastToDshPet('抓到了，但图数据坏了。', { pet })
+      await sayConclusionToPet('抓到了，但图数据坏了。', {
+        pet,
+        memoryPath: options.petMemoryPath,
+      })
       await remember({
         userText,
         shot,
@@ -274,7 +284,11 @@ export function createChatBridge(options) {
         `我看了一眼：${where} → ${shot.width}×${shot.height}`
         + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
       )
-      await broadcastToDshPet(fallback, { pet, duration: 14_000 })
+      await sayConclusionToPet(fallback, {
+        pet,
+        duration: 14_000,
+        memoryPath: options.petMemoryPath,
+      })
       await remember({
         userText,
         shot,
@@ -333,7 +347,11 @@ export function createChatBridge(options) {
       } catch (e) {
         const msg = `盯屏没看成：${e?.message ?? e}`
         log(`chat-bridge watch 失败：${msg}`)
-        await broadcastToDshPet(msg, { pet, duration: 12_000 })
+        await sayConclusionToPet(msg, {
+          pet,
+          duration: 12_000,
+          memoryPath: options.petMemoryPath,
+        })
         await remember({
           userText,
           result: 'watch-failed',
@@ -442,7 +460,11 @@ export function createChatBridge(options) {
       } catch (e) {
         const msg = `我去看屏幕了，但没看成：${e?.message ?? e}`
         log(`chat-bridge 抓屏失败：${msg}`)
-        await broadcastToDshPet(msg, { pet, duration: 12_000 })
+        await sayConclusionToPet(msg, {
+          pet,
+          duration: 12_000,
+          memoryPath: options.petMemoryPath,
+        })
         await remember({
           userText,
           result: 'capture-failed',

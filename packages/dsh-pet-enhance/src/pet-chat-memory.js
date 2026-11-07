@@ -1,5 +1,5 @@
 /**
- * 直接读写 dsh-pet 的 memory.json（盯屏分张清短应答；教学结果写入聊天记录）。
+ * 直接读写 dsh-pet 的 memory.json（盯屏分张清短应答；结论性回复写入聊天记录）。
  *
  * @module src/pet-chat-memory.js
  */
@@ -7,6 +7,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { broadcastToDshPet } from './dsh-pet.js'
 
 export function defaultPetMemoryPath() {
   return join(homedir(), '.dsh', 'dsh-pet', 'memory.json')
@@ -87,6 +88,62 @@ export async function appendPetChatMessages(messages, {
     return { ok: false, added: 0, error: String(e?.message ?? e) }
   }
   return { ok: true, added: list.length }
+}
+
+/**
+ * 结论性回复：头顶冒泡 + 写入聊天记录（进度/短应答请继续用 broadcastToDshPet）。
+ * @param {string} text
+ * @param {{
+ *   pet?: string,
+ *   duration?: number,
+ *   lockId?: string,
+ *   surface?: string,
+ *   memoryPath?: string,
+ *   record?: boolean,
+ *   broadcast?: typeof broadcastToDshPet,
+ *   append?: typeof appendPetChatMessages,
+ * }} [opts]
+ * @returns {Promise<{ ok: boolean, recorded: boolean, broadcast?: object, error?: string }>}
+ */
+export async function sayConclusionToPet(text, opts = {}) {
+  const content = String(text ?? '').trim()
+  const pet = opts.pet || 'main'
+  const record = opts.record !== false
+  const broadcast = opts.broadcast ?? broadcastToDshPet
+  const append = opts.append ?? appendPetChatMessages
+  if (!content) {
+    return { ok: false, recorded: false, error: 'empty' }
+  }
+
+  const br = await broadcast(content, {
+    pet,
+    duration: opts.duration ?? 12_000,
+    lockId: opts.lockId,
+    surface: opts.surface,
+  })
+
+  let recorded = false
+  let error
+  // 短应答不落盘，避免「嗯/好」污染最近聊天
+  if (record && !isShortAckReply(content)) {
+    const mem = await append(
+      [{ role: 'assistant', content }],
+      {
+        petId: pet,
+        memoryPath: opts.memoryPath,
+      },
+    ).catch((e) => ({ ok: false, added: 0, error: String(e?.message ?? e) }))
+    recorded = Boolean(mem?.ok && mem.added > 0)
+    if (!mem?.ok) error = mem?.error || 'record-failed'
+  }
+
+  const bubbleOk = br?.ok !== false && br?.data?.ok !== false
+  return {
+    ok: bubbleOk || recorded,
+    recorded,
+    broadcast: br,
+    error,
+  }
 }
 
 /**

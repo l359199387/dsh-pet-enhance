@@ -29,6 +29,7 @@ import {
   resolveDshOrigin,
   setDshPetBaseUrl,
 } from './dsh-pet.js'
+import { sayConclusionToPet } from './pet-chat-memory.js'
 import { createChatBridge } from './chat-bridge.js'
 import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
@@ -689,7 +690,7 @@ function installTools(ctx, log, state) {
                 : code === 'BUDGET_EXCEEDED'
                   ? c3BudgetExceededBubble()
                   : (reason || '这个动作被策略拦住了。'))
-            await broadcastToDshPet(text, { duration: 12_000 })
+            await sayConclusionToPet(text, { duration: 12_000 })
           },
         })
         state.runAct = (args) => actTool.execute(args)
@@ -1081,7 +1082,7 @@ async function openOwnerWorkspaceSession(state, log) {
     log,
   })
   if (!r.ok) {
-    await broadcastToDshPet(
+    await sayConclusionToPet(
       `新开聊天窗失败：${r.reason || '未知'}。也可在 Harness 里点「新建会话」。`,
       { duration: 12_000 },
     )
@@ -1094,7 +1095,7 @@ async function openOwnerWorkspaceSession(state, log) {
       ? `权限已对齐上一窗（${r.permission}）`
       : `权限复制未成功（上一窗 ${r.permission}）`)
     : '上一窗无明确权限可复制'
-  await broadcastToDshPet(
+  await sayConclusionToPet(
     `已新开工作区聊天窗（id=${String(r.sessionId).slice(0, 12)}）。${perm}；模式默认标准。之后交办走这个窗。`,
     { duration: 14_000 },
   )

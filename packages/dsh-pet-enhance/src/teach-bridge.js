@@ -7,7 +7,7 @@
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
-import { appendPetChatMessages } from './pet-chat-memory.js'
+import { appendPetChatMessages, sayConclusionToPet } from './pet-chat-memory.js'
 import { isPetChromeTitle } from './policy.js'
 import {
   isTeachEndIntent,
@@ -647,9 +647,10 @@ export function createTeachBridge(options) {
     if (!teaching || !sessionId) {
       const ran = await tryRunMatchingPlaybook('再做一次刚才教的')
       if (ran) return
-      await broadcastToDshPet('现在不在教学模式。想教我直接说；要跑已建好的自动化也可以说。', {
+      await sayConclusionToPet('现在不在教学模式。想教我直接说；要跑已建好的自动化也可以说。', {
         pet,
         duration: 10_000,
+        memoryPath: options.petMemoryPath,
       })
       return
     }
@@ -673,7 +674,11 @@ export function createTeachBridge(options) {
     })
 
     if (!steps.length) {
-      await broadcastToDshPet('这轮没记到点击或输入。我们再来一次？', { pet, duration: 12_000 })
+      await sayConclusionToPet('这轮没记到点击或输入。我们再来一次？', {
+        pet,
+        duration: 12_000,
+        memoryPath: options.petMemoryPath,
+      })
       await turnOffLiveWatchQuiet()
       frames = null
       sessionId = null
@@ -795,17 +800,25 @@ export function createTeachBridge(options) {
       denied: clarified.denied || [],
     })
 
-    // 6) 学完写进聊天记录（不只头顶气泡）
+    // 6) 学完写进聊天记录（用户句 + 完整结论气泡）
     const notice = buildLearnedChatNotice({
       goal,
       summary: digested.summary || narrative,
       fastPlan,
       id,
     })
+    let bubble = notice
+    if (harness.ok && harness.scheduled) {
+      bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`
+    } else if (harness.ok) {
+      bubble += '\n未设定运行时间（你没说每周几/几点就先不排程）。这次不动手。'
+    } else {
+      bubble += `\nHarness 登记失败：${harness.reason || '无 schedule'}。这次不动手。`
+    }
     const chatMem = await appendPetChatMessages(
       [
         { role: 'user', content: '【教学结束】我教完了' },
-        { role: 'assistant', content: notice },
+        { role: 'assistant', content: bubble },
       ],
       {
         petId: pet,
@@ -822,14 +835,7 @@ export function createTeachBridge(options) {
     await turnOffLiveWatchQuiet()
     frames = null
 
-    let bubble = notice
-    if (harness.ok && harness.scheduled) {
-      bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`
-    } else if (harness.ok) {
-      bubble += '\n未设定运行时间（你没说每周几/几点就先不排程）。这次不动手。'
-    } else {
-      bubble += `\nHarness 登记失败：${harness.reason || '无 schedule'}。这次不动手。`
-    }
+    // 已写入 memory，这里只冒泡（避免重复落盘）
     await broadcastToDshPet(bubble, { pet, duration: 18_000 })
     sessionId = null
   }
@@ -902,7 +908,11 @@ export function createTeachBridge(options) {
           isAborted: () => stopped || Boolean(options.isAborted?.()),
         })
         if (reply.ok && reply.text) {
-          await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })
+          await sayConclusionToPet(clip(reply.text, 160), {
+            pet,
+            duration: 14_000,
+            memoryPath: options.petMemoryPath,
+          })
           await updateTeachMeta(options.home, id, {
             status: 'done',
             via: 'smart',
@@ -929,7 +939,11 @@ export function createTeachBridge(options) {
     if (typeof runAct === 'function' && scriptSteps.length) {
       for (let i = 0; i < scriptSteps.length; i += 1) {
         if (stopped) {
-          await broadcastToDshPet('已急停，教学执行中断。', { pet, duration: 8_000 })
+          await sayConclusionToPet('已急停，教学执行中断。', {
+            pet,
+            duration: 8_000,
+            memoryPath: options.petMemoryPath,
+          })
           await updateTeachMeta(options.home, id, { status: 'aborted' })
           await recordRun(id, {
             via: 'aborted',
@@ -942,7 +956,11 @@ export function createTeachBridge(options) {
         const r = await runAct(stepToActArgs(scriptSteps[i], id))
         if (!r?.meta?.ok) {
           const failText = `脚本第 ${i + 1} 步停了：${clip(r?.text || '失败', 80)}`
-          await broadcastToDshPet(failText, { pet, duration: 12_000 })
+          await sayConclusionToPet(failText, {
+            pet,
+            duration: 12_000,
+            memoryPath: options.petMemoryPath,
+          })
           await updateTeachMeta(options.home, id, { status: 'script-failed' })
           await recordRun(id, {
             via: 'script-failed',
@@ -955,9 +973,10 @@ export function createTeachBridge(options) {
       }
       if (scriptSteps.length && !glanceSteps.length) {
         const doneText = `做完了：${clip(playbook.goal, 40)}（全脚本，未叫醒大模型）`
-        await broadcastToDshPet(doneText, {
+        await sayConclusionToPet(doneText, {
           pet,
           duration: 12_000,
+          memoryPath: options.petMemoryPath,
         })
         await updateTeachMeta(options.home, id, {
           status: 'done',
@@ -976,7 +995,11 @@ export function createTeachBridge(options) {
     }
 
     if (!glanceSteps.length) {
-      await broadcastToDshPet(`记下了，但没有可执行步。`, { pet, duration: 8_000 })
+      await sayConclusionToPet('记下了，但没有可执行步。', {
+        pet,
+        duration: 8_000,
+        memoryPath: options.petMemoryPath,
+      })
       await recordRun(id, {
         via: 'empty',
         ok: false,
@@ -992,11 +1015,11 @@ export function createTeachBridge(options) {
     const woken = await wake(options.ctx, { text: prompt, preferredId: preferred })
     if (!woken.ok) {
       const why = woken.reason || 'unknown'
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         why.includes('no-session')
           ? '脚本步好了，但找不到主会话处理看屏步。请打开一个对话再说去做。'
           : `脚本步好了；看屏步没叫醒主会话（${why}）。`,
-        { pet, duration: 12_000 },
+        { pet, duration: 12_000, memoryPath: options.petMemoryPath },
       )
       await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why })
       await recordRun(id, {
@@ -1015,7 +1038,11 @@ export function createTeachBridge(options) {
       isAborted: () => stopped || Boolean(options.isAborted?.()),
     })
     if (reply.ok && reply.text) {
-      await broadcastToDshPet(clip(reply.text, 160), { pet, duration: 14_000 })
+      await sayConclusionToPet(clip(reply.text, 160), {
+        pet,
+        duration: 14_000,
+        memoryPath: options.petMemoryPath,
+      })
       await updateTeachMeta(options.home, id, {
         status: 'done',
         via: 'script+glance',
@@ -1031,7 +1058,11 @@ export function createTeachBridge(options) {
       const failText = reply.reason === 'timeout'
         ? '看屏步超时了。学习文件和自动化已建好，下次可直接跑。'
         : '看屏步没文字结果；去主会话看看。学习/自动化已存。'
-      await broadcastToDshPet(failText, { pet, duration: 12_000 })
+      await sayConclusionToPet(failText, {
+        pet,
+        duration: 12_000,
+        memoryPath: options.petMemoryPath,
+      })
       await updateTeachMeta(options.home, id, {
         status: reply.reason === 'timeout' ? 'timeout' : 'no-reply',
         endedAt: new Date().toISOString(),
@@ -1058,10 +1089,10 @@ export function createTeachBridge(options) {
     if (!playbook?.steps?.length) return false
 
     if (!actOn(options.home)) {
-      await broadcastToDshPet(
+      await sayConclusionToPet(
         `找到自动化「${clip(playbook.goal, 36)}」，但「允许动手」还没开。`
         + '右键宠物 → 更多 → 允许动手 · 开，然后再说一次「执行一下…」。',
-        { pet, duration: 14_000 },
+        { pet, duration: 14_000, memoryPath: options.petMemoryPath },
       )
       return true
     }

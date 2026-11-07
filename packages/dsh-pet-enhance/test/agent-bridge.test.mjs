@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -20,6 +20,7 @@ import { saveSettings } from '../src/settings.js'
 
 const realFetch = globalThis.fetch
 const home = mkdtempSync(join(tmpdir(), 'glance-agent-'))
+const petMemoryPath = join(home, 'memory.json')
 
 afterEach(() => {
   globalThis.fetch = realFetch
@@ -80,6 +81,7 @@ test('act 关闭时只冒泡提示，不叫醒', async () => {
   const bridge = createAgentBridge({
     ctx: {},
     home,
+    petMemoryPath,
     intervalMs: 60_000,
     log() {},
     wake: async (...args) => { wakes.push(args); return { ok: true, sessionId: 's1' } },
@@ -90,6 +92,8 @@ test('act 关闭时只冒泡提示，不叫醒', async () => {
   await bridge.tick() // should tip, no wake
   assert.equal(wakes.length, 0)
   assert.ok(bubbles.some((t) => String(t).includes('允许动手')))
+  const mem = JSON.parse(readFileSync(petMemoryPath, 'utf8'))
+  assert.match(mem.main.main.messages.at(-1).content, /允许动手/)
 })
 
 test('act 开启后叫醒并回灌气泡', async () => {
@@ -123,6 +127,7 @@ test('act 开启后叫醒并回灌气泡', async () => {
   const bridge = createAgentBridge({
     ctx: {},
     home,
+    petMemoryPath,
     intervalMs: 60_000,
     log() {},
     getPreferredSessionId: () => 'sess-9',
@@ -139,4 +144,6 @@ test('act 开启后叫醒并回灌气泡', async () => {
   assert.ok(String(wakes[0].text).includes('帮我点一下确定'))
   assert.equal(wakes[0].preferredId, 'sess-9')
   assert.ok(bubbles.some((t) => String(t).includes('已经点了确定')))
+  const mem = JSON.parse(readFileSync(petMemoryPath, 'utf8'))
+  assert.match(mem.main.main.messages.at(-1).content, /已经点了确定/)
 })

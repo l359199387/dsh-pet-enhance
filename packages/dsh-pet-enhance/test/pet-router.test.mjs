@@ -79,7 +79,7 @@ test('pet-router：教学中只关心 teach_end', async () => {
 })
 
 test('pet-router：学会了吗 → 未学会时冒泡，不叫醒 agent', async () => {
-  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   const { setDshPetBaseUrl } = await import('../src/dsh-pet.js')
@@ -95,9 +95,11 @@ test('pet-router：学会了吗 → 未学会时冒泡，不叫醒 agent', async
     }
     return { ok: true, status: 200, async json() { return { ok: true } } }
   }
+  const memoryPath = join(home, 'memory.json')
   const router = createPetRouter({
     ctx: {},
     home,
+    petMemoryPath: memoryPath,
     log() {},
     classify: async () => ({ label: 'chat', via: 'local' }),
     chatBridge: { handleIntent: async () => {} },
@@ -111,5 +113,7 @@ test('pet-router：学会了吗 → 未学会时冒泡，不叫醒 agent', async
   await router.route('你学会记录心情了吗?')
   assert.equal(tasked, 0)
   assert.ok(bubbles.some((t) => /还没学会|教我/.test(t)))
+  const mem = JSON.parse(readFileSync(memoryPath, 'utf8'))
+  assert.match(mem.main.main.messages.at(-1).content, /还没学会|教我/)
   rmSync(home, { recursive: true, force: true })
 })
