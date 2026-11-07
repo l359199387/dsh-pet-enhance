@@ -13,6 +13,7 @@ const ZH = Object.freeze({
   'menu.actOn': '允许动手 · 开',
   'menu.actOff': '允许动手 · 关',
   'menu.stop': '小蓝鲸急停',
+  'menu.recentChat': '最近聊天内容',
   'menu.confirmYes': '确认动作 · 好',
   'menu.confirmNo': '确认动作 · 不要',
 
@@ -23,6 +24,9 @@ const ZH = Object.freeze({
   'bubble.greet': '小蓝鲸已接入：随便聊；想看屏幕、教我操作、或让我动手，直接说就行，我会先判断再行动。',
   'bubble.confirmAsk': '需要你确认：{summary}。请点我头顶「好 / 不要」，或右键「更多」里选。',
   'bubble.taskTakeover': '这事我来办——去主会话看屏幕再动手…',
+  'bubble.recentChatOpened': '已在浏览器打开最近聊天（含附图）。',
+  'bubble.recentChatEmpty': '还没有聊天记录。',
+  'bubble.recentChatFail': '打开最近聊天失败：{error}',
 
   'learned.title': '我学会的',
   'learned.sub': '卡片查看学习理解与执行记录；可搜索标题，对执行评价后会改正理解。编辑里的「补充」保存后也会并入理解并清空。',
@@ -86,6 +90,7 @@ const EN = Object.freeze({
   'menu.actOn': 'Allow act · On',
   'menu.actOff': 'Allow act · Off',
   'menu.stop': 'Blue Whale · Stop',
+  'menu.recentChat': 'Recent chat',
   'menu.confirmYes': 'Confirm · OK',
   'menu.confirmNo': 'Confirm · No',
 
@@ -96,6 +101,9 @@ const EN = Object.freeze({
   'bubble.greet': 'Blue Whale online: chat anytime; ask to look, teach me, or act — I’ll route first.',
   'bubble.confirmAsk': 'Need your OK: {summary}. Tap 「好 / 不要」above my head, or More menu.',
   'bubble.taskTakeover': 'I’ll handle this — checking the screen in the main session…',
+  'bubble.recentChatOpened': 'Opened recent chat in your browser (with images).',
+  'bubble.recentChatEmpty': 'No chat history yet.',
+  'bubble.recentChatFail': 'Could not open recent chat: {error}',
 
   'learned.title': 'What I learned',
   'learned.sub': 'Cards show understanding and run history. Search titles; rate a run to refine understanding. Edit → Notes merges into understanding then clears.',
@@ -187,6 +195,7 @@ export function menuLabelsFor(locale, { liveWatch = false, actEnabled = false, p
   const labels = [
     t(locale, liveWatch ? 'menu.liveOn' : 'menu.liveOff'),
     t(locale, actEnabled ? 'menu.actOn' : 'menu.actOff'),
+    t(locale, 'menu.recentChat'),
     t(locale, 'menu.stop'),
   ]
   if (pendingConfirm) {

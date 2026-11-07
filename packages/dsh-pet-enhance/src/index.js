@@ -36,6 +36,7 @@ import { createTeachBridge } from './teach-bridge.js'
 import { createPetRouter } from './pet-router.js'
 import { getLocale, isActEnabled, loadSettings, saveSettings } from './settings.js'
 import { localeTables, menuLabelVariants, t } from './i18n.js'
+import { openRecentChat } from './recent-chat.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { applyDshPetChatGatePatches } from './patch-dsh-pet-chat-gate.js'
@@ -961,6 +962,29 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
       if (menuHit(ev, 'menu.actOn') || menuHit(ev, 'menu.actOff')) {
         await setActEnabled(!actEnabled)
+      }
+      if (menuHit(ev, 'menu.recentChat')) {
+        try {
+          const opened = await openRecentChat({ home, log })
+          if (opened.ok) {
+            await broadcastToDshPet(t(locale, 'bubble.recentChatOpened'), { duration: 6_000 })
+            log(`已打开最近聊天：${opened.path}（${opened.count} 条）`)
+          } else {
+            const key = /还没有聊天/.test(opened.error || '')
+              ? 'bubble.recentChatEmpty'
+              : 'bubble.recentChatFail'
+            await broadcastToDshPet(
+              t(locale, key, { error: opened.error || '未知错误' }),
+              { duration: 8_000 },
+            )
+            log(`打开最近聊天失败：${opened.error}`)
+          }
+        } catch (e) {
+          await broadcastToDshPet(
+            t(locale, 'bubble.recentChatFail', { error: e?.message ?? e }),
+            { duration: 8_000 },
+          )
+        }
       }
       if (menuHit(ev, 'menu.confirmYes') || menuHit(ev, 'menu.confirmNo')) {
         const pending = state.confirmGate?.getPending?.()

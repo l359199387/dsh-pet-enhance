@@ -24,5 +24,7 @@ test('菜单中英文变体都可命中', () => {
   const stops = menuLabelVariants('menu.stop')
   assert.ok(stops.includes('小蓝鲸急停'))
   assert.ok(stops.some((s) => /Stop/i.test(s)))
-  assert.equal(menuLabelsFor('en', { liveWatch: true, actEnabled: false }).length, 3)
+  assert.equal(menuLabelsFor('en', { liveWatch: true, actEnabled: false }).length, 4)
+  assert.ok(menuLabelsFor('zh').includes('最近聊天内容'))
+  assert.ok(menuLabelVariants('menu.recentChat').includes('Recent chat'))
 })
