@@ -129,6 +129,12 @@ const INPUT_REGIONS_NEEDLE =
 const INPUT_REGIONS_REPLACEMENT =
   "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable, .dsh-pet-enhance-confirm, .dsh-pet-enhance-teach-end'),"
 
+const INPUT_REGIONS_LEGACY =
+  "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable, .dsh-glance-confirm'),"
+
+const INPUT_REGIONS_LEGACY_TEACH =
+  "      ...document.querySelectorAll('.dsh-pet-menu-column, .dsh-pet-chat, .dsh-pet-todo, .pet-bubble.is-clickable, .dsh-glance-confirm, .dsh-glance-teach-end'),"
+
 const RENDERER_NEEDLE = '    sprites = [new PetSprite(pet)];\n    window.__dshPetDebug.configOk = true;'
 const RENDERER_REPLACEMENT = [
   '    sprites = [new PetSprite(pet)];',
@@ -427,7 +433,13 @@ export function applyDshPetConfirmPatches(options = {}) {
         }
       }
       if (!raw.includes('.dsh-pet-enhance-confirm')) {
-        if (raw.includes(INPUT_REGIONS_NEEDLE)) {
+        if (raw.includes(INPUT_REGIONS_LEGACY_TEACH)) {
+          raw = raw.replace(INPUT_REGIONS_LEGACY_TEACH, INPUT_REGIONS_REPLACEMENT)
+          changed = true
+        } else if (raw.includes(INPUT_REGIONS_LEGACY)) {
+          raw = raw.replace(INPUT_REGIONS_LEGACY, INPUT_REGIONS_REPLACEMENT)
+          changed = true
+        } else if (raw.includes(INPUT_REGIONS_NEEDLE)) {
           raw = raw.replace(INPUT_REGIONS_NEEDLE, INPUT_REGIONS_REPLACEMENT)
           changed = true
         } else {
