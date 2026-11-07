@@ -75,6 +75,18 @@ class MosaicTests(unittest.TestCase):
         for pt in [(0, 0), (79, 0), (0, 79), (79, 79), (40, 40)]:
             self.assertEqual(out.getpixel(pt), (10, 200, 10), pt)
 
+    def test_sheet_aspect_clamped_for_model(self):
+        """2 帧横屏不再拉出 ~3.5:1 的超扁图（上游会 400 Invalid image）。"""
+        frames = [{"image": Image.new("RGB", (320, 180), (30, 30, 30))} for _ in range(2)]
+        img, meta = mosaic.compose_mosaic(frames, quality="low")
+        aspect = meta["w"] / meta["h"]
+        self.assertGreaterEqual(aspect, mosaic.SHEET_ASPECT_MIN - 1e-6)
+        self.assertLessEqual(aspect, mosaic.SHEET_ASPECT_MAX + 1e-6)
+        self.assertGreaterEqual(meta["w"], mosaic.MIN_SIDE)
+        self.assertGreaterEqual(meta["h"], mosaic.MIN_SIDE)
+        self.assertEqual(img.size, (meta["w"], meta["h"]))
+
+
     def test_stack_vertical(self):
         a = Image.new("RGB", (100, 40), (10, 0, 0))
         b = Image.new("RGB", (80, 30), (0, 10, 0))

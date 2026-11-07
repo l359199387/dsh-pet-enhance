@@ -17,6 +17,10 @@ STRIP = {"low": 12, "standard": 30, "high": 36}
 CELL = 42
 MAX_FRAMES = 4
 DEFAULT_ASPECT = 16 / 9
+# 上游视觉模型常拒收过极端长宽比（实测 Invalid image / 400）；整图夹在此区间
+SHEET_ASPECT_MIN = 0.5
+SHEET_ASPECT_MAX = 2.0
+MIN_SIDE = CELL * 4  # 168
 
 
 def normalize_quality(value: str | None) -> str:
@@ -109,6 +113,7 @@ def sheet_size(
     rows = max(1, int(rows))
     aspect = float(aspect_cell) if aspect_cell and aspect_cell > 0 else DEFAULT_ASPECT
     body_aspect = (cols * aspect) / rows  # body 宽/高
+    body_aspect = min(SHEET_ASPECT_MAX, max(SHEET_ASPECT_MIN, body_aspect))
 
     target_area = float(base_w * base_h)
     # body_w * body_h ≈ target；body_w = body_aspect * body_h
@@ -121,6 +126,10 @@ def sheet_size(
         W -= CELL
     if W < CELL * cols:
         W = CELL * cols
+    if W < MIN_SIDE:
+        W = align_down(MIN_SIDE)
+        while W >= CELL * cols and (W // cols) * cols != W:
+            W += CELL
 
     H = align_down(int(round(h_body + strip)))
     body_h = H - strip
@@ -135,6 +144,10 @@ def sheet_size(
             H = body_h + strip
             if H % CELL != 0:
                 H += CELL - (H % CELL)
+    if H < MIN_SIDE:
+        H = align_down(MIN_SIDE)
+        if (H - strip) < CELL * rows:
+            H = align_down(CELL * rows + strip)
 
     return W, H, strip
 
