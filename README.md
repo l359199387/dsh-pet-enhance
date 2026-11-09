@@ -93,15 +93,18 @@
 
 ## 安装（B2：看得见、能盯窗口、接 dsh-pet 看屏聊天）
 
-本机**没有** `dsh` 命令行，走 GUI：
+本机**没有** `dsh` 命令行，走 GUI（任选其一）：
 
 ```
-Harness「插件」页 → 从目录安装 → 选 packages/dsh-pet-enhance
+Harness「插件」页 → 从 Git 安装 → https://gitee.com/YinchaoLi/dsh-pet-enhance.git
+Harness「插件」页 → 从目录安装 → 选本仓库根目录（含 package.json 的那一层）
 ```
+
+> 仓库根已声明 `dsh.bundle`；不要只选 `packages/` 空目录。本地开发也可选 `packages/dsh-pet-enhance`。
 
 装完重启宿主，检查三处：
 
-1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-pet-enhance`，且 `node_modules/dsh-pet-enhance` 是指向本仓库的链接（逐文件 junction，不是拷贝）；
+1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-pet-enhance`，且 `node_modules/dsh-pet-enhance` 已安装（Git 安装为拷贝/依赖；目录安装可为指向本仓库的链接）；
 2. 打开任意会话应看到小蓝鲸（未装 dsh-pet 时是右下角 SVG；**已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时**左下角控制条，形象由 dsh-pet 渲染——我们不拷贝它的 CC BY-NC-SA 素材）；
 3. 新会话里说「看一眼我屏幕」→ `glance` 出图；卸载后工具与宠物消失、无残留 `python` 进程。外部浏览器直接打开 `/api/pet-enhance/status` 会 401，属正常。
 

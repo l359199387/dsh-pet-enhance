@@ -85,17 +85,14 @@ UI language (中文 / English) can be switched inside the **Learned** panel; def
 
 ## Install
 
-This machine uses the GUI path (no `dsh` CLI required):
+GUI path (no `dsh` CLI required) — either:
 
 ```
-Harness → Plugins → Install from folder → packages/dsh-pet-enhance
+Harness → Plugins → Install from Git → https://gitee.com/YinchaoLi/dsh-pet-enhance.git
+Harness → Plugins → Install from folder → repo root (the folder that contains package.json)
 ```
 
-Path example:
-
-```
-c:\deepseekwork\firstwork\packages\dsh-pet-enhance
-```
+The repo root declares `dsh.bundle`. Local development may also use `packages/dsh-pet-enhance`.
 
 After install, restart the host and check:
 
