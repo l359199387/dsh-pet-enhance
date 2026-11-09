@@ -7,6 +7,7 @@ import {
   constraintsFromNotes,
   localMergeOwnerNotes,
   localMergeRunFeedback,
+  notesAlreadyCovered,
   parseMergedSummary,
   LEARNED_MERGE_PREFIX,
 } from '../src/learned-merge.js'
@@ -56,4 +57,12 @@ test('localMergeOwnerNotes / localMergeRunFeedback / constraintsFromNotes', () =
     constraintsFromNotes('用日期.txt\n同一天复用', ['已有']),
     ['已有', '用日期.txt', '同一天复用'],
   )
+  assert.equal(
+    notesAlreadyCovered(
+      '另据主人补充：用日期.txt 内部用日期_时间形式 同一天的用同一个文件复用编写',
+      '用日期.txt 内部用日期_时间形式 同一天的用同一个文件复用编写。',
+    ),
+    true,
+  )
+  assert.equal(notesAlreadyCovered('旧理解', '全新约束某某'), false)
 })

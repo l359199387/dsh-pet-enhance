@@ -26,8 +26,13 @@ import {
   constraintsFromNotes,
   localMergeOwnerNotes,
   localMergeRunFeedback,
+  notesAlreadyCovered,
   parseMergedSummary,
+  withTimeout,
 } from './learned-merge.js'
+
+/** 编辑/评价归纳：主会话最多等这么久，超时立刻本地回落。 */
+const MERGE_LLM_TIMEOUT_MS = 20_000
 import {
   getLearnedRun,
   listLearnedRuns,
@@ -211,46 +216,64 @@ export async function updateLearnedPair(home, id, patch = {}, opts = {}) {
   const shouldMerge = opts.mergeNotes !== false && Boolean(notesText)
 
   if (shouldMerge) {
-    const wake = opts.wake ?? wakeSession
-    const waitReply = opts.waitReply ?? waitAssistantReply
-    const prompt = buildOwnerNotesMergePrompt({
-      goal: learn.goal,
-      summary: learn.understanding?.summary || '',
-      ownerNotes: learn.ownerNotes,
-    })
+    const prevSummary = String(learn.understanding?.summary || '')
     let mergedSummary = ''
     let via = 'llm'
-    try {
-      if (opts.ctx) {
-        const woken = await wake(opts.ctx, {
-          text: prompt,
-          preferredId: opts.preferredSessionId || null,
-          log,
-        })
-        if (!woken.ok) {
-          mergeInfo.reason = woken.reason || 'wake-failed'
-          log(`归纳学习理解未叫醒：${mergeInfo.reason}`)
-        } else {
-          const reply = await waitReply(opts.ctx, woken.sessionId, { timeoutMs: 90_000 })
-          mergedSummary = parseMergedSummary(reply.ok ? reply.text : '')
+
+    // 要点已在理解里 → 不再叫醒（避免「归纳中」空等）
+    if (notesAlreadyCovered(prevSummary, notesText)) {
+      mergedSummary = prevSummary
+      via = 'already'
+      mergeInfo.reason = null
+      log('归纳学习理解：补充已覆盖，跳过叫醒')
+    } else {
+      const wake = opts.wake ?? wakeSession
+      const waitReply = opts.waitReply ?? waitAssistantReply
+      const prompt = buildOwnerNotesMergePrompt({
+        goal: learn.goal,
+        summary: prevSummary,
+        ownerNotes: learn.ownerNotes,
+      })
+      try {
+        if (opts.ctx) {
+          const llm = (async () => {
+            const woken = await wake(opts.ctx, {
+              text: prompt,
+              preferredId: opts.preferredSessionId || null,
+              log,
+            })
+            if (!woken.ok) {
+              return { summary: '', reason: woken.reason || 'wake-failed' }
+            }
+            const reply = await waitReply(opts.ctx, woken.sessionId, {
+              timeoutMs: MERGE_LLM_TIMEOUT_MS,
+            })
+            const summary = parseMergedSummary(reply.ok ? reply.text : '')
+            return {
+              summary,
+              reason: summary ? null : (reply.reason || 'empty-summary'),
+            }
+          })()
+          const out = await withTimeout(llm, MERGE_LLM_TIMEOUT_MS + 2_000, 'merge-timeout')
+          mergedSummary = out.summary || ''
           if (!mergedSummary) {
-            mergeInfo.reason = reply.reason || 'empty-summary'
+            mergeInfo.reason = out.reason || 'empty-summary'
             log(`归纳学习理解无 SUMMARY：${mergeInfo.reason}`)
           }
+        } else {
+          mergeInfo.reason = 'no-ctx'
         }
-      } else {
-        mergeInfo.reason = 'no-ctx'
+      } catch (e) {
+        mergeInfo.reason = String(e?.message ?? e).slice(0, 160)
+        log(`归纳学习理解失败：${mergeInfo.reason}`)
       }
-    } catch (e) {
-      mergeInfo.reason = String(e?.message ?? e).slice(0, 160)
-      log(`归纳学习理解失败：${mergeInfo.reason}`)
-    }
 
-    if (!mergedSummary) {
-      mergedSummary = localMergeOwnerNotes(learn.understanding?.summary || '', notesText)
-      via = 'local'
-      if (!mergeInfo.reason) mergeInfo.reason = 'local-fallback'
-      log(`归纳学习理解回落本地合并（${mergeInfo.reason}）`)
+      if (!mergedSummary) {
+        mergedSummary = localMergeOwnerNotes(prevSummary, notesText)
+        via = 'local'
+        if (!mergeInfo.reason) mergeInfo.reason = 'local-fallback'
+        log(`归纳学习理解回落本地合并（${mergeInfo.reason}）`)
+      }
     }
 
     if (mergedSummary) {
@@ -374,21 +397,27 @@ export async function rateLearnedRun(home, id, runId, body = {}, opts = {}) {
   })
   try {
     if (opts.ctx) {
-      const woken = await wake(opts.ctx, {
-        text: prompt,
-        preferredId: opts.preferredSessionId || null,
-        log,
-      })
-      if (!woken.ok) {
-        mergeReason = woken.reason || 'wake-failed'
-        log(`执行评价归纳未叫醒：${mergeReason}`)
-      } else {
-        const reply = await waitReply(opts.ctx, woken.sessionId, { timeoutMs: 90_000 })
-        newSummary = parseMergedSummary(reply.ok ? reply.text : '')
-        if (!newSummary) {
-          mergeReason = reply.reason || 'empty-summary'
+      const llm = (async () => {
+        const woken = await wake(opts.ctx, {
+          text: prompt,
+          preferredId: opts.preferredSessionId || null,
+          log,
+        })
+        if (!woken.ok) {
+          return { summary: '', reason: woken.reason || 'wake-failed' }
         }
-      }
+        const reply = await waitReply(opts.ctx, woken.sessionId, {
+          timeoutMs: MERGE_LLM_TIMEOUT_MS,
+        })
+        const summary = parseMergedSummary(reply.ok ? reply.text : '')
+        return {
+          summary,
+          reason: summary ? null : (reply.reason || 'empty-summary'),
+        }
+      })()
+      const out = await withTimeout(llm, MERGE_LLM_TIMEOUT_MS + 2_000, 'merge-timeout')
+      newSummary = out.summary || ''
+      if (!newSummary) mergeReason = out.reason || 'empty-summary'
     } else {
       mergeReason = 'no-ctx'
     }

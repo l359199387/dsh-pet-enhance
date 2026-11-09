@@ -1511,6 +1511,10 @@ window.__ModuleLoader__.load({
         setBusy(true)
         setError('')
         setStatus(tt('learned.saveBusy'))
+        const ac = typeof AbortController !== 'undefined' ? new AbortController() : null
+        const timer = ac
+          ? setTimeout(() => { try { ac.abort() } catch { /* ignore */ } }, 35_000)
+          : null
         try {
           const res = await fetch(`${API}/learned/${encodeURIComponent(editItem.id)}`, {
             method: 'PATCH',
@@ -1521,6 +1525,7 @@ window.__ModuleLoader__.load({
               ownerNotes: draft.ownerNotes,
               mergeNotes: true,
             }),
+            signal: ac?.signal,
           })
           const body = await res.json().catch(() => ({}))
           if (!res.ok || !body.ok) throw new Error(body.rejected?.[0] || 'save failed')
@@ -1532,9 +1537,13 @@ window.__ModuleLoader__.load({
           setEditItem(null)
           await reload()
         } catch (e) {
-          setError(String(e?.message || e))
+          const msg = e?.name === 'AbortError'
+            ? '归纳超时，请再点一次保存（会改用本地合并）'
+            : String(e?.message || e)
+          setError(msg)
           setStatus('')
         } finally {
+          if (timer) clearTimeout(timer)
           setBusy(false)
         }
       }

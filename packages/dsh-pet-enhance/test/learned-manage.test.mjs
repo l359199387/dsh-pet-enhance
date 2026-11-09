@@ -89,6 +89,30 @@ test('update：模型失败时本地回落合并补充', async () => {
   assert.match(r.detail.understanding, /日期\.txt|复用/)
 })
 
+test('update：补充已在理解中则跳过叫醒', async () => {
+  const id = 'learn-upd-covered'
+  await seed(id, '记录心情')
+  // 先写入含补充的理解
+  const { readLearned, learnedPaths } = await import('../src/learned-automation.js')
+  const { writeFile } = await import('node:fs/promises')
+  const learn = await readLearned(home, id)
+  learn.understanding.summary = '旧理解。另据主人补充：用日期.txt 复用'
+  await writeFile(learnedPaths(home, id).learn, `${JSON.stringify(learn, null, 2)}\n`, 'utf8')
+  let woke = 0
+  const r = await updateLearnedPair(home, id, {
+    ownerNotes: '用日期.txt 复用',
+  }, {
+    ctx: { get() { return null } },
+    async wake() { woke += 1; return { ok: true, sessionId: 'x' } },
+    async waitReply() { return { ok: true, text: 'SUMMARY: 不该到这' } },
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.merged, true)
+  assert.equal(r.mergeVia, 'already')
+  assert.equal(woke, 0)
+  assert.equal(r.detail.ownerNotes, '')
+})
+
 test('delete：清本地目录；无 scheduleId 不调 schedule.delete', async () => {
   const id = 'learn-del-1'
   await seed(id)

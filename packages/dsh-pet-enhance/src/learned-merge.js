@@ -126,3 +126,44 @@ export function constraintsFromNotes(notes, prev = []) {
     .map((c) => c.slice(0, 120))
   return [...new Set([...base, ...chunks])].slice(0, 12)
 }
+
+/**
+ * 补充要点是否已出现在理解正文里（避免重复叫醒卡住）。
+ * @param {string} summary
+ * @param {string} notes
+ */
+export function notesAlreadyCovered(summary, notes) {
+  const s = String(summary || '')
+  if (!s.trim()) return false
+  const chunks = String(notes || '')
+    .split(/[\n；;。！？]+/)
+    .map((c) => c.replace(/\s+/g, ' ').trim())
+    .filter((c) => c.length >= 4)
+  if (!chunks.length) {
+    const n = String(notes || '').replace(/\s+/g, ' ').trim()
+    if (n.length < 4) return false
+    return s.includes(n.slice(0, Math.min(16, n.length)))
+  }
+  return chunks.every((c) => s.includes(c.slice(0, Math.min(16, c.length))))
+}
+
+/**
+ * 给一次 LLM 归纳包硬超时，避免 PATCH 一直挂起。
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} [reason]
+ * @returns {Promise<T>}
+ */
+export function withTimeout(promise, ms, reason = 'timeout') {
+  const limit = Number(ms) > 0 ? Number(ms) : 20_000
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error(reason), { code: 'TIMEOUT' }))
+    }, limit)
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
