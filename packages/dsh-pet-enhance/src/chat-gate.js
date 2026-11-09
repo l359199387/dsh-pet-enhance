@@ -37,7 +37,7 @@ export function ackForLabel(label, locale = 'zh', text = '') {
       }
       return '好，我瞅一眼…'
     case 'teach':
-      return '好，我们对话带教：你说目标，我动手；做成了告诉我，不对就纠正我。'
+      return '好，一步一步教：你说这一步，我只做这一步。'
     case 'teach_coach':
       return '嗯，我听着呢…'
     case 'teach_end':

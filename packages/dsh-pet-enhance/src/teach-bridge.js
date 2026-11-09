@@ -13,7 +13,7 @@ import {
   TEACH_FOLLOWUP_PREFIX,
   AGENT_WAKE_PREFIX,
 } from './intent.js'
-import { classifyCoachUtterance } from './coach-intent.js'
+import { classifyCoachUtterance, extractCoachGoal } from './coach-intent.js'
 import { appendCoachLog, promoteCoachLog, readCoachLog } from './coach-log.js'
 import {
   buildCoachInducePrompt,
@@ -350,14 +350,6 @@ export function createTeachBridge(options) {
     callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
   }
 
-  function parseGoalFromTeachStart(userText) {
-    return String(userText)
-      .replace(/我?教你一下|教你一遍|教你一回|带教|开始带教|开始教学|进入教学|跟我学一遍|跟我学一下|学一下我的操作|看我做一遍|看我做一下|教你(?:怎么|如何)?做/gi, '')
-      .replace(/^[，,。.\s]+|[，,。.\s]+$/g, '')
-      .trim()
-      || '完成主人要教的这件事'
-  }
-
   async function wakeCoachRound(userText) {
     const preferred = options.getPreferredSessionId?.() ?? null
     const prepared = await prepareSession(options.ctx, {
@@ -428,14 +420,21 @@ export function createTeachBridge(options) {
       return
     }
 
-    goal = parseGoalFromTeachStart(userText)
+    const preferred = options.getPreferredSessionId?.() ?? null
+    goal = await extractCoachGoal(options.ctx, userText, {
+      preferredId: preferred,
+      wake,
+      waitReply,
+      log,
+      fallback: '完成主人要教的这件事',
+    })
     sessionId = newTeachSessionId()
     constraints = []
-    attemptCount = 1
+    attemptCount = 0
     await createTeachSession(options.home, sessionId, { goal, mode: 'coach' })
     await updateTeachMeta(options.home, sessionId, { status: 'coaching', mode: 'coach' })
     await appendCoachLog(options.home, sessionId, {
-      kind: 'clarify',
+      kind: 'open',
       text: userText,
       goal,
     })
@@ -447,12 +446,12 @@ export function createTeachBridge(options) {
     }).catch(() => {})
 
     await broadcastToDshPet(
-      `好，对话带教开始。目标：${clip(goal, 40)}。`
-      + '我动手做；你用话说纠正。做成了告诉我一声，我会记下来；不想教了就说放弃。尽量少点鼠标。',
-      { pet, duration: 14_000 },
+      `好，目标我理解成「${clip(goal, 40)}」。`
+      + '请继续告诉我这一步做什么；我会按你的话一步步做，不会自己把整件事做完。'
+      + '做成了告诉我；不想教了可以说放弃。',
+      { pet, duration: 16_000 },
     )
-    log(`coach：开始 ${sessionId} goal=${goal}`)
-    await wakeCoachRound(userText)
+    log(`coach：开始 ${sessionId} goal=${goal}（开场只抽目标，不叫醒动手）`)
   }
 
   async function finishCoachAbort(userText) {
@@ -704,7 +703,7 @@ export function createTeachBridge(options) {
   }
 
   /**
-   * 带教中每一句：模型分流 done/abort/correct/guide。
+   * 带教中每一句：模型分流 done/abort/correct/step/open。
    * @param {string} userText
    */
   async function handleCoachUtterance(userText) {
@@ -742,27 +741,35 @@ export function createTeachBridge(options) {
         await finishCoachAbort(text)
         return
       }
-      if (label === 'correct') {
-        constraints.push(clip(text, 120))
-        constraints = [...new Set(constraints)].slice(0, 12)
+      if (label === 'correct' || label === 'step') {
+        if (label === 'correct') {
+          constraints.push(clip(text, 120))
+          constraints = [...new Set(constraints)].slice(0, 12)
+        }
         attemptCount += 1
         await appendCoachLog(options.home, sessionId, {
-          kind: 'correct',
+          kind: label,
           text,
           attemptCount,
         })
-        await broadcastToDshPet('收到纠正，我按你说的再试…', { pet, duration: 6_000 })
+        await broadcastToDshPet(
+          label === 'correct' ? '收到纠正，我按你说的改这一步…' : '好，我按你这一步来…',
+          { pet, duration: 6_000 },
+        )
         await wakeCoachRound(text)
         return
       }
 
-      attemptCount += 1
+      // open（或无法解析回落）：模型认为尚无具体一步 → 不动手
       await appendCoachLog(options.home, sessionId, {
-        kind: 'guide',
+        kind: 'open',
         text,
-        attemptCount,
+        label,
       })
-      await wakeCoachRound(text)
+      await broadcastToDshPet(
+        `目标仍是「${clip(goal, 36)}」。请再说这一步要我做什么；我不会自己把整件事做完。`,
+        { pet, duration: 12_000 },
+      )
     } finally {
       coachBusy = false
     }

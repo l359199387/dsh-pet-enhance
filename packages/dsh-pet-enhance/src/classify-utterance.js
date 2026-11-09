@@ -65,12 +65,12 @@ export function formatLearnedGoalsForClassify(goals, limit = 12) {
 export function buildClassifyPrompt(userText, { teaching = false, learnedGoals = [] } = {}) {
   const clipped = String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
   if (teaching) {
-    // 带教中细分流交给 coach-intent（模型理解 done/abort/correct/guide）；
+    // 带教中细分流交给 coach-intent（done/abort/correct/step/open）；
     // 闸门侧只需识别仍在带教会话，统一交给 teachBridge.handleCoachUtterance。
     return (
       `${CLASSIFY_PREFIX}`
       + '当前在对话带教中。只输出一个标签词，禁止工具与解释：'
-      + 'teach_coach=带教中的任何话（做成了/纠正/放弃/继续说明都算，由下游再理解）；'
+      + 'teach_coach=带教中的任何话（由下游模型再理解是否动手）；'
       + 'chat=明显与带教无关的闲聊。'
       + `用户：「${clipped}」`
     )

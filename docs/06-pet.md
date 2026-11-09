@@ -132,7 +132,7 @@
   - `teach` / `teach_coach` → **对话带教**（见 [11](11-teach-refactor.md)）；`chat` → 闲聊已关时仍可由闸门处理「学会了吗 / 再做一次」。
 - **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/pet-enhance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
 - **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/pet-enhance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
-- **对话带教 → 学会（1:1）**：说「我教你…」进入带教（须开「允许动手」；**不再**录鼠标/关键帧/「我教完了」）。它动手，你用对话纠正；意图由模型判 `done/abort/correct/guide`（不写死口令）。说做成了 → 文字归纳 LEARN v2 + 长期 `coach-log.jsonl` → learned↔automations（`approach=smart`）。**未明说每周几/几点 → 不向 Harness 排程**。用户再说「去看看B站 / 再做一次」→ 匹配目标、**重置动作预算**、优先读 understanding 变通执行。教完不自动再跑。细节见 [11-teach-refactor.md](11-teach-refactor.md)。
+- **对话带教 → 学会（1:1）**：说「我教你…」进入带教（须开「允许动手」；**不再**录鼠标/关键帧/「我教完了」）。它动手，你用对话纠正；意图由模型判 `done/abort/correct/step/open`（不写死口令）。说做成了 → 文字归纳 LEARN v2 + 长期 `coach-log.jsonl` → learned↔automations（`approach=smart`）。**未明说每周几/几点 → 不向 Harness 排程**。用户再说「去看看B站 / 再做一次」→ 匹配目标、**重置动作预算**、优先读 understanding 变通执行。教完不自动再跑。细节见 [11-teach-refactor.md](11-teach-refactor.md)。
 - **语言**：`settings.locale` 默认 `zh`；侧栏「我学会的」可切中/英；菜单与常用气泡跟语言走（`GET/PATCH /api/pet-enhance/settings`、`GET /api/pet-enhance/i18n`）。
 - **侧栏「我学会的」**（`sidebar.panellist` + `main` key=`pet-enhance-learned`）：卡片格子 + 序号 + 标题模糊搜索；展示**学习理解**与**执行记录**（跑自动化时写入 `learned/<id>/runs.json`）。每条记录可评「好/一般/差」并写评语，`POST /api/pet-enhance/learned/:id/runs/:runId/rate` 叫醒模型改正理解。编辑弹窗可改目标 / 填**补充**（保存后并入理解并清空）；删除弹窗二次确认，联动清 `learned`+`automations`+skill，若有 `scheduleId` 则 `schedule.delete`。
 - 每次看屏追加 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。

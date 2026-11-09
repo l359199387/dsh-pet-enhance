@@ -32,8 +32,14 @@ test('对话带教：做成了 → LEARN v2 + coach-log，不录宏不喂图', a
     },
     waitReply: async (_ctx, _sid, _opts) => {
       const last = wakes[wakes.length - 1] || ''
-      if (last.includes('带教分流') || last.includes('COACH_CLASSIFY') || last.includes('【小蓝鲸带教分流】')) {
-        return { ok: true, text: 'done' }
+      if (last.includes('带教抽目标')) {
+        return { ok: true, text: 'GOAL: 把今天心情写到桌面' }
+      }
+      if (last.includes('带教分流')) {
+        if (/可以了|记下来|做成了/.test(last)) return { ok: true, text: 'done' }
+        if (/算了|不教了/.test(last)) return { ok: true, text: 'abort' }
+        if (/先在桌面|创建/.test(last)) return { ok: true, text: 'step' }
+        return { ok: true, text: 'open' }
       }
       if (last.includes('带教归纳')) {
         return { ok: true, text: 'OK: 写今日桌面笔记\nFAST: 用写文件创建今日笔记' }
@@ -42,16 +48,21 @@ test('对话带教：做成了 → LEARN v2 + coach-log，不录宏不喂图', a
         return { ok: true, text: 'NONE' }
       }
       if (last.includes('对话带教')) {
-        return { ok: true, text: '我已经按你的目标试着做了。' }
+        return { ok: true, text: '本步做好了，等你下一步。' }
       }
-      return { ok: true, text: 'guide' }
+      return { ok: true, text: 'ok' }
     },
   })
 
   try {
     await bridge.startTeaching('我教你一下把今天心情写到桌面')
     assert.equal(bridge.isTeaching(), true)
-    assert.ok(wakes.some((t) => t.includes('对话带教')), '应叫醒带教动手')
+    assert.ok(wakes.some((t) => t.includes('带教抽目标')), '开场应抽目标')
+    assert.ok(!wakes.some((t) => t.includes('可执行的本步指示')), '开场不应叫醒动手')
+
+    wakes.length = 0
+    await bridge.handleCoachUtterance('先在桌面创建一个心情记录文件')
+    assert.ok(wakes.some((t) => t.includes('可执行的本步指示')), 'step 应叫醒动手')
     assert.ok(!wakes.some((t) => /图内坐标|2×2|拼图/.test(t)), '不应喂教学拼图')
 
     await bridge.handleCoachUtterance('可以了，记下来吧')
@@ -76,6 +87,36 @@ test('对话带教：做成了 → LEARN v2 + coach-log，不录宏不喂图', a
   }
 })
 
+test('对话带教：模型判 open → 不动手', async () => {
+  await saveSettings(home, { actEnabled: true })
+  const wakes = []
+  const bridge = createTeachBridge({
+    home,
+    ctx: { get: () => null },
+    log() {},
+    pollChat: false,
+    getPreferredSessionId: () => 'sess-open',
+    prepareSession: async () => ({ sessionId: 'so', fresh: true }),
+    wake: async (_ctx, opts) => {
+      wakes.push(String(opts.text || ''))
+      return { ok: true, sessionId: 'so' }
+    },
+    waitReply: async () => {
+      const last = wakes[wakes.length - 1] || ''
+      if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 记录今日心情' }
+      if (last.includes('带教分流')) return { ok: true, text: 'open' }
+      return { ok: true, text: 'ok' }
+    },
+  })
+
+  await bridge.startTeaching('现在我开始教你记录今日心情')
+  wakes.length = 0
+  await bridge.handleCoachUtterance('好了开始吧')
+  assert.ok(!wakes.some((t) => t.includes('可执行的本步指示')), 'open 不应叫醒动手')
+  assert.equal(bridge.isTeaching(), true)
+  bridge.stop()
+})
+
 test('对话带教：模型判 abort → 不落学会', async () => {
   await saveSettings(home, { actEnabled: true })
   const wakes = []
@@ -92,8 +133,9 @@ test('对话带教：模型判 abort → 不落学会', async () => {
     },
     waitReply: async () => {
       const last = wakes[wakes.length - 1] || ''
+      if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 打开记事本' }
       if (last.includes('带教分流')) return { ok: true, text: 'abort' }
-      return { ok: true, text: '先做着' }
+      return { ok: true, text: 'ok' }
     },
   })
 

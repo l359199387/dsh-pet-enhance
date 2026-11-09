@@ -134,6 +134,9 @@ export function shouldSkipAgentBridge(text) {
 export {
   COACH_LABELS,
   buildCoachClassifyPrompt,
+  buildCoachGoalExtractPrompt,
   parseCoachClassifyLabel,
+  parseCoachGoalReply,
   classifyCoachUtterance,
+  extractCoachGoal,
 } from './coach-intent.js'

@@ -2,52 +2,58 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   buildCoachClassifyPrompt,
+  buildCoachGoalExtractPrompt,
   classifyCoachUtterance,
   COACH_CLASSIFY_PREFIX,
+  extractCoachGoal,
   parseCoachClassifyLabel,
+  parseCoachGoalReply,
 } from '../src/coach-intent.js'
 
-test('buildCoachClassifyPrompt：要求模型判标签且不写死口令', () => {
+test('buildCoachClassifyPrompt：五类标签且要求语义理解', () => {
   const p = buildCoachClassifyPrompt('弄好了帮我记一下', { goal: '写桌面笔记' })
   assert.ok(p.startsWith(COACH_CLASSIFY_PREFIX))
-  assert.match(p, /done=/)
-  assert.match(p, /abort=/)
-  assert.match(p, /correct=/)
-  assert.match(p, /guide=/)
+  assert.match(p, /\bdone=/)
+  assert.match(p, /\babort=/)
+  assert.match(p, /\bcorrect=/)
+  assert.match(p, /\bstep=/)
+  assert.match(p, /\bopen=/)
   assert.match(p, /不要死抠固定口令/)
-  assert.match(p, /写桌面笔记/)
-  assert.match(p, /弄好了帮我记一下/)
+  assert.doesNotMatch(p, /guide=/)
 })
 
-test('parseCoachClassifyLabel：解析模型输出标签', () => {
-  assert.equal(parseCoachClassifyLabel('done'), 'done')
-  assert.equal(parseCoachClassifyLabel('标签：abort'), 'abort')
-  assert.equal(parseCoachClassifyLabel('correct\n顺便说一句'), 'correct')
-  assert.equal(parseCoachClassifyLabel('guide'), 'guide')
+test('parseCoachClassifyLabel：只解析模型英文标签', () => {
+  assert.equal(parseCoachClassifyLabel('step'), 'step')
+  assert.equal(parseCoachClassifyLabel('标签：open'), 'open')
+  assert.equal(parseCoachClassifyLabel('done\n'), 'done')
+  assert.equal(parseCoachClassifyLabel('guide'), 'open')
+  assert.equal(parseCoachClassifyLabel('做成了'), null)
   assert.equal(parseCoachClassifyLabel(''), null)
-  assert.equal(parseCoachClassifyLabel('乱七八糟'), null)
 })
 
-test('classifyCoachUtterance：走模型，空句 guide；失败回落 guide', async () => {
-  assert.equal(await classifyCoachUtterance({}, ''), 'guide')
-
-  const label = await classifyCoachUtterance({}, '随便说说', {
-    wake: async () => ({ ok: false, reason: 'no-session' }),
-    log: () => {},
-  })
-  assert.equal(label, 'guide')
-
-  const done = await classifyCoachUtterance({}, '这回可以收工了', {
+test('parseCoachGoalReply / extractCoachGoal', async () => {
+  assert.equal(parseCoachGoalReply('GOAL: 记录今天心情'), '记录今天心情')
+  const goal = await extractCoachGoal({}, '现在我开始教你记录今天的心情', {
     wake: async () => ({ ok: true, sessionId: 's1' }),
-    waitReply: async () => ({ ok: true, text: 'done' }),
+    waitReply: async () => ({ ok: true, text: 'GOAL: 记录今天的心情' }),
     log: () => {},
   })
-  assert.equal(done, 'done')
+  assert.equal(goal, '记录今天的心情')
+})
 
-  const correct = await classifyCoachUtterance({}, '刚才那个步骤换一种', {
-    wake: async () => ({ ok: true, sessionId: 's1' }),
-    waitReply: async () => ({ ok: true, text: 'correct' }),
+test('classifyCoachUtterance：走模型；失败回落 open', async () => {
+  assert.equal(await classifyCoachUtterance({}, ''), 'open')
+  assert.equal(await classifyCoachUtterance({}, 'x', {
+    wake: async () => ({ ok: false, reason: 'no' }),
     log: () => {},
-  })
-  assert.equal(correct, 'correct')
+  }), 'open')
+  assert.equal(await classifyCoachUtterance({}, '先打开记事本', {
+    wake: async () => ({ ok: true, sessionId: 's1' }),
+    waitReply: async () => ({ ok: true, text: 'step' }),
+    log: () => {},
+  }), 'step')
+})
+
+test('buildCoachGoalExtractPrompt', () => {
+  assert.match(buildCoachGoalExtractPrompt('我教你保存'), /GOAL:/)
 })
