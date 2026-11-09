@@ -87,3 +87,35 @@ test('buildRunFeedbackMergePrompt', () => {
   assert.match(p, /别盲点/)
   assert.equal(parseMergedSummary('SUMMARY: 新理解'), '新理解')
 })
+
+test('评价：模型失败时本地回落改正理解', async () => {
+  const id = 'run-local-1'
+  const playbook = buildPlaybook('记录心情', [
+    { action: 'type', text: 'ok', window: '记事本' },
+  ], id)
+  await createLearnedAutomationPair(home, {
+    id,
+    goal: '记录心情',
+    teachSessionId: id,
+    understanding: { summary: '每次新建日期_时间文件', stats: playbook.stats, clarified: [] },
+    evidence: [],
+    playbook,
+  })
+  const run = await appendLearnedRun(home, id, {
+    via: 'smart',
+    ok: true,
+    summary: '又新建了一个文件',
+  })
+  const r = await rateLearnedRun(home, id, run.id, {
+    rating: 'ok',
+    comment: '同一天的需要在同一个文件中,文件名用日期.txt',
+  }, {
+    ctx: { get() { return null } },
+    async wake() { return { ok: false, reason: 'no' } },
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.merged, true)
+  assert.equal(r.mergeVia, 'local')
+  assert.equal(r.detail.runs[0].refined, true)
+  assert.match(r.detail.understanding, /日期\.txt|同一个文件/)
+})

@@ -518,7 +518,7 @@ async function handle(req, res, connection, log, state) {
       rating: body.rating,
       comment: body.comment,
     }, {
-      ctx: state.hostCtx,
+      ctx: state.hostCtx || state.chatGateCtx || {},
       log,
       preferredSessionId: state.lastSessionId || null,
     })
@@ -568,7 +568,7 @@ async function handle(req, res, connection, log, state) {
       if (body.goal != null) patch.goal = body.goal
       if (body.ownerNotes != null) patch.ownerNotes = body.ownerNotes
       const r = await updateLearnedPair(glanceHome(), id, patch, {
-        ctx: state.hostCtx,
+        ctx: state.hostCtx || state.chatGateCtx || {},
         log,
         preferredSessionId: state.lastSessionId || null,
         mergeNotes: body.mergeNotes !== false,

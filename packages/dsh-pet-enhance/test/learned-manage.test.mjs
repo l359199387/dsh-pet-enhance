@@ -73,6 +73,22 @@ test('list / update：改 goal 与主人想法；有想法时归纳理解', asyn
   assert.equal(idx.find((x) => x.id === id)?.goal, '新目标')
 })
 
+test('update：模型失败时本地回落合并补充', async () => {
+  const id = 'learn-upd-local'
+  await seed(id, '记录心情')
+  const r = await updateLearnedPair(home, id, {
+    ownerNotes: '同一天用同一个 日期.txt 复用编写',
+  }, {
+    ctx: { get() { return null } },
+    async wake() { return { ok: false, reason: 'no-session' } },
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.merged, true)
+  assert.equal(r.mergeVia, 'local')
+  assert.equal(r.detail.ownerNotes, '')
+  assert.match(r.detail.understanding, /日期\.txt|复用/)
+})
+
 test('delete：清本地目录；无 scheduleId 不调 schedule.delete', async () => {
   const id = 'learn-del-1'
   await seed(id)
