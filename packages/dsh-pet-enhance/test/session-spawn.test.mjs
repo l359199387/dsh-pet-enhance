@@ -8,10 +8,13 @@ import {
   applySessionReasoningEffort,
   applySessionTitle,
   applyStandardTranscriptMode,
+  applyWorkspaceName,
   clipSessionTitle,
+  ensurePetWorkspace,
   extractCreatedSessionId,
   findWorkspaceForSession,
   openNewWorkspaceSession,
+  PET_WORKSPACE_NAME,
   prepareFreshRunSession,
   readSessionPermissionPreset,
 } from '../src/session-spawn.js'
@@ -19,6 +22,35 @@ import {
 test('clipSessionTitle', () => {
   assert.equal(clipSessionTitle('记录心情'), '小蓝鲸｜记录心情')
   assert.ok(clipSessionTitle('x'.repeat(80)).length <= 40)
+})
+
+test('ensurePetWorkspace：统一改名为小蓝鲸工作区', () => {
+  const workspaces = [
+    { id: 'ws1', path: 'C:/proj/default-workspace', name: '默认工作区', sessionIds: ['s1'] },
+  ]
+  const ctx = {
+    get(name) {
+      if (name === 'workspaceRegistry') {
+        return {
+          list: () => workspaces,
+          rename: (id, title) => {
+            const w = workspaces.find((x) => x.id === id)
+            if (w) w.name = title
+          },
+        }
+      }
+      if (name === 'sessions') {
+        return { get: () => null, list: () => [] }
+      }
+      return null
+    },
+  }
+  const r = ensurePetWorkspace(ctx, { preferredId: 's1', log() {} })
+  assert.equal(r.ok, true)
+  assert.equal(r.renamed, true)
+  assert.equal(r.workspace.name, PET_WORKSPACE_NAME)
+  assert.equal(workspaces[0].name, PET_WORKSPACE_NAME)
+  assert.equal(applyWorkspaceName(ctx, 'ws1', PET_WORKSPACE_NAME), true)
 })
 
 test('extractCreatedSessionId：多种返回形状', () => {
@@ -57,7 +89,7 @@ test('findWorkspaceForSession / 权限读写', () => {
     },
   }
 
-  assert.deepEqual(findWorkspaceForSession(ctx, 's1'), { id: 'ws1', path: 'C:/proj' })
+  assert.deepEqual(findWorkspaceForSession(ctx, 's1'), { id: 'ws1', path: 'C:/proj', name: null })
   assert.equal(readSessionPermissionPreset(ctx, 's1'), 'danger-full-access')
   assert.equal(applySessionPermissionPreset(ctx, 's2', 'danger-full-access'), true)
   assert.equal(readSessionPermissionPreset(ctx, 's2'), 'danger-full-access')
