@@ -59,7 +59,27 @@ test('pet-router：一次分流后分发 task', async () => {
   router.stop()
 })
 
-test('pet-router：教学中只关心 teach_end', async () => {
+test('pet-router：带教中转发 handleCoachUtterance', async () => {
+  const calls = []
+  const router = createPetRouter({
+    ctx: {},
+    home: '',
+    log() {},
+    classify: async () => ({ label: 'teach_coach', via: 'local' }),
+    chatBridge: { handleIntent: async () => { calls.push('glance') } },
+    agentBridge: { handleTask: async () => { calls.push('task') } },
+    teachBridge: {
+      isTeaching: () => true,
+      startTeaching: async () => { calls.push('teach') },
+      stopAndRun: async () => { calls.push('stop') },
+      handleCoachUtterance: async (t) => { calls.push(['coach', t]) },
+    },
+  })
+  await router.route('先在桌面创建心情文件夹')
+  assert.deepEqual(calls, [['coach', '先在桌面创建心情文件夹']])
+})
+
+test('pet-router：带教中无 coach 时回落 teach_end', async () => {
   const calls = []
   const router = createPetRouter({
     ctx: {},

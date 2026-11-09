@@ -41,12 +41,17 @@ test('parseCoachGoalReply / extractCoachGoal', async () => {
   assert.equal(goal, '记录今天的心情')
 })
 
-test('classifyCoachUtterance：走模型；失败回落 open', async () => {
+test('classifyCoachUtterance：走模型；失败有目标→step / 无目标→open', async () => {
   assert.equal(await classifyCoachUtterance({}, ''), 'open')
   assert.equal(await classifyCoachUtterance({}, 'x', {
     wake: async () => ({ ok: false, reason: 'no' }),
     log: () => {},
   }), 'open')
+  assert.equal(await classifyCoachUtterance({}, '先打开记事本', {
+    goal: '写笔记',
+    wake: async () => ({ ok: false, reason: 'no' }),
+    log: () => {},
+  }), 'step')
   assert.equal(await classifyCoachUtterance({}, '先打开记事本', {
     wake: async () => ({ ok: true, sessionId: 's1' }),
     waitReply: async () => ({ ok: true, text: 'step' }),

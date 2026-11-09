@@ -188,6 +188,11 @@ export function createPetRouter(options) {
     log(`pet-router：${via}/${label} ← ${userText.slice(0, 40)}`)
 
     if (teaching) {
+      // 对话带教：每一句交给 coach（做成了/纠正/本步/开场由模型再分）
+      if (typeof options.teachBridge?.handleCoachUtterance === 'function') {
+        await options.teachBridge.handleCoachUtterance(userText)
+        return
+      }
       if (label === 'teach_end' || label === 'task') {
         await options.teachBridge.stopAndRun()
       }

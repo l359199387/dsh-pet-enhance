@@ -395,11 +395,18 @@ export function createTeachBridge(options) {
       })
       return { ok: true, text: reply.text }
     }
+    const why = reply.reason || 'empty'
     await appendCoachLog(options.home, sessionId, {
       kind: 'tool',
-      summary: `no-reply:${reply.reason || 'empty'}`,
+      summary: `no-reply:${why}`,
     })
-    return { ok: false, reason: reply.reason }
+    await broadcastToDshPet(
+      why === 'empty-text'
+        ? '这轮主会话没吐出文字（可能被推理折空了）。请再说一次本步，或换短一点的说法。'
+        : `这轮没等到主会话回复（${why}）。请再说一次本步。`,
+      { pet, duration: 12_000 },
+    )
+    return { ok: false, reason: why }
   }
 
   async function startTeaching(userText) {
@@ -420,38 +427,47 @@ export function createTeachBridge(options) {
       return
     }
 
-    const preferred = options.getPreferredSessionId?.() ?? null
-    goal = await extractCoachGoal(options.ctx, userText, {
-      preferredId: preferred,
-      wake,
-      waitReply,
-      log,
-      fallback: '完成主人要教的这件事',
-    })
+    // 先进入带教态，避免抽目标等待期间后续指导被闸门/router 当普通闲聊丢掉
     sessionId = newTeachSessionId()
     constraints = []
     attemptCount = 0
+    goal = '完成主人要教的这件事'
+    teaching = true
+    coachBusy = true
+    try { options.onTeaching?.(true) } catch { /* ignore */ }
     await createTeachSession(options.home, sessionId, { goal, mode: 'coach' })
     await updateTeachMeta(options.home, sessionId, { status: 'coaching', mode: 'coach' })
-    await appendCoachLog(options.home, sessionId, {
-      kind: 'open',
-      text: userText,
-      goal,
-    })
-    teaching = true
-    try { options.onTeaching?.(true) } catch { /* ignore */ }
     await callDshPet('/work-status', {
       method: 'POST',
       body: { state: 'working', task: 'coaching' },
     }).catch(() => {})
 
-    await broadcastToDshPet(
-      `好，目标我理解成「${clip(goal, 40)}」。`
-      + '请继续告诉我这一步做什么；我会按你的话一步步做，不会自己把整件事做完。'
-      + '做成了告诉我；不想教了可以说放弃。',
-      { pet, duration: 16_000 },
-    )
-    log(`coach：开始 ${sessionId} goal=${goal}（开场只抽目标，不叫醒动手）`)
+    try {
+      const preferred = options.getPreferredSessionId?.() ?? null
+      goal = await extractCoachGoal(options.ctx, userText, {
+        preferredId: preferred,
+        wake,
+        waitReply,
+        log,
+        fallback: goal,
+      })
+      await updateTeachMeta(options.home, sessionId, { goal, status: 'coaching', mode: 'coach' })
+      await appendCoachLog(options.home, sessionId, {
+        kind: 'open',
+        text: userText,
+        goal,
+      })
+
+      await broadcastToDshPet(
+        `好，目标我理解成「${clip(goal, 40)}」。`
+        + '请继续告诉我这一步做什么；我会按你的话一步步做，不会自己把整件事做完。'
+        + '做成了告诉我；不想教了可以说放弃。',
+        { pet, duration: 16_000 },
+      )
+      log(`coach：开始 ${sessionId} goal=${goal}（开场只抽目标，不叫醒动手）`)
+    } finally {
+      coachBusy = false
+    }
   }
 
   async function finishCoachAbort(userText) {

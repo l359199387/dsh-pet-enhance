@@ -291,8 +291,12 @@ export async function waitAssistantReply(ctx, sessionId, {
         } else if (event.type === 'turn/end') {
           const parts = turns.get(data.turn) || []
           turns.delete(data.turn)
-          if (data.reason?.kind === 'completed' && parts.length) {
-            return { ok: true, text: parts.join('\n\n') }
+          if (data.reason?.kind === 'completed') {
+            if (parts.length) {
+              return { ok: true, text: parts.join('\n\n') }
+            }
+            // 空正文（推理折叠 / 只调工具）→ 立刻失败，勿空等到 timeout
+            return { ok: false, reason: 'empty-text' }
           }
         }
       }

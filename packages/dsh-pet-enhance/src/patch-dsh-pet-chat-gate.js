@@ -12,15 +12,18 @@ export const CHAT_GATE_PATCH_MARK = 'dsh-pet-enhance:chat-gate-v2'
 /** @deprecated */
 export const CHAT_GATE_PATCH_MARK_V1 = 'dsh-pet-enhance:chat-gate-v1'
 
-const NEEDLE = [
+/** 旧版针：image 日志后紧接 generateChat（无 recallPatch）。 */
+const NEEDLE_LEGACY = [
   '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',
   '\t\tconst generated = await generateChat({',
 ].join('\n')
 
+const IMAGE_LOG_SNIPPET = '对话附带图片 pet=${petId}'
+const GENERATE_CHAT_LINE = 'const generated = await generateChat({'
+
 function gateBlock(indent) {
   const i = indent
   return [
-    `${i}if (image !== void 0) log.info(\`[dsh-pet] 对话附带图片 pet=\${petId}，\${image.width}x\${image.height}，\${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）\`);`,
     `${i}/* ${CHAT_GATE_PATCH_MARK} */`,
     `${i}if (image === void 0) {`,
     `${i}  try {`,
@@ -33,7 +36,7 @@ function gateBlock(indent) {
     `${i}    try { _peOrigin = _peFs.readFileSync(_pePath.join(_peHome, 'host-origin.txt'), 'utf8').trim().replace(/\\/$/, ''); } catch {}`,
     `${i}    if (!_peOrigin) _peOrigin = String(process.env.DSH_WEB_URL || process.env.DSH_ORIGIN || '').replace(/\\/$/, '');`,
     `${i}    if (!_peOrigin) {`,
-    `${i}      for (const _pePort of [3080, 5173, 8787, 3000, 8080]) {`,
+    `${i}      for (const _pePort of [61099, 3080, 5173, 8787, 3000, 8080]) {`,
     `${i}        try {`,
     `${i}          const _peProbe = await fetch('http://127.0.0.1:' + _pePort + '/api/pet-enhance/status', { signal: AbortSignal.timeout(400) });`,
     `${i}          if (_peProbe.ok || _peProbe.status === 401) { _peOrigin = 'http://127.0.0.1:' + _pePort; break; }`,
@@ -77,7 +80,6 @@ function gateBlock(indent) {
     `${i}    } catch {}`,
     `${i}  }`,
     `${i}}`,
-    `${i}const generated = await generateChat({`,
   ].join('\n')
 }
 
@@ -89,7 +91,6 @@ export function stripChatGateV1(source) {
   let text = String(source ?? '')
   if (!text.includes(CHAT_GATE_PATCH_MARK_V1)) return text
   const mark = CHAT_GATE_PATCH_MARK_V1.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // 连同标记到「const generated」整段替换回干净的 generateChat 行
   const re = new RegExp(
     String.raw`\n[ \t]*/\* ${mark} \*/[\s\S]*?\n([ \t]*)const generated = await generateChat\(\{`,
   )
@@ -98,6 +99,7 @@ export function stripChatGateV1(source) {
 }
 
 /**
+ * 在「对话附带图片」日志之后、generateChat 之前插入闸门（兼容中间插入 recallPatch 等）。
  * @param {string} source
  * @returns {{ text: string, changed: boolean, reason: string }}
  */
@@ -109,14 +111,43 @@ export function patchChatWithPetSource(source) {
   if (text.includes(CHAT_GATE_PATCH_MARK_V1)) {
     text = stripChatGateV1(text)
   }
-  if (text.includes(NEEDLE)) {
+
+  if (text.includes(NEEDLE_LEGACY)) {
+    const indent = '\t\t'
+    const imageLine = NEEDLE_LEGACY.split('\n')[0]
+    const replacement = `${imageLine}\n${gateBlock(indent)}\n${indent}${GENERATE_CHAT_LINE}`
     return {
-      text: text.replace(NEEDLE, gateBlock('\t\t')),
+      text: text.replace(NEEDLE_LEGACY, replacement),
       changed: true,
-      reason: 'patched-tabs',
+      reason: 'patched-legacy',
     }
   }
-  return { text, changed: false, reason: 'needle-not-found' }
+
+  const imgIdx = text.indexOf(IMAGE_LOG_SNIPPET)
+  if (imgIdx < 0) {
+    return { text, changed: false, reason: 'needle-not-found' }
+  }
+  // 定位该日志所在行末
+  const lineStart = text.lastIndexOf('\n', imgIdx) + 1
+  const lineEnd = text.indexOf('\n', imgIdx)
+  if (lineEnd < 0) {
+    return { text, changed: false, reason: 'needle-not-found' }
+  }
+  const afterImage = text.slice(lineEnd + 1)
+  const genRel = afterImage.indexOf(GENERATE_CHAT_LINE)
+  if (genRel < 0 || genRel > 2_000) {
+    // generateChat 太远或找不到 → 不是 chatWithPet 形状
+    return { text, changed: false, reason: 'needle-not-found' }
+  }
+  const genAbs = lineEnd + 1 + genRel
+  const genLineStart = text.lastIndexOf('\n', genAbs) + 1
+  const indentMatch = text.slice(genLineStart).match(/^([ \t]*)/)
+  const indent = indentMatch ? indentMatch[1] : '\t\t'
+
+  // 插在 generateChat 行前；保留 image→generateChat 之间的 recallPatch 等（接管时已 return，不会执行到）
+  const inserted = `${gateBlock(indent)}\n`
+  const next = text.slice(0, genLineStart) + inserted + text.slice(genLineStart)
+  return { text: next, changed: true, reason: 'patched-before-generateChat' }
 }
 
 /**

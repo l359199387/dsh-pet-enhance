@@ -113,6 +113,24 @@ test('patchChatWithPetSource：插入闸门标记', () => {
   assert.equal(again.changed, false)
 })
 
+test('patchChatWithPetSource：兼容中间插入 recallPatch', () => {
+  const raw = [
+    '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',
+    '\t\tconst patch = await recallPatch(petId, {',
+    '\t\t\tsystem,',
+    '\t\t\tuserText: text',
+    '\t\t});',
+    '\t\tconst generated = await generateChat({',
+    '\t\t\tctx,',
+  ].join('\n')
+  const p = patchChatWithPetSource(raw)
+  assert.equal(p.changed, true)
+  assert.equal(p.reason, 'patched-before-generateChat')
+  assert.ok(p.text.includes(CHAT_GATE_PATCH_MARK))
+  assert.ok(p.text.includes('recallPatch'))
+  assert.ok(p.text.indexOf(CHAT_GATE_PATCH_MARK) < p.text.indexOf('const generated = await generateChat'))
+})
+
 test('stripChatGateV1 可升级到 v2', () => {
   const v1 = [
     '\t\tif (image !== void 0) log.info(`[dsh-pet] 对话附带图片 pet=${petId}，${image.width}x${image.height}，${image.bytes} 字节（模型不支持读图时内核会以占位文本代替）`);',

@@ -104,6 +104,9 @@ export async function classifyCoachUtterance(ctx, userText, opts = {}) {
   const s = String(userText ?? '').trim()
   if (!s) return 'open'
 
+  // 已有总目标时，分流失败宁动手做本步，也不要静默 open 丢掉指导
+  const failLabel = String(opts.goal || '').trim() ? 'step' : 'open'
+
   const wake = opts.wake ?? wakeSession
   const waitReply = opts.waitReply ?? waitAssistantReply
   const prompt = buildCoachClassifyPrompt(s, { goal: opts.goal })
@@ -115,26 +118,26 @@ export async function classifyCoachUtterance(ctx, userText, opts = {}) {
       log,
     })
     if (!woken.ok) {
-      log(`coach-classify 叫醒失败：${woken.reason || 'unknown'} → open`)
-      return 'open'
+      log(`coach-classify 叫醒失败：${woken.reason || 'unknown'} → ${failLabel}`)
+      return failLabel
     }
     const reply = await waitReply(ctx, woken.sessionId, {
       timeoutMs: opts.timeoutMs ?? 20_000,
     })
     if (!reply.ok || !reply.text) {
-      log(`coach-classify 无回复：${reply.reason || 'empty'} → open`)
-      return 'open'
+      log(`coach-classify 无回复：${reply.reason || 'empty'} → ${failLabel}`)
+      return failLabel
     }
     const label = parseCoachClassifyLabel(reply.text)
     if (label) {
       log(`coach-classify → ${label}`)
       return label
     }
-    log(`coach-classify 无法解析：${String(reply.text).slice(0, 60)} → open`)
-    return 'open'
+    log(`coach-classify 无法解析：${String(reply.text).slice(0, 60)} → ${failLabel}`)
+    return failLabel
   } catch (e) {
-    log(`coach-classify 异常：${e?.message ?? e} → open`)
-    return 'open'
+    log(`coach-classify 异常：${e?.message ?? e} → ${failLabel}`)
+    return failLabel
   }
 }
 
