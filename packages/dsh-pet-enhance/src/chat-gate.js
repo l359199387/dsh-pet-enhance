@@ -12,7 +12,9 @@ import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
 /** 需要插件接手、跳过 dsh-pet 闲聊模型的标签（含 chat：闲聊已关）。 */
-export const TAKEOVER_LABELS = new Set(['task', 'glance', 'teach', 'teach_end', 'new_session', 'chat'])
+export const TAKEOVER_LABELS = new Set([
+  'task', 'glance', 'teach', 'teach_end', 'teach_coach', 'new_session', 'chat',
+])
 
 /**
  * @param {string} label
@@ -35,7 +37,9 @@ export function ackForLabel(label, locale = 'zh', text = '') {
       }
       return '好，我瞅一眼…'
     case 'teach':
-      return '好，你演示，我学。'
+      return '好，我们对话带教：你说目标，我动手；做成了告诉我，不对就纠正我。'
+    case 'teach_coach':
+      return '嗯，我听着呢…'
     case 'teach_end':
       return '好，我按刚才学的去做…'
     case 'task':
@@ -60,7 +64,8 @@ export function ackForLabel(label, locale = 'zh', text = '') {
  *   teachBridge?: {
  *     isTeaching: () => boolean,
  *     startTeaching: Function,
- *     stopAndRun: Function,
+ *     stopAndRun?: Function,
+ *     handleCoachUtterance?: (text: string) => Promise<unknown>,
  *     tryRunMatchingPlaybook?: (text: string) => Promise<boolean>,
  *   },
  *   getPreferredSessionId?: () => string | null,
@@ -102,7 +107,11 @@ export async function runChatGate(options) {
   }
 
   const locale = getLocale(options.home)
-  const effectiveLabel = teaching && (label === 'teach_end' || label === 'task') ? 'teach_end' : label
+  const effectiveLabel = teaching
+    ? (label === 'teach_coach' || label === 'teach_end' || label === 'task' || label === 'chat'
+      ? 'teach_coach'
+      : label)
+    : label
   const ack = ackForLabel(effectiveLabel, locale, text)
 
   // 客户端闸门 + 服务端闸门可能连打两次：短时去重，只派发一次
@@ -128,7 +137,9 @@ export async function runChatGate(options) {
  */
 async function dispatchTakeover(options, label, text, teaching) {
   if (teaching) {
-    if (label === 'teach_end' || label === 'task') {
+    if (typeof options.teachBridge?.handleCoachUtterance === 'function') {
+      await options.teachBridge.handleCoachUtterance(text)
+    } else if (label === 'teach_end' || label === 'task') {
       await options.teachBridge?.stopAndRun?.()
     }
     return

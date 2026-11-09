@@ -168,7 +168,8 @@ export async function createTeachSession(home, id, init = {}) {
   const meta = {
     id,
     goal: String(init.goal || '').slice(0, 200),
-    status: 'recording',
+    status: init.status || (init.mode === 'coach' ? 'coaching' : 'recording'),
+    mode: init.mode || 'coach',
     startedAt: new Date().toISOString(),
     endedAt: null,
     stepCount: 0,

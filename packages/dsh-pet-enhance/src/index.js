@@ -441,10 +441,10 @@ async function handle(req, res, connection, log, state) {
       return
     }
     state.glance.setTeachEndOffer(false)
-    log('教学结束：头顶「我教完了」被点击')
-    // 异步收束，立刻回 200，避免气泡端卡住
+    log('带教结束：兼容旧 /teach-end（视为做成了）')
     Promise.resolve()
-      .then(() => state.teachBridge.stopAndRun())
+      .then(() => state.teachBridge.handleCoachUtterance?.('做成了，可以记下来')
+        || state.teachBridge.stopAndRun())
       .catch((e) => log(`teach-end 失败：${e?.message ?? e}`))
     send(res, 200, { ok: true, ending: true })
     return
@@ -829,7 +829,8 @@ function installDshPetBridge(ctx, log, state, disposers) {
       },
       onTeaching: (on) => {
         state.glance.setPet(on ? 'looking' : 'idle')
-        state.glance.setTeachEndOffer(Boolean(on))
+        // 对话带教：不再弹出「我教完了」录制条
+        state.glance.setTeachEndOffer(false)
       },
     })
     state.teachBridge = teach

@@ -68,8 +68,27 @@ export async function createLearnedAutomationPair(home, spec) {
   const ownerNotes = String(spec.ownerNotes || '').slice(0, 4000)
   const taskSupplement = String(spec.taskSupplement || '').slice(0, 4000)
 
+  const version = Number(spec.v) === 2 || spec.coach || spec.capability ? 2 : 1
+  const understanding = {
+    summary: String(spec.understanding?.summary || '').slice(0, 800),
+    fastPlan: String(spec.understanding?.fastPlan || '').slice(0, 600),
+    approach: spec.understanding?.approach || null,
+    stats: spec.understanding?.stats || null,
+    clarified: Array.isArray(spec.understanding?.clarified)
+      ? spec.understanding.clarified
+      : [],
+    denied: Array.isArray(spec.understanding?.denied)
+      ? spec.understanding.denied
+      : [],
+  }
+  if (version >= 2) {
+    understanding.constraints = Array.isArray(spec.understanding?.constraints)
+      ? spec.understanding.constraints.map((c) => String(c).slice(0, 120)).slice(0, 12)
+      : []
+    understanding.success = String(spec.understanding?.success || '').slice(0, 300)
+  }
   const learn = {
-    v: 1,
+    v: version,
     id,
     kind: 'learned',
     goal,
@@ -82,24 +101,27 @@ export async function createLearnedAutomationPair(home, spec) {
     scheduled: Boolean(spec.scheduled),
     timingLabel: spec.timingLabel || null,
     skillName: spec.skillName || null,
-    understanding: {
-      summary: String(spec.understanding?.summary || '').slice(0, 800),
-      fastPlan: String(spec.understanding?.fastPlan || '').slice(0, 600),
-      approach: spec.understanding?.approach || null,
-      stats: spec.understanding?.stats || null,
-      clarified: Array.isArray(spec.understanding?.clarified)
-        ? spec.understanding.clarified
-        : [],
-      denied: Array.isArray(spec.understanding?.denied)
-        ? spec.understanding.denied
-        : [],
-    },
-    frames: {
-      count: Number(spec.frames?.count) || 0,
-      files: Array.isArray(spec.frames?.files) ? spec.frames.files : [],
-      forLearningOnly: true,
-      note: '仅辅助学会；自动化执行不要加载',
-    },
+    understanding,
+    coach: spec.coach || (version >= 2
+      ? {
+          status: 'verified',
+          verifiedAt: now,
+          attemptCount: Number(spec.understanding?.attemptCount) || 1,
+          lastFailure: null,
+        }
+      : undefined),
+    capability: spec.capability || (version >= 2
+      ? { skillName: spec.skillName || null, scripts: [] }
+      : undefined),
+    coachLog: version >= 2 ? 'coach-log.jsonl' : undefined,
+    frames: version >= 2
+      ? { count: 0, files: [], forLearningOnly: true, note: '对话带教不采教学关键帧' }
+      : {
+          count: Number(spec.frames?.count) || 0,
+          files: Array.isArray(spec.frames?.files) ? spec.frames.files : [],
+          forLearningOnly: true,
+          note: '仅辅助学会；自动化执行不要加载',
+        },
     createdAt: now,
     updatedAt: now,
   }

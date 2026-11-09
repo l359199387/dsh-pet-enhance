@@ -28,6 +28,7 @@ export const CLASSIFY_LABELS = Object.freeze([
   'glance',
   'teach',
   'teach_end',
+  'teach_coach',
   'task',
   'new_session',
 ])
@@ -64,10 +65,13 @@ export function formatLearnedGoalsForClassify(goals, limit = 12) {
 export function buildClassifyPrompt(userText, { teaching = false, learnedGoals = [] } = {}) {
   const clipped = String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
   if (teaching) {
+    // 带教中细分流交给 coach-intent（模型理解 done/abort/correct/guide）；
+    // 闸门侧只需识别仍在带教会话，统一交给 teachBridge.handleCoachUtterance。
     return (
       `${CLASSIFY_PREFIX}`
-      + '当前在教学模式。只输出一个标签词，禁止工具与解释：'
-      + 'teach_end=教完了/去做/照着做；chat=其他。'
+      + '当前在对话带教中。只输出一个标签词，禁止工具与解释：'
+      + 'teach_coach=带教中的任何话（做成了/纠正/放弃/继续说明都算，由下游再理解）；'
+      + 'chat=明显与带教无关的闲聊。'
       + `用户：「${clipped}」`
     )
   }
@@ -77,7 +81,7 @@ export function buildClassifyPrompt(userText, { teaching = false, learnedGoals =
     + '只输出一个标签词，禁止调用任何工具，禁止解释。'
     + 'chat=闲聊问候，或只问「会不会/学会了吗」而不是现在去做；'
     + 'glance=看屏幕/截图/盯着看一会儿；'
-    + 'teach=用户要演示教你；teach_end=演示结束；'
+    + 'teach=用户要开始对话带教；teach_end=（旧）结束教学口令；'
     + 'task=要你现在操作电脑，或执行下面已学会的某件事（说法可任意，不必固定口令）；'
     + 'new_session=新开/开启/打开一个新的聊天窗口或新会话（不是闲聊）。'
     + `已学会：${learned}。`
@@ -94,11 +98,12 @@ export function parseClassifyLabel(reply) {
   const raw = String(reply ?? '').trim()
   if (!raw) return null
   const lower = raw.toLowerCase()
-  const m = lower.match(/\b(teach_end|teach|glance|task|new_session|chat)\b/)
+  const m = lower.match(/\b(teach_coach|teach_end|teach|glance|task|new_session|chat)\b/)
   if (m && LABEL_SET.has(m[1])) return m[1]
 
+  if (/带教中|继续带教|teach_coach/i.test(raw)) return 'teach_coach'
   if (/教完|学完|结束教学|照着做|按刚才/.test(raw)) return 'teach_end'
-  if (/教你|跟我学|看我做|开始教学/.test(raw)) return 'teach'
+  if (/教你|跟我学|开始带教|开始教学/.test(raw)) return 'teach'
   if (/新开|新会话|新窗口|新聊天/.test(raw)) return 'new_session'
   if (/(?:看(?:一?眼|看)|截图|桌面|屏幕|盯着|陪看|watch)/.test(raw) && !/点|输入|关掉|最小化/.test(raw)) {
     return 'glance'
@@ -124,7 +129,7 @@ export function localClassifyClear(text, { teaching = false } = {}) {
   const s = String(text ?? '').trim()
   if (!s) return null
   if (teaching) {
-    if (isTeachEndIntent(s) || /按刚才教的|照着做|开始做|你可以去做/.test(s)) return 'teach_end'
+    // 带教中不写死口令；一律交模型 / teach_coach
     return null
   }
   if (isTeachEndIntent(s)) return 'teach_end'
@@ -144,7 +149,7 @@ export function localClassify(text, { teaching = false } = {}) {
   if (!s) return 'chat'
   const clear = localClassifyClear(s, { teaching })
   if (clear) return clear
-  if (teaching) return 'chat'
+  if (teaching) return 'teach_coach'
   if (isSkillStatusQuestion(s)) return 'chat'
   // 兜底：仍认一批执行/操作口令，避免模型失败时全变闲聊
   if (isRunAutomationIntent(s) || isComputerTaskIntent(s)) return 'task'

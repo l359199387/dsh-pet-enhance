@@ -1,34 +1,42 @@
 /**
- * 教学模式：眼睛+操作证据 → 教完理解 → 不懂就问 → 问清后创建「学习文件↔自动化」1:1 → 再执行。
- *
- * 敏感窗/密码类输入：只落本地 secrets，发给模型的提示里不出现原文。
+ * 对话带教：全程说话指引 → 它动手 → 说「做成了」落盘 LEARN v2 + coach-log。
+ * 旧录宏（observe / 关键帧 / digest）已移除。
  *
  * @module src/teach-bridge.js
  */
 
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
 import { appendPetChatMessages, sayConclusionToPet } from './pet-chat-memory.js'
-import { isPetChromeTitle } from './policy.js'
 import {
   isTeachEndIntent,
   isTeachStartIntent,
   TEACH_FOLLOWUP_PREFIX,
   AGENT_WAKE_PREFIX,
 } from './intent.js'
+import { classifyCoachUtterance } from './coach-intent.js'
+import { appendCoachLog, promoteCoachLog, readCoachLog } from './coach-log.js'
 import {
-  appendTeachEvent,
+  buildCoachInducePrompt,
+  buildCoachWakePrompt,
+  extractConstraintsFromLog,
+  parseCoachInduceReply,
+} from './teach-coach.js'
+import {
+  buildScriptProposePrompt,
+  buildScriptsConfirmSummary,
+  parseScriptProposals,
+  patchLearnedCapability,
+  rewriteSkillWithScripts,
+  runReadyCoachScripts,
+  writeCoachScripts,
+} from './coach-scripts.js'
+import {
   buildPlaybook,
   isTeachNoiseTypedText,
-  buildPublicPlan,
   compactGlanceHints,
   createTeachSession,
-  detectTeachAmbiguities,
-  isTeachMouseClickKind,
-  isTeachScrollBoundaryKind,
   narratePlan,
   newTeachSessionId,
-  normalizeMouseButton,
-  readTeachEvents,
   readTeachSecrets,
   updateTeachMeta,
 } from './teach-store.js'
@@ -41,25 +49,15 @@ import {
 import { patchLearnedScheduleMeta } from './learned-manage.js'
 import { appendLearnedRun } from './learned-runs.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
-import {
-  attachClickFramesToPlaybook,
-  createFrameRecorder,
-  describeClickFramesForPrompt,
-  MAX_DIGEST_IMAGES,
-  MAX_DIGEST_SHEETS,
-  teachFramesDir,
-} from './teach-frames.js'
-import { digestEvidenceCount } from './teach-digest.js'
-import { isActEnabled, isLiveWatchEnabled, loadSettings } from './settings.js'
+import { describeClickFramesForPrompt } from './teach-frames.js'
+import { isActEnabled } from './settings.js'
 import { glancePersonaBlock } from './persona.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 import { prepareFreshRunSession } from './session-spawn.js'
 import {
   buildSmartRunPrompt,
   shouldUseSmartRun,
-  buildTeachFollowupQuestions,
   buildTeachSmartDigestPrompt,
-  mergeTeachQuestions,
   parseTeachSmartReply,
 } from './teach-smart.js'
 
@@ -325,14 +323,12 @@ export function createTeachBridge(options) {
   const log = options.log ?? (() => {})
   const intervalMs = options.intervalMs ?? 2_000
   const actOn = options.isActEnabled ?? isActEnabled
-  const liveOn = options.isLiveWatchEnabled ?? isLiveWatchEnabled
   const pollChat = options.pollChat !== false
   const wake = options.wake ?? wakeSession
   const waitReply = options.waitReply ?? waitAssistantReply
   const prepareSession = options.prepareSession ?? prepareFreshRunSession
 
   let timer = null
-  let observeTimer = null
   let stopped = false
   let lastTs = 0
   let lastContent = ''
@@ -340,251 +336,162 @@ export function createTeachBridge(options) {
 
   let teaching = false
   let sessionId = null
-  let stepIndex = 0
   let goal = ''
-  let lastEventAt = 0
-  let askedIdle = false
-  /** @type {string | null} 最近一对 learned↔automation 的 id */
+  /** @type {string[]} */
+  let constraints = []
+  let attemptCount = 0
+  /** @type {string | null} */
   let lastPairId = null
-  /** @type {ReturnType<typeof createFrameRecorder> | null} */
-  let frames = null
+  let coachBusy = false
 
-  function sidecar() {
-    return typeof options.sidecar === 'function' ? options.sidecar() : options.sidecar
+  function endTeachingFlag() {
+    teaching = false
+    try { options.onTeaching?.(false) } catch { /* ignore */ }
+    callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
   }
 
-  async function observe(action, fields = {}) {
-    const sc = sidecar()
-    if (!sc?.isAlive?.() || typeof sc.call !== 'function') {
-      return { ok: false, error: 'sidecar-down' }
-    }
-    return sc.call('observe', { action, ...fields }, 5_000)
+  function parseGoalFromTeachStart(userText) {
+    return String(userText)
+      .replace(/我?教你一下|教你一遍|教你一回|带教|开始带教|开始教学|进入教学|跟我学一遍|跟我学一下|学一下我的操作|看我做一遍|看我做一下|教你(?:怎么|如何)?做/gi, '')
+      .replace(/^[，,。.\s]+|[，,。.\s]+$/g, '')
+      .trim()
+      || '完成主人要教的这件事'
   }
 
-  /**
-   * 教学需要实时看屏幕，才能把界面变化消化得更深。
-   * 未开则提示主人；可确认后代开；拒绝则不开课。
-   * @returns {Promise<boolean>}
-   */
-  async function ensureLiveWatchForTeach() {
-    let on = false
-    try {
-      on = liveOn(options.home)
-    } catch {
-      const s = await loadSettings(options.home).catch(() => ({ liveWatch: false }))
-      on = Boolean(s.liveWatch)
-    }
-    if (on) return true
-
-    await broadcastToDshPet(
-      '学的时候要开「实时看屏幕」，我才能看得更清楚。请右键「更多」打开，或点头上确认让我帮你开。',
-      { pet, duration: 14_000 },
-    )
-
-    if (options.confirmGate?.ask) {
-      const verdict = await options.confirmGate.ask({
-        summary: '教学需要打开「实时看屏幕」，现在打开吗？',
-        tier: 'L2',
-        action: { teach: 'enable-live-watch' },
-      })
-      if (verdict.allow) {
-        if (typeof options.ensureLiveWatch === 'function') {
-          await options.ensureLiveWatch(true)
-        } else {
-          const { saveSettings } = await import('./settings.js')
-          await saveSettings(options.home, { liveWatch: true })
-        }
-        await broadcastToDshPet('好，实时看屏幕已开，开始学。', { pet, duration: 6_000 })
-        return true
-      }
+  async function wakeCoachRound(userText) {
+    const preferred = options.getPreferredSessionId?.() ?? null
+    const prepared = await prepareSession(options.ctx, {
+      preferredId: preferred,
+      onSession: options.onSession,
+      log,
+    })
+    const prompt = buildCoachWakePrompt(goal, userText, {
+      constraints,
+      attemptCount,
+    })
+    const woken = await wake(options.ctx, {
+      text: prompt,
+      sessionId: prepared.sessionId || undefined,
+      preferredId: prepared.sessionId || preferred,
+      log,
+    })
+    if (!woken.ok) {
       await broadcastToDshPet(
-        '没开实时看屏幕我就学不深。你打开后再教我一遍吧。',
-        { pet, duration: 12_000 },
+        `带教这轮没叫醒主会话（${woken.reason || 'unknown'}）。你再说一次或换种说法。`,
+        { pet, duration: 10_000 },
       )
-      return false
+      await appendCoachLog(options.home, sessionId, {
+        kind: 'tool',
+        summary: `wake-failed:${woken.reason || 'unknown'}`,
+      })
+      return { ok: false }
     }
-
-    // 无确认闸：只提示，不开课（避免默默学浅）
-    log('teach：实时看屏幕未开，已提示主人')
-    return false
+    try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+    const reply = await waitReply(options.ctx, woken.sessionId, {
+      timeoutMs: 180_000,
+      isAborted: () => stopped || Boolean(options.isAborted?.()),
+    })
+    if (reply.ok && reply.text) {
+      await sayConclusionToPet(clip(reply.text, 160), {
+        pet,
+        duration: 12_000,
+        memoryPath: options.petMemoryPath,
+      })
+      await appendCoachLog(options.home, sessionId, {
+        kind: 'tool',
+        summary: clip(reply.text, 200),
+      })
+      return { ok: true, text: reply.text }
+    }
+    await appendCoachLog(options.home, sessionId, {
+      kind: 'tool',
+      summary: `no-reply:${reply.reason || 'empty'}`,
+    })
+    return { ok: false, reason: reply.reason }
   }
 
   async function startTeaching(userText) {
     if (teaching) {
-      await broadcastToDshPet('已经在学啦。你继续操作；做完告诉我一声。', { pet, duration: 8_000 })
+      await broadcastToDshPet(
+        '已经在带教中。继续说目标/纠正即可；做成了告诉我，不想教了就说放弃。',
+        { pet, duration: 8_000 },
+      )
+      await handleCoachUtterance(userText)
       return
     }
-    const sc = sidecar()
-    if (!sc?.isAlive?.()) {
-      await broadcastToDshPet('录操作需要 Python sidecar，当前不可用。', { pet, duration: 10_000 })
+
+    if (!actOn(options.home)) {
+      await broadcastToDshPet(
+        '带教需要「允许动手」。右键宠物 → 更多 → 允许动手 · 开，然后再说「我教你…」。',
+        { pet, duration: 12_000 },
+      )
       return
     }
-    if (!(await ensureLiveWatchForTeach())) return
 
-    goal = String(userText)
-      .replace(/我?教你一下|教你一遍|学一下我的操作|跟我学一遍|看我做一遍|开始教学|进入教学/gi, '')
-      .replace(/^[，,。.\s]+|[，,。.\s]+$/g, '')
-      .trim()
-      || '完成刚才教的流程'
-
+    goal = parseGoalFromTeachStart(userText)
     sessionId = newTeachSessionId()
-    stepIndex = 0
-    lastEventAt = Date.now()
-    askedIdle = false
-    frames = createFrameRecorder({
-      home: options.home,
-      sessionId,
-      sidecar: options.sidecar,
-      capture: options.capture,
-      log,
+    constraints = []
+    attemptCount = 1
+    await createTeachSession(options.home, sessionId, { goal, mode: 'coach' })
+    await updateTeachMeta(options.home, sessionId, { status: 'coaching', mode: 'coach' })
+    await appendCoachLog(options.home, sessionId, {
+      kind: 'clarify',
+      text: userText,
+      goal,
     })
-    await createTeachSession(options.home, sessionId, { goal })
-    const started = await observe('start')
-    if (!started?.ok) {
-      await broadcastToDshPet('没法开始录操作，稍后再试。', { pet, duration: 8_000 })
-      frames = null
-      return
-    }
     teaching = true
     try { options.onTeaching?.(true) } catch { /* ignore */ }
     await callDshPet('/work-status', {
       method: 'POST',
-      body: { state: 'working', task: 'teaching' },
+      body: { state: 'working', task: 'coaching' },
     }).catch(() => {})
-    await frames.snapStart()
+
     await broadcastToDshPet(
-      `好，眼睛开着，我跟着学（每次点击截附近小图，只用于学会）。目标：${clip(goal, 36)}。`
-      + '你点、你输入；做完点头顶「我教完了」就行。学完我会多问几句、总结更快做法再建成自动化。密码只记本地。',
+      `好，对话带教开始。目标：${clip(goal, 40)}。`
+      + '我动手做；你用话说纠正。做成了告诉我一声，我会记下来；不想教了就说放弃。尽量少点鼠标。',
       { pet, duration: 14_000 },
     )
-    if (!observeTimer) {
-      observeTimer = setInterval(() => { pollEvents().catch(() => {}) }, TEACH_POLL_MS)
-    }
-    log(`teach：开始 ${sessionId} goal=${goal}`)
+    log(`coach：开始 ${sessionId} goal=${goal}`)
+    await wakeCoachRound(userText)
   }
 
-  async function turnOffLiveWatchQuiet() {
-    if (typeof options.ensureLiveWatch !== 'function') return
-    try {
-      await options.ensureLiveWatch(false)
-      await broadcastToDshPet('学完了，已关掉实时看屏幕。', { pet, duration: 6_000 })
-    } catch (e) {
-      log(`学完关实时看屏幕失败：${e?.message ?? e}`)
-    }
+  async function finishCoachAbort(userText) {
+    const id = sessionId
+    await appendCoachLog(options.home, id, {
+      kind: 'gate',
+      verdict: 'abort',
+      text: userText,
+    })
+    await updateTeachMeta(options.home, id, {
+      status: 'aborted',
+      endedAt: new Date().toISOString(),
+    })
+    endTeachingFlag()
+    sessionId = null
+    goal = ''
+    constraints = []
+    attemptCount = 0
+    await sayConclusionToPet('好，这轮带教先停下，没有记成学会。以后想教再说。', {
+      pet,
+      duration: 10_000,
+      memoryPath: options.petMemoryPath,
+    })
   }
 
-  async function pollEvents() {
-    if (!teaching || !sessionId) return
-    const r = await observe('poll')
-    if (!r?.ok || !Array.isArray(r.events)) return
-    // 截图异步排队，避免串行 await 卡住教学轮询（体感像鼠标失灵）
-    const shotJobs = []
-    for (const ev of r.events) {
-      const norm = await appendTeachEvent(options.home, sessionId, ev, stepIndex)
-      stepIndex += 1
-      lastEventAt = Date.now()
-      askedIdle = false
-      const winTitle = norm.window?.title || null
-      // 点桌宠「我教完了」：不截图、不进 digest（本地 jsonl 仍可留痕）
-      const petChrome = isPetChromeTitle(winTitle)
-      // 左/右/中/侧键任意点击 → 鼠标附近小图
-      if (isTeachMouseClickKind(norm.kind) && frames && !petChrome) {
-        shotJobs.push(frames.snapOnClick({
-          eventI: norm.i,
-          x: norm.x,
-          y: norm.y,
-          button: normalizeMouseButton(norm.button, norm.kind),
-          action: norm.kind,
-          window: winTitle,
-        }))
-      } else if (isTeachScrollBoundaryKind(norm.kind) && frames) {
-        // 滑轮：只在手势开始/结束截，中间每格不截
-        shotJobs.push(frames.snapOnScrollBoundary({
-          eventI: norm.i,
-          x: norm.x,
-          y: norm.y,
-          phase: norm.kind === 'scroll_start' ? 'start' : 'end',
-          delta: norm.delta,
-          horizontal: norm.horizontal,
-          window: norm.window?.title || null,
-        }))
-      } else if (winTitle && frames && !petChrome) {
-        shotJobs.push(frames.maybeOnWindow(winTitle))
-      }
-      if (norm.sensitive && norm.kind === 'type') {
-        await broadcastToDshPet('嗯，敏感输入我只记在本地了。', { pet, duration: 5_000 })
-      }
-    }
-    if (shotJobs.length) {
-      await Promise.allSettled(shotJobs)
-    }
-    if (!askedIdle && stepIndex > 0 && Date.now() - lastEventAt > 25_000) {
-      askedIdle = true
-      await broadcastToDshPet(
-        '还在教吗？做完了告诉我一声；有哪步我没看懂也请直接说。',
-        { pet, duration: 10_000 },
-      )
-    }
-  }
+  async function finishCoachVerified(userText) {
+    const id = sessionId
+    if (!id) return
+    await appendCoachLog(options.home, id, {
+      kind: 'gate',
+      verdict: 'done',
+      text: userText,
+    })
+    await updateTeachMeta(options.home, id, { status: 'inducing' })
+    await broadcastToDshPet('好，我把这轮带教归纳成学会说明…', { pet, duration: 6_000 })
 
-  /**
-   * 用关键帧（必要时补前后帧）喂模型理解；不执行自动化。
-   * @returns {Promise<{ summary: string, usedFrames: number, supplemented: boolean }>}
-   */
-  async function digestWithFrames(id, runGoal, narrative, steps = []) {
-    if (!frames) {
-      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
-    }
-    await frames.snapEnd()
-
-    // 键入为主：不附图，只喂文字步骤（省大量视觉 token）
-    if (!shouldAttachTeachDigestImages(steps)) {
-      log('teach digest：键入为主，跳过附图，仅文字理解')
-      const preferred = options.getPreferredSessionId?.() ?? null
-      const prepared = await prepareSession(options.ctx, {
-        preferredId: preferred,
-        onSession: options.onSession,
-        log,
-      })
-      const prompt = buildTeachDigestPrompt(runGoal, narrative, [])
-      const woken = await wake(options.ctx, {
-        text: prompt,
-        sessionId: prepared.sessionId || undefined,
-        preferredId: prepared.sessionId || preferred,
-        log,
-      })
-      if (!woken.ok) {
-        return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false, textOnly: true }
-      }
-      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
-      const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 60_000,
-        isAborted: () => stopped || Boolean(options.isAborted?.()),
-      })
-      const parsed = reply.ok && reply.text
-        ? parseTeachDigestReply(reply.text)
-        : { summary: narrative, fastPlan: '' }
-      return {
-        summary: parsed.summary || narrative,
-        fastPlan: parsed.fastPlan || '',
-        usedFrames: 0,
-        digestImages: 0,
-        mosaic: false,
-        supplemented: false,
-        textOnly: true,
-        frameDir: teachFramesDir(options.home, id),
-      }
-    }
-
-    const loadDigest = async () => (
-      typeof frames.loadDigestImages === 'function'
-        ? frames.loadDigestImages(MAX_DIGEST_IMAGES)
-        : frames.loadPngBuffers(MAX_DIGEST_IMAGES)
-    )
-    const imgs = await loadDigest()
-    if (!imgs.length) {
-      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
-    }
+    const logRows = await readCoachLog(options.home, id)
+    const fromLog = extractConstraintsFromLog(logRows)
+    const mergedConstraints = [...new Set([...constraints, ...fromLog])].slice(0, 12)
 
     const preferred = options.getPreferredSessionId?.() ?? null
     const prepared = await prepareSession(options.ctx, {
@@ -592,230 +499,118 @@ export function createTeachBridge(options) {
       onSession: options.onSession,
       log,
     })
-    // 默认最多 1 张 2×2（MAX_DIGEST_SHEETS 已随 budget=4 变为 1）
-    const maxImages = Math.min(1, MAX_DIGEST_SHEETS, Math.max(1, imgs.length))
-    const imageList = imgs.slice(0, maxImages)
-    const prompt = buildTeachDigestPrompt(runGoal, narrative, imageList)
+    const inducePrompt = buildCoachInducePrompt(goal, logRows, mergedConstraints)
+    let summary = `带教完成：${goal}`
+    let fastPlan = ''
     const woken = await wake(options.ctx, {
-      text: prompt,
+      text: inducePrompt,
       sessionId: prepared.sessionId || undefined,
       preferredId: prepared.sessionId || preferred,
-      images: imageList,
-      attachments: options.attachments,
-      maxImages,
       log,
     })
-    if (!woken.ok) {
-      log(`teach digest 叫醒失败：${woken.reason}`)
-      return { summary: narrative, fastPlan: '', usedFrames: 0, supplemented: false }
-    }
-    try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
-    const cells = digestEvidenceCount(imageList)
-    log(
-      `teach digest 附图成功 ${woken.imageCount ?? 0} 张`
-      + `（证据格 ${cells}；失败 ${woken.imageFailed ?? 0}；已禁 NEED_MORE 二轮）`,
-    )
-    const reply = await waitReply(options.ctx, woken.sessionId, {
-      timeoutMs: 60_000,
-      isAborted: () => stopped || Boolean(options.isAborted?.()),
-    })
-    const parsed = reply.ok && reply.text
-      ? parseTeachDigestReply(reply.text)
-      : { summary: narrative, fastPlan: '', needMore: false }
-    // 故意不再因 NEED_MORE 补帧二轮喂图（token 杀手）
-
-    return {
-      summary: parsed.summary || narrative,
-      fastPlan: parsed.fastPlan || '',
-      usedFrames: digestEvidenceCount(imageList),
-      digestImages: imageList.length,
-      mosaic: Boolean(imageList[0]?.mosaic),
-      supplemented: false,
-      frameDir: teachFramesDir(options.home, id),
-    }
-  }
-
-  /** 歧义追问：不懂就问清（confirm 气泡）。 */
-  /**
-   * 理解后追问；「不要」只记偏好，不再整单取消（学会条目仍会创建）。
-   * @returns {Promise<{ ok: boolean, clarified: string[], denied: string[], reason?: string }>}
-   */
-  /**
-   * @param {string} id
-   * @param {string} runGoal
-   * @param {object[]} steps
-   * @param {{ summary?: string, fastPlan?: string }} [smart]
-   */
-  async function clarifyAmbiguities(id, runGoal, steps, smart = {}) {
-    const mandatory = buildTeachFollowupQuestions(runGoal, steps, smart)
-    const questions = mergeTeachQuestions(detectTeachAmbiguities(runGoal, steps), mandatory)
-    const clarified = []
-    const denied = []
-    if (!questions.length) return { ok: true, clarified, denied }
-
-    await broadcastToDshPet(
-      `学完了，我要连问 ${questions.length} 件小事（头顶点「好/不要」）。点「不要」也先学会，只是按你的偏好记。`,
-      { pet, duration: 10_000 },
-    )
-
-    if (!options.confirmGate?.ask) {
-      // 无确认闸：默许必问项，照常建学会条目
-      return { ok: true, clarified: questions.map((q) => q.code), denied }
-    }
-    for (const q of questions) {
-      await broadcastToDshPet(`问：${clip(q.summary, 80)}`, { pet, duration: 8_000 })
-      const verdict = await options.confirmGate.ask({
-        summary: q.summary,
-        tier: 'L2',
-        action: { teachSession: id, clarify: q.code },
+    if (woken.ok) {
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+      const reply = await waitReply(options.ctx, woken.sessionId, {
+        timeoutMs: 90_000,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
-      if (!verdict.allow) {
-        denied.push(q.code)
-        await broadcastToDshPet(
-          '好，记下你的选择；不影响先写入「我学会的」。',
-          { pet, duration: 6_000 },
-        )
-        continue
+      if (reply.ok && reply.text) {
+        const parsed = parseCoachInduceReply(reply.text)
+        if (parsed.summary) summary = parsed.summary
+        if (parsed.fastPlan) fastPlan = parsed.fastPlan
       }
-      clarified.push(q.code)
     }
-    return { ok: true, clarified, denied }
-  }
 
-  async function stopAndRun() {
-    if (!teaching || !sessionId) {
-      const ran = await tryRunMatchingPlaybook('再做一次刚才教的')
-      if (ran) return
-      await sayConclusionToPet('现在不在教学模式。想教我直接说；要跑已建好的自动化也可以说。', {
-        pet,
-        duration: 10_000,
-        memoryPath: options.petMemoryPath,
-      })
-      return
-    }
-    if (observeTimer) {
-      clearInterval(observeTimer)
-      observeTimer = null
-    }
-    await pollEvents()
-    await observe('stop')
-    teaching = false
-    try { options.onTeaching?.(false) } catch { /* ignore */ }
-    await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
-
-    const id = sessionId
-    const events = await readTeachEvents(options.home, id)
-    const steps = buildPublicPlan(events)
-    await updateTeachMeta(options.home, id, {
-      status: 'recorded',
-      endedAt: new Date().toISOString(),
-      stepCount: steps.length,
+    await appendCoachLog(options.home, id, {
+      kind: 'induce',
+      summary,
+      fastPlan,
     })
 
-    if (!steps.length) {
-      await sayConclusionToPet('这轮没记到点击或输入。我们再来一次？', {
-        pet,
-        duration: 12_000,
-        memoryPath: options.petMemoryPath,
+    /** @type {object[]} */
+    let proposedScripts = []
+    const proposePrompt = buildScriptProposePrompt(goal, summary, fastPlan, mergedConstraints)
+    const proposeWake = await wake(options.ctx, {
+      text: proposePrompt,
+      sessionId: prepared.sessionId || undefined,
+      preferredId: prepared.sessionId || preferred,
+      log,
+    })
+    if (proposeWake.ok) {
+      try { options.onSession?.(proposeWake.sessionId) } catch { /* ignore */ }
+      const proposeReply = await waitReply(options.ctx, proposeWake.sessionId, {
+        timeoutMs: 90_000,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
-      await turnOffLiveWatchQuiet()
-      frames = null
-      sessionId = null
-      return
+      if (proposeReply.ok && proposeReply.text) {
+        const parsedScripts = parseScriptProposals(proposeReply.text)
+        proposedScripts = parsedScripts.scripts
+        await appendCoachLog(options.home, id, {
+          kind: 'script',
+          summary: parsedScripts.none
+            ? 'NONE'
+            : `propose:${proposedScripts.length}`,
+        })
+      }
     }
 
-    // 1) 文字步骤为主；必要时才附 1 张 2×2 点击拼图 → 模型理解；不执行
-    const playbook = buildPlaybook(goal, steps, id)
-    if (frames) {
-      attachClickFramesToPlaybook(playbook, frames.list())
-    }
-    const narrative = narratePlan(playbook.steps.map((s) => ({
-      ...s,
-      x: s.hint?.x ?? s.x,
-      y: s.hint?.y ?? s.y,
-      text: s.text,
-      window: s.window,
-    })))
-    const withImages = shouldAttachTeachDigestImages(steps)
-    await broadcastToDshPet(
-      withImages
-        ? '好，我用步骤文字 + 最多一张点击拼图来理解（省 token）…'
-        : '好，这轮以键入为主，我只用步骤文字理解（更省 token）…',
-      { pet, duration: 6_000 },
-    )
-    await updateTeachMeta(options.home, id, { status: 'understanding' })
-    const digested = await digestWithFrames(id, goal, narrative, steps)
-    // 一律变通执行（界面位置会变）；「不要」某条 FAST 只清掉该快捷路径，不改成死回放
-    playbook.strategy = {
+    const playbook = {
+      id,
+      goal,
       approach: 'smart',
-      summary: digested.summary || narrative,
-      fastPlan: digested.fastPlan || '',
-    }
-    playbook.approach = 'smart'
-
-    // 2) 主动多问几句；「不要」只记偏好，不撤学会
-    const clarified = await clarifyAmbiguities(id, goal, steps, {
-      summary: digested.summary,
-      fastPlan: digested.fastPlan,
-    })
-
-    let fastPlan = digested.fastPlan || ''
-    if (clarified.denied?.includes('fast-ok')) {
-      fastPlan = ''
-      playbook.strategy = {
-        ...(playbook.strategy || {}),
+      strategy: {
         approach: 'smart',
-        fastPlan: '',
-        summary: digested.summary || narrative,
-      }
+        summary,
+        fastPlan,
+      },
+      understanding: {
+        summary,
+        fastPlan,
+        constraints: mergedConstraints,
+        success: '主人对话确认做成了',
+      },
+      steps: [],
+      stats: { coachAttempts: attemptCount, mode: 'coach' },
+      ownerNotes: '',
     }
-    playbook.approach = 'smart'
 
-    // 3) 关键帧落入 learned/<id>/frames（仅学习用）
-    let frameMeta = { count: 0, files: [] }
-    if (frames) {
-      frameMeta = await frames.promoteToLearned(id)
-    }
-
-    // 4) 创建学习文件 ↔ 本地自动化（同 id）——绝不自动动手
+    const now = new Date().toISOString()
     const pair = await createLearnedAutomationPair(options.home, {
+      v: 2,
       id,
       goal,
       teachSessionId: id,
       understanding: {
-        summary: digested.summary || narrative,
+        summary,
         fastPlan,
-        approach: playbook.approach || 'smart',
-        stats: playbook.stats,
-        clarified: clarified.clarified,
-        denied: clarified.denied || [],
-        framesUsed: digested.usedFrames,
-        framesSupplemented: digested.supplemented,
+        approach: 'smart',
+        constraints: mergedConstraints,
+        success: '主人对话确认做成了',
+        attemptCount,
       },
-      evidence: steps,
+      coach: {
+        status: 'verified',
+        verifiedAt: now,
+        attemptCount,
+        lastFailure: null,
+      },
+      capability: { skillName: null, scripts: [] },
+      evidence: [],
       playbook,
-      frames: frameMeta,
+      frames: { count: 0, files: [], forLearningOnly: true },
     })
+    await promoteCoachLog(options.home, id, id)
     lastPairId = id
 
-    // 5) 登记 Harness：未明说每周几/几点 → 不定时、不开启；仅写 skill
-    const preferred = options.getPreferredSessionId?.() ?? null
-    const scheduleText = [
-      goal,
-      digested.summary,
-      fastPlan,
-      ...(clarified.clarified || []),
-    ].filter(Boolean).join('\n')
     const harness = await registerHarnessAutomation(options.ctx, {
       goal,
       learnedId: id,
       automationId: pair.task.id,
-      summary: digested.summary || narrative,
+      summary,
       preferredSessionId: preferred,
-      scheduleText,
+      scheduleText: [goal, summary, fastPlan].filter(Boolean).join('\n'),
       log,
     })
-
     await patchLearnedScheduleMeta(options.home, id, {
       scheduleId: harness.scheduleId || null,
       scheduleSessionId: harness.sessionId || null,
@@ -824,65 +619,170 @@ export function createTeachBridge(options) {
       skillName: harness.skillName || null,
     })
 
+    let scriptNote = ''
+    const skillName = harness.skillName || null
+    if (proposedScripts.length && skillName) {
+      let allowScripts = false
+      if (options.confirmGate?.ask) {
+        const verdict = await options.confirmGate.ask({
+          summary: buildScriptsConfirmSummary(proposedScripts, skillName),
+          tier: 'L3',
+          action: { teach: 'write-scripts', count: proposedScripts.length, skillName },
+        })
+        allowScripts = Boolean(verdict?.allow)
+      }
+      if (allowScripts) {
+        try {
+          const written = await writeCoachScripts(skillName, proposedScripts)
+          await rewriteSkillWithScripts({
+            skillName,
+            goal,
+            learnedId: id,
+            automationId: pair.task.id,
+            summary,
+            scripts: written.scripts,
+          })
+          await patchLearnedCapability(options.home, id, {
+            skillName,
+            scripts: written.scripts,
+          })
+          await appendCoachLog(options.home, id, {
+            kind: 'script',
+            summary: `written:${written.scripts.length}`,
+          }, { learned: true })
+          scriptNote = `\n已沉淀 ${written.scripts.length} 个脚本块（skills/${skillName}/scripts/），下次优先按需执行。`
+        } catch (e) {
+          log(`写脚本失败：${e?.message ?? e}`)
+          scriptNote = `\n脚本写入失败：${clip(e?.message ?? e, 60)}`
+        }
+      } else {
+        scriptNote = proposedScripts.length
+          ? '\n（有可脚本化步骤，未确认写入则只保留文字说明。）'
+          : ''
+        await appendCoachLog(options.home, id, {
+          kind: 'script',
+          summary: allowScripts ? 'skip' : 'denied-or-no-gate',
+        }, { learned: true })
+      }
+    }
+
     await updateTeachMeta(options.home, id, {
       status: 'paired',
+      mode: 'coach',
       learnedId: pair.learn.id,
       automationId: pair.task.id,
       scheduleId: harness.scheduleId || null,
       scheduled: Boolean(harness.scheduled),
-      timingLabel: harness.timingLabel || null,
-      skillName: harness.skillName || null,
-      harnessOk: harness.ok,
-      harnessReason: harness.reason || null,
-      playbookStats: playbook.stats,
-      frameCount: frameMeta.count,
-      denied: clarified.denied || [],
+      scriptCount: proposedScripts.length,
     })
 
-    // 6) 学完写进聊天记录（用户句 + 完整结论气泡）
-    const notice = buildLearnedChatNotice({
-      goal,
-      summary: digested.summary || narrative,
-      fastPlan,
-      id,
-    })
+    const notice = buildLearnedChatNotice({ goal, summary, fastPlan, id })
     let bubble = notice
     if (harness.ok && harness.scheduled) {
-      bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness 自动化页。这次不动手。`
+      bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness。这次不自动再跑。`
     } else if (harness.ok) {
-      bubble += '\n未设定运行时间（你没说每周几/几点就先不排程）。这次不动手。'
+      bubble += '\n未设定运行时间（没说几点就不排程）。这次不自动再跑。'
     } else {
-      bubble += `\nHarness 登记失败：${harness.reason || '无 schedule'}。这次不动手。`
+      bubble += `\nHarness：${harness.reason || '未登记'}。这次不自动再跑。`
     }
-    const chatMem = await appendPetChatMessages(
+    bubble += scriptNote
+    await appendPetChatMessages(
       [
-        { role: 'user', content: '【教学结束】我教完了' },
+        { role: 'user', content: `【带教完成】${clip(userText, 80)}` },
         { role: 'assistant', content: bubble },
       ],
-      {
-        petId: pet,
-        memoryPath: options.petMemoryPath,
-      },
-    ).catch((e) => ({ ok: false, error: e?.message ?? e }))
-    if (!chatMem?.ok) {
-      log(`teach：写入聊天记录失败：${chatMem?.error || 'unknown'}`)
-    } else {
-      log(`teach：已写入聊天记录（学会「${clip(goal, 24)}」）`)
-    }
+      { petId: pet, memoryPath: options.petMemoryPath },
+    ).catch((e) => log(`coach：写聊天失败：${e?.message ?? e}`))
 
-    // 7) 学完自动关实时看屏幕
-    await turnOffLiveWatchQuiet()
-    frames = null
-
-    // 已写入 memory，这里只冒泡（避免重复落盘）
-    await broadcastToDshPet(bubble, { pet, duration: 18_000 })
+    endTeachingFlag()
     sessionId = null
+    goal = ''
+    constraints = []
+    attemptCount = 0
+    await broadcastToDshPet(bubble, { pet, duration: 18_000 })
+    log(`coach：verified ${id}`)
   }
 
   /**
-   * 优先按 FAST 快捷路径叫醒主会话变通执行；否则再走脚本/看屏。
-   * @param {object} playbook
+   * 带教中每一句：模型分流 done/abort/correct/guide。
+   * @param {string} userText
    */
+  async function handleCoachUtterance(userText) {
+    const text = String(userText || '').trim()
+    if (!text) return
+    if (!teaching || !sessionId) {
+      await broadcastToDshPet('现在不在带教。想教我说「我教你…」。', { pet, duration: 8_000 })
+      return
+    }
+    if (coachBusy) {
+      await broadcastToDshPet('上句还在处理，稍等一下…', { pet, duration: 5_000 })
+      return
+    }
+    coachBusy = true
+    try {
+      const preferred = options.getPreferredSessionId?.() ?? null
+      const label = await classifyCoachUtterance(options.ctx, text, {
+        goal,
+        preferredId: preferred,
+        wake,
+        waitReply,
+        log,
+      })
+      await appendCoachLog(options.home, sessionId, {
+        kind: 'utterance',
+        text,
+        label,
+      })
+
+      if (label === 'done') {
+        await finishCoachVerified(text)
+        return
+      }
+      if (label === 'abort') {
+        await finishCoachAbort(text)
+        return
+      }
+      if (label === 'correct') {
+        constraints.push(clip(text, 120))
+        constraints = [...new Set(constraints)].slice(0, 12)
+        attemptCount += 1
+        await appendCoachLog(options.home, sessionId, {
+          kind: 'correct',
+          text,
+          attemptCount,
+        })
+        await broadcastToDshPet('收到纠正，我按你说的再试…', { pet, duration: 6_000 })
+        await wakeCoachRound(text)
+        return
+      }
+
+      attemptCount += 1
+      await appendCoachLog(options.home, sessionId, {
+        kind: 'guide',
+        text,
+        attemptCount,
+      })
+      await wakeCoachRound(text)
+    } finally {
+      coachBusy = false
+    }
+  }
+
+  /** 兼容旧 teach-end：若仍在带教则当作做成了。 */
+  async function stopAndRun() {
+    if (!teaching || !sessionId) {
+      const ran = await tryRunMatchingPlaybook('再做一次刚才教的')
+      if (ran) return
+      await sayConclusionToPet('现在不在带教。想教我说「我教你…」；要跑已学会的也可以说。', {
+        pet,
+        duration: 10_000,
+        memoryPath: options.petMemoryPath,
+      })
+      return
+    }
+    await handleCoachUtterance('做成了，可以记下来')
+  }
+
   async function recordRun(id, info) {
     try {
       await appendLearnedRun(options.home, id, info)
@@ -901,6 +801,40 @@ export function createTeachBridge(options) {
     const summary = learnMeta?.understanding?.summary || playbook.strategy?.summary || ''
     const fastPlan = learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan || ''
     const snap = String(summary || '').slice(0, 800)
+
+    // S 优先：有 ready 脚本则先按块执行（可 dry-run）
+    const scriptCap = learnMeta?.capability?.scripts
+    if (Array.isArray(scriptCap) && scriptCap.some((s) => s?.status === 'ready')) {
+      await broadcastToDshPet(
+        `先按学会的脚本块做「${clip(playbook.goal, 28)}」…`,
+        { pet, duration: 8_000 },
+      )
+      const ran = await runReadyCoachScripts(learnMeta, { dryRunFirst: true, log })
+      if (ran.ok) {
+        const doneText = `脚本块已跑完：${clip(playbook.goal, 40)}（${ran.results.filter((r) => r.phase === 'run').length} 块）`
+        await sayConclusionToPet(doneText, {
+          pet,
+          duration: 12_000,
+          memoryPath: options.petMemoryPath,
+        })
+        await updateTeachMeta(options.home, id, {
+          status: 'done',
+          via: 'scripts',
+          endedAt: new Date().toISOString(),
+        })
+        await recordRun(id, {
+          via: 'scripts',
+          ok: true,
+          summary: doneText,
+          understandingSnapshot: snap,
+        })
+        return
+      }
+      await broadcastToDshPet(
+        `脚本块未完全成功（${ran.reason || 'fail'}），改按说明变通…`,
+        { pet, duration: 8_000 },
+      )
+    }
     // 旧 playbook 里可能残留「wojiaowanle1」等教完了拼音；执行时跳过
     const scriptSteps = (playbook.steps || []).filter((s) => {
       if (s.mode !== 'script') return false
@@ -1179,7 +1113,9 @@ export function createTeachBridge(options) {
     if (!playbook && lastPairId && isVagueReplayIntent(userText)) {
       playbook = await readAutomationPlaybook(options.home, lastPairId)
     }
-    if (!playbook?.steps?.length) return false
+    const hasGoal = Boolean(String(playbook?.goal || '').trim())
+    const hasSteps = Array.isArray(playbook?.steps) && playbook.steps.length > 0
+    if (!playbook || (!hasGoal && !hasSteps)) return false
 
     if (!actOn(options.home)) {
       await sayConclusionToPet(
@@ -1228,12 +1164,16 @@ export function createTeachBridge(options) {
     lastContent = msg.content
     busy = true
     try {
-      if (isTeachEndIntent(msg.content) || (teaching && /按刚才教的|照着做|开始做/.test(msg.content))) {
-        await stopAndRun()
+      if (teaching) {
+        await handleCoachUtterance(msg.content)
         return
       }
       if (isTeachStartIntent(msg.content)) {
         await startTeaching(msg.content)
+        return
+      }
+      if (isTeachEndIntent(msg.content)) {
+        await stopAndRun()
         return
       }
     } finally {
@@ -1253,13 +1193,7 @@ export function createTeachBridge(options) {
     stopped = true
     if (timer) clearInterval(timer)
     timer = null
-    if (observeTimer) clearInterval(observeTimer)
-    observeTimer = null
-    if (teaching) {
-      teaching = false
-      observe('stop').catch(() => {})
-      callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
-    }
+    if (teaching) endTeachingFlag()
   }
 
   return {
@@ -1269,6 +1203,7 @@ export function createTeachBridge(options) {
     isTeaching: () => teaching,
     getSessionId: () => sessionId,
     startTeaching,
+    handleCoachUtterance,
     stopAndRun,
     tryRunMatchingPlaybook,
     runPlaybook,

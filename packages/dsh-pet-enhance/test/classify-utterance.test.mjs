@@ -52,7 +52,8 @@ test('localClassify 兜底：明确口令仍可用', () => {
   assert.equal(localClassify('用你学会的去刷B站'), 'task')
   assert.equal(localClassify('新开一个窗口聊天'), 'new_session')
   assert.equal(localClassify('开启一个新的窗口'), 'new_session')
-  assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_end')
+  assert.equal(regexClassifyFallback('教完了', { teaching: true }), 'teach_coach')
+  assert.equal(localClassify('随便纠正一句', { teaching: true }), 'teach_coach')
 })
 
 test('classifyUtterance：新开窗本地优先，不叫醒模型', async () => {

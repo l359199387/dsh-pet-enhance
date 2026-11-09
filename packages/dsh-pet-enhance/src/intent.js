@@ -48,13 +48,13 @@ export function isWatchIntent(text) {
 export const COMPUTER_TASK_RE =
   /(?:帮我|请(?:你)?|麻烦|给我)?[\s\S]{0,40}?(?:点(?:击|一下|开)?|双击|右键|拖(?:拽|到)?|滚(?:动|轮)?|输入|键入|打字|按下|按一下|按住|按键|打开|关闭|关掉|退出|杀掉|最小化|最大化|还原|聚焦|切换到?|选中|勾选|取消|保存|发送|复制|粘贴|剪切|删除|清空|刷新|提交|确认|搜索|改成|设置成|调成|移到|挪到|放到|运行|启动|click|type|minimize|maximize)|(?:把|将|让).{0,40}?(?:最小化|最大化|关掉|关闭|点(?:一下|开)?|输入|改成|移到|打开)/i
 
-/** 「我教你 / 学一下我的操作」→ 进入只记不练的教学模式。 */
+/** 「我教你」→ 进入对话带教（它动手，你说话纠正）。 */
 export const TEACH_START_RE =
-  /(?:我?教你(?:一下|一遍|一回)?|教你(?:怎么|如何)?做|学一下我的操作|跟我学(?:一遍|一下)?|看我做(?:一遍|一下)?|开始教学|进入教学)/i
+  /(?:我?教你(?:一下|一遍|一回)?|教你(?:怎么|如何)?做|带教|开始带教|开始教学|进入教学|跟我学(?:一遍|一下)?|学一下我的操作)/i
 
-/** 「教完了」→ 停止录制并按记录执行目标。 */
+/** 旧「教完了」口令：非带教中时仍可识别；带教中改走 coach-intent（做成了/放弃）。 */
 export const TEACH_END_RE =
-  /(?:教完了|教好了|学完了|结束教学|停止教学|不教了|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
+  /(?:教完了|教好了|学完了|结束教学|停止教学|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
 
 /**
  * 「执行一下 / 去记录一下 / 去看看 / 继续刷 / 跑自动化 / 用你学会的…」→ 跑已学会的自动化（不是闲聊）。
@@ -130,3 +130,10 @@ export function shouldSkipGlanceBridge(text) {
 export function shouldSkipAgentBridge(text) {
   return isTeachStartIntent(text) || isTeachEndIntent(text) || isNewSessionIntent(text)
 }
+
+export {
+  COACH_LABELS,
+  buildCoachClassifyPrompt,
+  parseCoachClassifyLabel,
+  classifyCoachUtterance,
+} from './coach-intent.js'
