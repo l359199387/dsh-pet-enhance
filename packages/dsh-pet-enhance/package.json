@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-enhance",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "dsh-pet-enhance：给 dsh-pet 增强看屏、教学与授权动手能力（小蓝鲸）。",
   "type": "module",
   "main": "./src/index.js",

@@ -6,13 +6,20 @@ import {
   DEFAULT_REASONING_EFFORT,
   applySessionPermissionPreset,
   applySessionReasoningEffort,
+  applySessionTitle,
   applyStandardTranscriptMode,
+  clipSessionTitle,
   extractCreatedSessionId,
   findWorkspaceForSession,
   openNewWorkspaceSession,
   prepareFreshRunSession,
   readSessionPermissionPreset,
 } from '../src/session-spawn.js'
+
+test('clipSessionTitle', () => {
+  assert.equal(clipSessionTitle('记录心情'), '小蓝鲸｜记录心情')
+  assert.ok(clipSessionTitle('x'.repeat(80)).length <= 40)
+})
 
 test('extractCreatedSessionId：多种返回形状', () => {
   assert.equal(extractCreatedSessionId({ sessionId: 'a' }), 'a')
@@ -128,6 +135,7 @@ test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () 
   assert.equal(r.reasoningApplied, true)
   assert.equal(r.revealed, true)
   assert.deepEqual(createReq?.agentPreset, STANDARD_AGENT_PRESET)
+  assert.equal(createReq?.title, '小蓝鲸｜交办')
   assert.deepEqual(modes, ['standard'])
   assert.deepEqual(opened, ['new'])
   assert.equal(readSessionPermissionPreset(ctx, 'new'), FULL_ACCESS_PERMISSION)
@@ -162,6 +170,20 @@ test('prepareFreshRunSession：失败时回落旧会话', async () => {
   const r = await prepareFreshRunSession(ctx, { preferredId: 'old', log() {} })
   assert.equal(r.fresh, false)
   assert.equal(r.sessionId, 'old')
+})
+
+test('applySessionTitle：写到 session.title', () => {
+  const sessions = new Map([['s1', { id: 's1', title: '' }]])
+  const ctx = {
+    get(name) {
+      if (name === 'sessions') {
+        return { get: (id) => sessions.get(String(id)) || null }
+      }
+      return null
+    },
+  }
+  assert.equal(applySessionTitle(ctx, 's1', '小蓝鲸｜带教｜记心情'), true)
+  assert.equal(sessions.get('s1').title, '小蓝鲸｜带教｜记心情')
 })
 
 test('applySessionReasoningEffort：无 model 时 false', async () => {

@@ -119,6 +119,7 @@ export function createAgentBridge(options) {
 
       const prepared = await prepareSession(options.ctx, {
         preferredId: preferred,
+        titleHint: String(userText || '').slice(0, 36) || '交办',
         onSession: options.onSession,
         log,
       })

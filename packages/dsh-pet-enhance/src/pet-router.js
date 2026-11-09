@@ -87,6 +87,7 @@ export function createPetRouter(options) {
     const preferredId = options.getPreferredSessionId?.() ?? null
     const r = await openNewWorkspaceSession(options.ctx, {
       preferredId,
+      titleHint: '新聊天',
       log,
     })
     if (!r.ok) {

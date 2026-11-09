@@ -342,21 +342,34 @@ export function createTeachBridge(options) {
   let attemptCount = 0
   /** @type {string | null} */
   let lastPairId = null
+  /** 本轮带教复用的主会话，避免每步都新开「未命名」 */
+  /** @type {string | null} */
+  let coachAgentSessionId = null
   let coachBusy = false
 
   function endTeachingFlag() {
     teaching = false
+    coachAgentSessionId = null
     try { options.onTeaching?.(false) } catch { /* ignore */ }
     callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
   }
 
-  async function wakeCoachRound(userText) {
+  async function ensureCoachAgentSession() {
+    if (coachAgentSessionId) return { sessionId: coachAgentSessionId, fresh: false }
     const preferred = options.getPreferredSessionId?.() ?? null
     const prepared = await prepareSession(options.ctx, {
       preferredId: preferred,
+      titleHint: `带教｜${goal || '对话带教'}`,
       onSession: options.onSession,
       log,
     })
+    if (prepared.sessionId) coachAgentSessionId = prepared.sessionId
+    return prepared
+  }
+
+  async function wakeCoachRound(userText) {
+    const preferred = options.getPreferredSessionId?.() ?? null
+    const prepared = await ensureCoachAgentSession()
     const prompt = buildCoachWakePrompt(goal, userText, {
       constraints,
       attemptCount,
@@ -509,11 +522,15 @@ export function createTeachBridge(options) {
     const mergedConstraints = [...new Set([...constraints, ...fromLog])].slice(0, 12)
 
     const preferred = options.getPreferredSessionId?.() ?? null
-    const prepared = await prepareSession(options.ctx, {
-      preferredId: preferred,
-      onSession: options.onSession,
-      log,
-    })
+    const prepared = coachAgentSessionId
+      ? { sessionId: coachAgentSessionId, fresh: false }
+      : await prepareSession(options.ctx, {
+        preferredId: preferred,
+        titleHint: `带教归纳｜${goal || '学会'}`,
+        onSession: options.onSession,
+        log,
+      })
+    if (prepared.sessionId) coachAgentSessionId = prepared.sessionId
     const inducePrompt = buildCoachInducePrompt(goal, logRows, mergedConstraints)
     let summary = `带教完成：${goal}`
     let fastPlan = ''
@@ -876,6 +893,7 @@ export function createTeachBridge(options) {
       const preferred = options.getPreferredSessionId?.() ?? null
       const prepared = await prepareSession(options.ctx, {
         preferredId: preferred,
+        titleHint: String(playbook.goal || goal || '再做一次').slice(0, 36),
         onSession: options.onSession,
         log,
       })
@@ -1050,6 +1068,7 @@ export function createTeachBridge(options) {
     const preferred = options.getPreferredSessionId?.() ?? null
     const prepared = await prepareSession(options.ctx, {
       preferredId: preferred,
+      titleHint: String(playbook.goal || '看屏执行').slice(0, 36),
       onSession: options.onSession,
       log,
     })

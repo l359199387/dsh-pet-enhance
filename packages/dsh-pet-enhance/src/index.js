@@ -1086,6 +1086,7 @@ async function openOwnerWorkspaceSession(state, log) {
   const ctx = state.hostCtx || state.chatGateCtx || {}
   const r = await openNewWorkspaceSession(ctx, {
     preferredId: state.lastSessionId,
+    titleHint: '新聊天',
     log,
   })
   if (!r.ok) {

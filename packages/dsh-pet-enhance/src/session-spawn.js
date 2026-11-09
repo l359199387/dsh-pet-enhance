@@ -17,6 +17,101 @@ export const FULL_ACCESS_PERMISSION = 'danger-full-access'
 export const DEFAULT_REASONING_EFFORT = 'low'
 
 /**
+ * 侧栏标题：尽量短、带小蓝鲸前缀。
+ * @param {string} [hint]
+ * @param {string} [fallback]
+ */
+export function clipSessionTitle(hint, fallback = '交办') {
+  const raw = String(hint || '').replace(/\s+/g, ' ').trim()
+  const body = (raw || fallback).replace(/^小蓝鲸[｜|·\s]*/u, '')
+  const titled = `小蓝鲸｜${body}`
+  return titled.slice(0, 40)
+}
+
+/**
+ * 给新建会话写标题（宿主 API 形状不一，多路尝试）。
+ * @returns {boolean}
+ */
+export function applySessionTitle(ctx, sessionId, title) {
+  const sid = String(sessionId || '').trim()
+  const name = String(title || '').trim().slice(0, 80)
+  if (!sid || !name) return false
+
+  const sessions = serviceOf(ctx, 'sessions')
+  const sc = serviceOf(ctx, 'sessionController')
+  const ui = serviceOf(ctx, 'uiWorkspace')
+
+  try {
+    const session = sessions?.get?.(sid)
+    if (session) {
+      if (typeof session.rename === 'function') {
+        session.rename(name)
+        return true
+      }
+      if (typeof session.setTitle === 'function') {
+        session.setTitle(name)
+        return true
+      }
+      if (session.header && typeof session.header === 'object') {
+        try {
+          session.header.title = name
+          if (typeof session.header === 'object' && 'name' in session.header) {
+            session.header.name = name
+          }
+          return true
+        } catch { /* ignore */ }
+      }
+      if (Object.prototype.hasOwnProperty.call(session, 'title')) {
+        session.title = name
+        return true
+      }
+    }
+  } catch { /* ignore */ }
+
+  const scFns = [
+    ['rename', [sid, name]],
+    ['renameSession', [sid, name]],
+    ['setTitle', [sid, name]],
+    ['update', [sid, { title: name }]],
+    ['updateSession', [sid, { title: name }]],
+  ]
+  for (const [fn, args] of scFns) {
+    try {
+      if (typeof sc?.[fn] === 'function') {
+        const out = sc[fn](...args)
+        if (out && typeof out.then === 'function') {
+          out.catch(() => {})
+        }
+        return true
+      }
+    } catch { /* try next */ }
+  }
+
+  const sessFns = [
+    ['rename', [sid, name]],
+    ['setTitle', [sid, name]],
+    ['update', [sid, { title: name }]],
+  ]
+  for (const [fn, args] of sessFns) {
+    try {
+      if (typeof sessions?.[fn] === 'function') {
+        sessions[fn](...args)
+        return true
+      }
+    } catch { /* try next */ }
+  }
+
+  try {
+    if (typeof ui?.renameSession === 'function') {
+      ui.renameSession(sid, name)
+      return true
+    }
+  } catch { /* ignore */ }
+
+  return false
+}
+
+/**
  * 从 create 返回值里抠 session id。
  * @param {unknown} created
  * @returns {string | null}
@@ -227,8 +322,10 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
   }
   if (!permission) permission = FULL_ACCESS_PERMISSION
 
+  const title = clipSessionTitle(opts.titleHint, '交办')
+
   /** @type {Record<string, unknown>} */
-  const request = { agentPreset }
+  const request = { agentPreset, title, name: title }
   if (workspace?.id) request.workspaceId = workspace.id
   else if (workspace?.path) request.cwd = workspace.path
 
@@ -276,10 +373,20 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
     if (!reasoningApplied) log(`session-spawn：推理 ${reasoningEffort} 未能写到新会话 ${sessionId}`)
   }
 
+  let titled = applySessionTitle(ctx, sessionId, title)
+  if (!titled) {
+    for (let i = 0; i < 6; i += 1) {
+      await new Promise((r) => setTimeout(r, 40))
+      titled = applySessionTitle(ctx, sessionId, title)
+      if (titled) break
+    }
+  }
+
   const revealed = revealWorkspaceSession(ctx, sessionId)
   log(
     `session-spawn：新会话 ${sessionId}`
     + (workspace?.id ? ` ws=${workspace.id}` : '')
+    + ` title=${title}${titled ? '✓' : '✗'}`
     + ` preset=${agentPreset}`
     + (permission ? ` perm=${permission}${permissionCopied ? '✓' : '✗'}` : '')
     + (modeStandard ? ' mode=standard' : '')
@@ -291,6 +398,8 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
     ok: true,
     sessionId,
     fromSessionId,
+    title,
+    titled,
     permission,
     permissionCopied,
     modeStandard,
@@ -319,6 +428,7 @@ export async function prepareFreshRunSession(ctx, opts = {}) {
   const preferredId = opts.preferredId ?? null
   const spawn = await openNewWorkspaceSession(ctx, {
     preferredId,
+    titleHint: opts.titleHint,
     permissionPreset: FULL_ACCESS_PERMISSION,
     agentPreset: STANDARD_AGENT_PRESET,
     reasoningEffort: DEFAULT_REASONING_EFFORT,
