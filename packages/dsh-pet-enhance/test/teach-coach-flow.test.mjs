@@ -147,3 +147,56 @@ test('对话带教：模型判 abort → 不落学会', async () => {
   assert.equal(after.length, before)
   bridge.stop()
 })
+
+test('对话带教：带教已结束后迟到的 abort 分流不再冒泡', async () => {
+  await saveSettings(home, { actEnabled: true })
+  const wakes = []
+  /** @type {((v: { ok: boolean, text: string }) => void) | null} */
+  let releaseClassify = null
+  const memoryPath = join(home, 'pet-memory-stale-abort.json')
+  const bridge = createTeachBridge({
+    home,
+    petMemoryPath: memoryPath,
+    ctx: { get: () => null },
+    log() {},
+    pollChat: false,
+    getPreferredSessionId: () => 'sess-stale',
+    prepareSession: async () => ({ sessionId: 'sstale', fresh: true }),
+    wake: async (_ctx, opts) => {
+      wakes.push(String(opts.text || ''))
+      return { ok: true, sessionId: 'sstale' }
+    },
+    waitReply: async () => {
+      const last = wakes[wakes.length - 1] || ''
+      if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 记心情' }
+      if (last.includes('带教分流')) {
+        return new Promise((resolve) => {
+          releaseClassify = resolve
+        })
+      }
+      return { ok: true, text: 'ok' }
+    },
+  })
+
+  await bridge.startTeaching('我教你记心情')
+  assert.equal(bridge.isTeaching(), true)
+  const pending = bridge.handleCoachUtterance('算了不教了')
+  for (let i = 0; i < 40 && !releaseClassify; i += 1) {
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  assert.ok(releaseClassify, '分流应已挂起')
+  // 分流还在 await 时带教已被外部结束（做成了 / stop / 重装）
+  bridge.stop()
+  assert.equal(bridge.isTeaching(), false)
+  releaseClassify({ ok: true, text: 'abort' })
+  await pending
+  assert.equal(bridge.isTeaching(), false)
+  if (existsSync(memoryPath)) {
+    const mem = JSON.parse(readFileSync(memoryPath, 'utf8'))
+    const msgs = mem?.main?.main?.messages || []
+    assert.ok(
+      !msgs.some((m) => String(m.content || '').includes('这轮带教先停下')),
+      '过期 abort 不应再写入「先停下」',
+    )
+  }
+})

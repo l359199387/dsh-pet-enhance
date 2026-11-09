@@ -346,12 +346,19 @@ export function createTeachBridge(options) {
   /** @type {string | null} */
   let coachAgentSessionId = null
   let coachBusy = false
+  /** 带教世代：结束/重开时递增，作废 await 中的迟到分流 */
+  let coachEpoch = 0
 
   function endTeachingFlag() {
     teaching = false
+    coachEpoch += 1
     coachAgentSessionId = null
     try { options.onTeaching?.(false) } catch { /* ignore */ }
     callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
+  }
+
+  function coachStillActive(epoch, sid) {
+    return teaching && sessionId === sid && coachEpoch === epoch && Boolean(sid)
   }
 
   async function ensureCoachAgentSession() {
@@ -483,8 +490,13 @@ export function createTeachBridge(options) {
     }
   }
 
-  async function finishCoachAbort(userText) {
+  async function finishCoachAbort(userText, epoch = coachEpoch) {
     const id = sessionId
+    // 带教已结束（做成了 / stop / 世代已变）时禁止再冒「先停下」——分流 await 常会迟到
+    if (!id || !teaching || epoch !== coachEpoch) {
+      log('coach：忽略过期 abort')
+      return
+    }
     await appendCoachLog(options.home, id, {
       kind: 'gate',
       verdict: 'abort',
@@ -509,6 +521,17 @@ export function createTeachBridge(options) {
   async function finishCoachVerified(userText) {
     const id = sessionId
     if (!id) return
+    const savedGoal = goal
+    const savedConstraints = [...constraints]
+    const savedAttempts = attemptCount
+    const savedAgentSessionId = coachAgentSessionId
+    // 一进归纳就退出带教态，避免漫长 induce/确认期间迟到分流又判 abort
+    endTeachingFlag()
+    sessionId = null
+    goal = ''
+    constraints = []
+    attemptCount = 0
+
     await appendCoachLog(options.home, id, {
       kind: 'gate',
       verdict: 'done',
@@ -519,29 +542,31 @@ export function createTeachBridge(options) {
 
     const logRows = await readCoachLog(options.home, id)
     const fromLog = extractConstraintsFromLog(logRows)
-    const mergedConstraints = [...new Set([...constraints, ...fromLog])].slice(0, 12)
+    const mergedConstraints = [...new Set([...savedConstraints, ...fromLog])].slice(0, 12)
 
     const preferred = options.getPreferredSessionId?.() ?? null
-    const prepared = coachAgentSessionId
-      ? { sessionId: coachAgentSessionId, fresh: false }
+    let induceSessionId = savedAgentSessionId
+    const prepared = induceSessionId
+      ? { sessionId: induceSessionId, fresh: false }
       : await prepareSession(options.ctx, {
         preferredId: preferred,
-        titleHint: `带教归纳｜${goal || '学会'}`,
+        titleHint: `带教归纳｜${savedGoal || '学会'}`,
         onSession: options.onSession,
         log,
       })
-    if (prepared.sessionId) coachAgentSessionId = prepared.sessionId
-    const inducePrompt = buildCoachInducePrompt(goal, logRows, mergedConstraints)
-    let summary = `带教完成：${goal}`
+    if (prepared.sessionId) induceSessionId = prepared.sessionId
+    const inducePrompt = buildCoachInducePrompt(savedGoal, logRows, mergedConstraints)
+    let summary = `带教完成：${savedGoal}`
     let fastPlan = ''
     const woken = await wake(options.ctx, {
       text: inducePrompt,
-      sessionId: prepared.sessionId || undefined,
-      preferredId: prepared.sessionId || preferred,
+      sessionId: induceSessionId || undefined,
+      preferredId: induceSessionId || preferred,
       log,
     })
     if (woken.ok) {
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+      if (woken.sessionId) induceSessionId = woken.sessionId
       const reply = await waitReply(options.ctx, woken.sessionId, {
         timeoutMs: 90_000,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
@@ -561,15 +586,16 @@ export function createTeachBridge(options) {
 
     /** @type {object[]} */
     let proposedScripts = []
-    const proposePrompt = buildScriptProposePrompt(goal, summary, fastPlan, mergedConstraints)
+    const proposePrompt = buildScriptProposePrompt(savedGoal, summary, fastPlan, mergedConstraints)
     const proposeWake = await wake(options.ctx, {
       text: proposePrompt,
-      sessionId: prepared.sessionId || undefined,
-      preferredId: prepared.sessionId || preferred,
+      sessionId: induceSessionId || undefined,
+      preferredId: induceSessionId || preferred,
       log,
     })
     if (proposeWake.ok) {
       try { options.onSession?.(proposeWake.sessionId) } catch { /* ignore */ }
+      if (proposeWake.sessionId) induceSessionId = proposeWake.sessionId
       const proposeReply = await waitReply(options.ctx, proposeWake.sessionId, {
         timeoutMs: 90_000,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
@@ -588,7 +614,7 @@ export function createTeachBridge(options) {
 
     const playbook = {
       id,
-      goal,
+      goal: savedGoal,
       approach: 'smart',
       strategy: {
         approach: 'smart',
@@ -602,7 +628,7 @@ export function createTeachBridge(options) {
         success: '主人对话确认做成了',
       },
       steps: [],
-      stats: { coachAttempts: attemptCount, mode: 'coach' },
+      stats: { coachAttempts: savedAttempts, mode: 'coach' },
       ownerNotes: '',
     }
 
@@ -610,7 +636,7 @@ export function createTeachBridge(options) {
     const pair = await createLearnedAutomationPair(options.home, {
       v: 2,
       id,
-      goal,
+      goal: savedGoal,
       teachSessionId: id,
       understanding: {
         summary,
@@ -618,12 +644,12 @@ export function createTeachBridge(options) {
         approach: 'smart',
         constraints: mergedConstraints,
         success: '主人对话确认做成了',
-        attemptCount,
+        attemptCount: savedAttempts,
       },
       coach: {
         status: 'verified',
         verifiedAt: now,
-        attemptCount,
+        attemptCount: savedAttempts,
         lastFailure: null,
       },
       capability: { skillName: null, scripts: [] },
@@ -635,12 +661,12 @@ export function createTeachBridge(options) {
     lastPairId = id
 
     const harness = await registerHarnessAutomation(options.ctx, {
-      goal,
+      goal: savedGoal,
       learnedId: id,
       automationId: pair.task.id,
       summary,
       preferredSessionId: preferred,
-      scheduleText: [goal, summary, fastPlan].filter(Boolean).join('\n'),
+      scheduleText: [savedGoal, summary, fastPlan].filter(Boolean).join('\n'),
       log,
     })
     await patchLearnedScheduleMeta(options.home, id, {
@@ -668,7 +694,7 @@ export function createTeachBridge(options) {
           const written = await writeCoachScripts(skillName, proposedScripts)
           await rewriteSkillWithScripts({
             skillName,
-            goal,
+            goal: savedGoal,
             learnedId: id,
             automationId: pair.task.id,
             summary,
@@ -708,7 +734,7 @@ export function createTeachBridge(options) {
       scriptCount: proposedScripts.length,
     })
 
-    const notice = buildLearnedChatNotice({ goal, summary, fastPlan, id })
+    const notice = buildLearnedChatNotice({ goal: savedGoal, summary, fastPlan, id })
     let bubble = notice
     if (harness.ok && harness.scheduled) {
       bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness。这次不自动再跑。`
@@ -726,11 +752,6 @@ export function createTeachBridge(options) {
       { petId: pet, memoryPath: options.petMemoryPath },
     ).catch((e) => log(`coach：写聊天失败：${e?.message ?? e}`))
 
-    endTeachingFlag()
-    sessionId = null
-    goal = ''
-    constraints = []
-    attemptCount = 0
     await broadcastToDshPet(bubble, { pet, duration: 18_000 })
     log(`coach：verified ${id}`)
   }
@@ -750,6 +771,8 @@ export function createTeachBridge(options) {
       await broadcastToDshPet('上句还在处理，稍等一下…', { pet, duration: 5_000 })
       return
     }
+    const epoch = coachEpoch
+    const sid = sessionId
     coachBusy = true
     try {
       const preferred = options.getPreferredSessionId?.() ?? null
@@ -760,7 +783,12 @@ export function createTeachBridge(options) {
         waitReply,
         log,
       })
-      await appendCoachLog(options.home, sessionId, {
+      // 分流常要等主会话十几秒；期间若已做成了/放弃/stop，结果作废
+      if (!coachStillActive(epoch, sid)) {
+        log(`coach：分流过期（${label}），忽略`)
+        return
+      }
+      await appendCoachLog(options.home, sid, {
         kind: 'utterance',
         text,
         label,
@@ -771,16 +799,20 @@ export function createTeachBridge(options) {
         return
       }
       if (label === 'abort') {
-        await finishCoachAbort(text)
+        await finishCoachAbort(text, epoch)
         return
       }
       if (label === 'correct' || label === 'step') {
+        if (!coachStillActive(epoch, sid)) {
+          log(`coach：${label} 过期，忽略`)
+          return
+        }
         if (label === 'correct') {
           constraints.push(clip(text, 120))
           constraints = [...new Set(constraints)].slice(0, 12)
         }
         attemptCount += 1
-        await appendCoachLog(options.home, sessionId, {
+        await appendCoachLog(options.home, sid, {
           kind: label,
           text,
           attemptCount,
@@ -789,12 +821,14 @@ export function createTeachBridge(options) {
           label === 'correct' ? '收到纠正，我按你说的改这一步…' : '好，我按你这一步来…',
           { pet, duration: 6_000 },
         )
+        if (!coachStillActive(epoch, sid)) return
         await wakeCoachRound(text)
         return
       }
 
+      if (!coachStillActive(epoch, sid)) return
       // open（或无法解析回落）：模型认为尚无具体一步 → 不动手
-      await appendCoachLog(options.home, sessionId, {
+      await appendCoachLog(options.home, sid, {
         kind: 'open',
         text,
         label,
