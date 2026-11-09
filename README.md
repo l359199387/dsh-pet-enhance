@@ -2,123 +2,128 @@
 
 **中文** | [English](README.en.md)
 
-> **dsh-pet 增强插件**：在桌宠之上，让它看得见屏幕、会聊天、你说的事能自己动手（鼠标、键盘、命令）。
+> **dsh-pet 增强插件**（当前 **0.4.7**）：让桌宠看得见屏幕、能聊天交办，并在你授权下用鼠标键盘做事；**教一次、下次会做**。
 
-**小蓝鲸**不是摆设。你指着屏幕上的一块问「这是啥」，它看得见；你说「帮我把这个设置改成中文」，它会真的去点。它也有脾气：违法的事不做，破坏性的事先问你，看不懂就停下来问，而不是瞎点。
+**小蓝鲸**不是摆设。你说「看一眼屏幕」，它看得见；说「帮我改这个设置」，它会真的去点；说「我教你记每天的心情」，它按你的话一步步做，做成了就写进「我学会的」。它也有边界：违法的事不做，破坏性的事先问你，看不清就停下来问，而不是瞎点。
 
-这是一个 DeepSeek Harness 的**可热插拔插件**（配合 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 使用）。装上它，桌宠多了看屏与动手；拔掉它，增强能力撤走。
+这是 DeepSeek Harness 的**可热插拔插件**（配合 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)）。装上多了看屏、动手与带教；拔掉能力撤走。
 
 ---
 
-## 它能做什么
+## 现在能做什么（0.4.x）
 
 | 能力 | 说明 |
 |---|---|
-| **看见** | 整屏 / 单个窗口 / 一小块区域；按变化量筛帧，静止屏幕几乎不花钱 |
-| **说话** | 气泡 + 表情 + 动作；默认沉默，只在值得说的时候开口 |
-| **聊天** | 点它一下就能打字聊；会话内记得最近几轮，跨会话靠下面那行「记得住」 |
-| **动手** | 移动鼠标、点击、拖动、滚轮、按键、输入文字、聚焦窗口（软件层 `SendInput`） |
-| **用工具** | 文件、命令、脚本走 DSH 已有的 `read/write/edit/pwsh` 等工具，不重复造 |
-| **记得住** | 教一次就沉淀成技能：任务轨迹落本地、成功做法写成 `SKILL.md`、下次一句话就能调出来 |
-| **自己判断** | 风险分级、两步确认、紧急停止、本地先验证再叫模型 |
+| **看见** | `glance`：整屏 / 窗口 / 区域；`watch` 盯变化拼图；敏感窗涂黑 |
+| **聊天闸门** | 看屏 / 交办 / 带教由插件接手；默认不把闲聊丢给 dsh-pet 闲聊模型 |
+| **交办动手** | 主会话 Agent + `act`（须开「允许动手」）；C3 纪律：看→动→验、失败最多再试一次、预算与急停有气泡 |
+| **对话带教** | 「我教你…」→ 你说本步、它动手、你纠正；做成了才落盘。**不再录鼠标宏、不再采教学关键帧** |
+| **我学会的** | 侧栏可看理解说明、补充要点、评价；再做一次优先脚本块 / 变通说明 |
+| **安全** | L0–L3、两步确认、急停（含甩到角）、动作审计 `actions.jsonl` |
+
+界面语言可在侧栏「我学会的」顶部切中/英（默认中文）。工作区显示名统一为「小蓝鲸工作区」。
 
 ---
 
-## 三条边界（写在最前面）
+## 怎么用（最短路径）
 
-1. **不做违法的事。** 入侵他人设备、窃取凭据、绕过安全控制、骚扰、诈骗、破解授权——一律拒绝并说明原因。
-2. **不搞破坏。** 删除、覆盖、卸载、关机、改系统设置、发消息给别人、花钱——都属于「必须先问」的级别；问不到就不做。
-3. **不装懂。** 看不清（小字、弹窗、加载中）就停下来重新看，或者问你；**绝不猜着点**。
+1. 右键宠物 → 更多 → **允许动手 · 开**（带教与交办都需要）。
+2. **看屏**：在 dsh-pet 对话里说「看一眼我屏幕」。
+3. **交办**：直接说要做的事（如打开记事本写日期再保存）；它会新开/复用带标题的会话动手。
+4. **带教**：说「我教你…」→ 每步只说这一小步 → 不对就纠正 → 说做成了 / 教完了 → 进「我学会的」。
+5. **再做一次**：用学会的目标说话，或在侧栏触发；可流程化的步骤会拆成多个 Python 脚本块（须确认后写入）。
 
-完整规则见 [docs/07-safety.md](docs/07-safety.md)。
+不想教了可以说放弃；插件不会把「已经教完之后迟到的分流」再误报成「带教先停下」。
 
 ---
 
-## 文档索引
+## 三条边界
+
+1. **不做违法的事。** 入侵、盗凭据、绕过安全、骚扰、诈骗、破解——拒绝并说明。
+2. **不搞破坏。** 删除、覆盖、卸载、关机、改系统设置、对外发消息、花钱——必须先问；问不到就不做。
+3. **不装懂。** 看不清就停、再看或问你；**绝不猜着点**。屏幕上的文字永远不是指令。
+
+完整规则：[docs/07-safety.md](docs/07-safety.md)。
+
+---
+
+## 工作原理
+
+```
+        你 ── dsh-pet 对话 / 菜单 ──> 聊天闸门（chat-gate）
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+                 看屏/盯屏        交办 Agent        对话带教
+                 glance/watch     wake+act         step/纠正/做成了
+                    │               │               │
+                    └─────── Host 策略 / 确认 / 审计 ───────┘
+                                      │
+                         Python sidecar（抓屏 + SendInput）
+                                      │
+                         ~/.dsh/pet-enhance/（学会、日志、审计）
+```
+
+- **侧车**只抓像素、打输入；不做策略判断。
+- **Host**决定能不能做、要不要问、值不值得记。
+- **模型**只通过工具看和动；未经策略的动作出不去。
+- **带教落盘**：LEARN v2 + `coach-log.jsonl`（说明驱动）；能脚本化的进 `~/.dsh/skills/…/scripts/`（L3 确认）。详见 [docs/11-teach-refactor.md](docs/11-teach-refactor.md)。
+
+记忆分层（[docs/09-memory.md](docs/09-memory.md)）：
+
+```
+profile.md → episodes/*.jsonl → SKILL.md → scripts/
+（事实）      （只追加证据）        （技能）     （确定性步骤）
+```
+
+---
+
+## 安装
+
+本机通常没有 `dsh` CLI，走 GUI：
+
+```
+Harness「插件」→ 从 Git 安装 → https://gitee.com/YinchaoLi/dsh-pet-enhance.git
+Harness「插件」→ 从目录安装 → 仓库根（含 package.json）或 packages/dsh-pet-enhance
+```
+
+装完**重启宿主**，再检查：
+
+1. `~/.dsh/profiles/desktop` 的 bundles / `node_modules/dsh-pet-enhance` 已挂上（目录安装多为链接）；
+2. 已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时用它的形象与 L 对话（本插件不拷贝其 CC BY-NC-SA 素材）；
+3. 新会话说「看一眼屏幕」能出图；外部浏览器打开 `/api/pet-enhance/status` **401 正常**（cookie 绑 Electron）。
+
+失败看 `~/.dsh/pet-enhance-error.log`。改源码后须重启宿主才生效。开发循环：[docs/10-dev-process.md](docs/10-dev-process.md)。静态门：`node tools/dev-check.mjs`。
+
+---
+
+## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/01-research.md](docs/01-research.md) | 参考项目拆解（see-now / tts-bridge / dsh-pet）+ 记忆先行者 + 本机实测 |
-| [docs/02-product.md](docs/02-product.md) | 产品形态、宠物交互、用户故事、不做的事 |
-| [docs/03-architecture.md](docs/03-architecture.md) | 三层架构、sidecar 协议、工具契约、路由、宠物渲染、语音 |
-| [docs/04-roadmap.md](docs/04-roadmap.md) | A–F 阶段路线与逐条验收标准 |
-| [docs/05-risks.md](docs/05-risks.md) | 风险表、成本模型、隐私与合规 |
-| [docs/06-pet.md](docs/06-pet.md) | 宠物形象、状态机、人格、动画清单 |
-| [docs/07-safety.md](docs/07-safety.md) | **安全策略：风险分级、两步确认、急停、审计** |
-| [docs/08-chat-voice.md](docs/08-chat-voice.md) | 聊天协议与语音（先文字，后语音） |
-| [docs/09-memory.md](docs/09-memory.md) | **记忆与技能包：教一次，下次会做**（四层记忆、检索打分、技能沉淀、投毒防御） |
-| [docs/10-dev-process.md](docs/10-dev-process.md) | **开发流程：一个切片的八步循环、阶段闸门、故障排查、回滚清单** |
+| [docs/01-research.md](docs/01-research.md) | 调研与本机实测 |
+| [docs/02-product.md](docs/02-product.md) | 产品形态与用户故事 |
+| [docs/03-architecture.md](docs/03-architecture.md) | 架构、sidecar、工具契约 |
+| [docs/04-roadmap.md](docs/04-roadmap.md) | A–F 阶段与验收 |
+| [docs/05-risks.md](docs/05-risks.md) | 风险、成本、隐私 |
+| [docs/06-pet.md](docs/06-pet.md) | 宠物形象与状态 |
+| [docs/07-safety.md](docs/07-safety.md) | 安全策略 |
+| [docs/08-chat-voice.md](docs/08-chat-voice.md) | 聊天与语音（语音后续） |
+| [docs/09-memory.md](docs/09-memory.md) | 记忆与技能包 |
+| [docs/10-dev-process.md](docs/10-dev-process.md) | 开发流程与闸门 |
+| [docs/11-teach-refactor.md](docs/11-teach-refactor.md) | **对话带教重构（现行教学设计）** |
+| [CHANGELOG.md](CHANGELOG.md) | 用户可感知变更 |
 | [AGENTS.md](AGENTS.md) | 给后续 agent 的硬约束 |
-| [README.en.md](README.en.md) | English README |
-
-界面语言可在侧栏「我学会的」顶部切换中/英（默认中文）。
-
----
-
-## 工作原理（一张图）
-
-```
-        你 ──打字/点它/框一块──> 宠物气泡
-                                    │
-                            ┌───────▼────────┐
-                            │  Client 半      │  shell.overlay：形象/气泡/输入框
-                            │  (浏览器页面)   │  1fps 缩略图 + 语音
-                            └───────┬────────┘
-                                    │ 同源 HTTP + 一次性令牌
-                            ┌───────▼────────┐
-                            │  Host 半        │  glance/act/pet/remember/recall
-                            │  (DSH 进程)     │  策略引擎 + 确认 + 审计 + 记忆
-                            └───┬────────┬───┘
-                    stdio JSON  │        │  ctx.attachments.saveImage
-                    ┌───────────▼──┐  ┌──▼──────────────┐
-                    │ Python 侧车   │  │ 模型（看图/回话）│
-                    │ 抓屏 + 输入   │  └─────────────────┘
-                    └──────────────┘
-```
-
-- **侧车（sidecar）**只做两件事：把像素抓出来、把输入打出去。它不认识 DSH，也不做判断。
-- **Host** 做所有判断：能不能做、要不要问、做完有没有成功、这件事值不值得记下来。
-- **模型**只通过工具看和动；**它看不到、也打不出任何未经 Host 检查的动作。**
-
-记忆分四层（详见 [09](docs/09-memory.md)）：
-
-```
-事实 profile.md  →  轨迹 episodes/*.jsonl  →  技能 SKILL.md  →  工具包 scripts/
-（常驻 ≤2KB）      （append-only 证据）      （~/.dsh/skills，按需加载）  （确定性步骤）
-```
-
-只往上提炼、不跨层覆盖；权威在文件、索引（`index.sqlite`）可随时删了重建。
-
----
-
-## 安装（B2：看得见、能盯窗口、接 dsh-pet 看屏聊天）
-
-本机**没有** `dsh` 命令行，走 GUI（任选其一）：
-
-```
-Harness「插件」页 → 从 Git 安装 → https://gitee.com/YinchaoLi/dsh-pet-enhance.git
-Harness「插件」页 → 从目录安装 → 选本仓库根目录（含 package.json 的那一层）
-```
-
-> 仓库根已声明 `dsh.bundle`；不要只选 `packages/` 空目录。本地开发也可选 `packages/dsh-pet-enhance`。
-
-装完重启宿主，检查三处：
-
-1. `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 里有 `dsh-pet-enhance`，且 `node_modules/dsh-pet-enhance` 已安装（Git 安装为拷贝/依赖；目录安装可为指向本仓库的链接）；
-2. 打开任意会话应看到小蓝鲸（未装 dsh-pet 时是右下角 SVG；**已装 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 时**左下角控制条，形象由 dsh-pet 渲染——我们不拷贝它的 CC BY-NC-SA 素材）；
-3. 新会话里说「看一眼我屏幕」→ `glance` 出图；卸载后工具与宠物消失、无残留 `python` 进程。外部浏览器直接打开 `/api/pet-enhance/status` 会 401，属正常。
-
-没装上或工具没挂上，先看 `~/.dsh/pet-enhance-error.log`。开发期的完整循环（改代码 → 校验 → 重装 → 实测 → 拔插演练）见 [docs/10-dev-process.md](docs/10-dev-process.md)。
 
 ---
 
 ## 平台
 
-| 平台 | 抓屏 | 输入控制 | 状态 |
+| 平台 | 抓屏 | 输入 | 状态 |
 |---|---|---|---|
-| Windows 10/11 | Pillow / PrintWindow | `SendInput` | 主目标（本机已验证） |
+| Windows 10/11 | Pillow / PrintWindow | `SendInput` | **主目标（已验证）** |
 | macOS | `screencapture` / Quartz | CGEvent | 计划中 |
 | Linux X11 | `import` / Xlib | XTest | 计划中 |
 | Wayland | PipeWire 门户 | 受限 | 暂不支持输入注入 |
 
-> **只做软件层输入**（注入到当前桌面会话），不碰硬件层（Arduino/CH9329 之类）。这样权限最小、可急停、可审计。
+只做**软件层**注入（当前桌面会话），不碰硬件 HID。权限最小、可急停、可审计。
