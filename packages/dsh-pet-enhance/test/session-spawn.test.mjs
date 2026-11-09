@@ -24,18 +24,26 @@ test('clipSessionTitle', () => {
   assert.ok(clipSessionTitle('x'.repeat(80)).length <= 40)
 })
 
-test('ensurePetWorkspace：统一改名为小蓝鲸工作区', () => {
+test('ensurePetWorkspace：走 workspaceController.rename 写 title', async () => {
   const workspaces = [
-    { id: 'ws1', path: 'C:/proj/default-workspace', name: '默认工作区', sessionIds: ['s1'] },
+    { id: 'ws1', path: 'C:/proj/default-workspace', title: '默认工作区', sessionIds: ['s1'] },
   ]
+  const renames = []
   const ctx = {
     get(name) {
       if (name === 'workspaceRegistry') {
         return {
           list: () => workspaces,
-          rename: (id, title) => {
-            const w = workspaces.find((x) => x.id === id)
-            if (w) w.name = title
+          get: (id) => workspaces.find((x) => x.id === id) || null,
+        }
+      }
+      if (name === 'workspaceController') {
+        return {
+          async rename(req) {
+            renames.push(req)
+            const w = workspaces.find((x) => x.id === req.workspaceId)
+            if (w) w.title = req.title
+            return { workspace: w }
           },
         }
       }
@@ -45,12 +53,13 @@ test('ensurePetWorkspace：统一改名为小蓝鲸工作区', () => {
       return null
     },
   }
-  const r = ensurePetWorkspace(ctx, { preferredId: 's1', log() {} })
+  const r = await ensurePetWorkspace(ctx, { preferredId: 's1', log() {} })
   assert.equal(r.ok, true)
   assert.equal(r.renamed, true)
   assert.equal(r.workspace.name, PET_WORKSPACE_NAME)
-  assert.equal(workspaces[0].name, PET_WORKSPACE_NAME)
-  assert.equal(applyWorkspaceName(ctx, 'ws1', PET_WORKSPACE_NAME), true)
+  assert.equal(workspaces[0].title, PET_WORKSPACE_NAME)
+  assert.deepEqual(renames[0], { workspaceId: 'ws1', title: PET_WORKSPACE_NAME })
+  assert.equal(await applyWorkspaceName(ctx, 'ws1', PET_WORKSPACE_NAME), true)
 })
 
 test('extractCreatedSessionId：多种返回形状', () => {
@@ -96,12 +105,13 @@ test('findWorkspaceForSession / 权限读写', () => {
   assert.equal(applyStandardTranscriptMode(ctx), true)
 })
 
-test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () => {
+test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () => {
   const sessions = new Map([['old', { id: 'old' }]])
   const perms = new Map([[sessions.get('old'), 'workspace-write']])
   const selections = []
   let modes = []
   let createReq = null
+  const renames = []
   const ctx = {
     get(name) {
       if (name === 'sessionController') {
@@ -109,10 +119,17 @@ test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () 
           async create(req) {
             createReq = req
             assert.equal(req.workspaceId, 'ws1')
+            assert.equal(req.title, undefined)
             assert.equal(req.agentPreset, STANDARD_AGENT_PRESET)
             const neu = { id: 'new' }
             sessions.set('new', neu)
-            return { agent: { id: 'new' } }
+            return { sessionId: 'new' }
+          },
+          async rename(req) {
+            renames.push(req)
+            const s = sessions.get(String(req.sessionId))
+            if (s) s.title = req.title
+            return { title: req.title, seq: 1 }
           },
           async resolveAgent(id) {
             const session = sessions.get(String(id))
@@ -135,7 +152,13 @@ test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () 
         }
       }
       if (name === 'workspaceRegistry') {
-        return { list: () => [{ id: 'ws1', path: 'C:/p', sessionIds: ['old'] }] }
+        return {
+          list: () => [{ id: 'ws1', path: 'C:/p', title: PET_WORKSPACE_NAME, sessionIds: ['old'] }],
+          get: () => ({ id: 'ws1', path: 'C:/p', title: PET_WORKSPACE_NAME }),
+        }
+      }
+      if (name === 'workspaceController') {
+        return { async rename() { return {} } }
       }
       if (name === 'permissionPresets') {
         return {
@@ -166,8 +189,11 @@ test('openNewWorkspaceSession：完全权限 + standard + low 推理', async () 
   assert.equal(r.reasoningEffort, DEFAULT_REASONING_EFFORT)
   assert.equal(r.reasoningApplied, true)
   assert.equal(r.revealed, true)
+  assert.equal(r.titled, true)
   assert.deepEqual(createReq?.agentPreset, STANDARD_AGENT_PRESET)
-  assert.equal(createReq?.title, '小蓝鲸｜交办')
+  assert.equal(createReq?.workspaceId, 'ws1')
+  assert.deepEqual(renames[0], { sessionId: 'new', title: '小蓝鲸｜交办' })
+  assert.equal(sessions.get('new').title, '小蓝鲸｜交办')
   assert.deepEqual(modes, ['standard'])
   assert.deepEqual(opened, ['new'])
   assert.equal(readSessionPermissionPreset(ctx, 'new'), FULL_ACCESS_PERMISSION)
@@ -204,17 +230,26 @@ test('prepareFreshRunSession：失败时回落旧会话', async () => {
   assert.equal(r.sessionId, 'old')
 })
 
-test('applySessionTitle：写到 session.title', () => {
+test('applySessionTitle：sessionController.rename', async () => {
   const sessions = new Map([['s1', { id: 's1', title: '' }]])
   const ctx = {
     get(name) {
+      if (name === 'sessionController') {
+        return {
+          async rename(req) {
+            const s = sessions.get(String(req.sessionId))
+            if (s) s.title = req.title
+            return { title: req.title, seq: 1 }
+          },
+        }
+      }
       if (name === 'sessions') {
         return { get: (id) => sessions.get(String(id)) || null }
       }
       return null
     },
   }
-  assert.equal(applySessionTitle(ctx, 's1', '小蓝鲸｜带教｜记心情'), true)
+  assert.equal(await applySessionTitle(ctx, 's1', '小蓝鲸｜带教｜记心情'), true)
   assert.equal(sessions.get('s1').title, '小蓝鲸｜带教｜记心情')
 })
 

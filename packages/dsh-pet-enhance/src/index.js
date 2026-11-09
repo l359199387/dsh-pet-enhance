@@ -1201,12 +1201,12 @@ export async function apply(ctx) {
     log(`home: ${home}`)
     installSidecar(ctx, log, state, disposers)
     installSessionTracker(ctx, log, state)
-    try {
-      const ws = ensurePetWorkspace(ctx, { preferredId: state.lastSessionId, log })
-      if (ws.ok) log(`工作区：${ws.workspace?.name || '小蓝鲸工作区'}${ws.renamed ? '（已改名）' : ''}`)
-    } catch (e) {
-      log(`工作区改名跳过：${e?.message ?? e}`)
-    }
+    void ensurePetWorkspace(ctx, { preferredId: state.lastSessionId, log })
+      .then((ws) => {
+        if (ws.ok) log(`工作区：${ws.workspace?.name || '小蓝鲸工作区'}${ws.renamed ? '（已改名）' : ''}`)
+        else log(`工作区：未就绪（${ws.reason || 'unknown'}）`)
+      })
+      .catch((e) => log(`工作区改名跳过：${e?.message ?? e}`))
     installDshPetBridge(ctx, log, state, disposers)
     installRoutes(ctx, log, state)
     installTools(ctx, log, state)

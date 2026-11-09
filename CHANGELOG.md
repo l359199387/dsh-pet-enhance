@@ -2,7 +2,15 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
-## 0.4.7 · 未发布
+## 0.4.8 · 未发布
+
+### 修：侧栏仍显示「未分组 / 未命名」
+
+- 宿主 `session.create` **不接收 title**，须事后 `sessionController.rename`；原先本地改字段不落盘。
+- 只有带 `workspaceId` 创建才会 `attachSession`；只传 `cwd` 会一直停在「未分组」。
+- 工作区改名走 `workspaceController.rename` / `workspace.setTitle`（读 `title` 字段）。
+
+## 0.4.7
 
 ### 修：没在带教却冒「这轮带教先停下」
 

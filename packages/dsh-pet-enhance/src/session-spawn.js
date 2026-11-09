@@ -32,97 +32,40 @@ export function clipSessionTitle(hint, fallback = '交办') {
 }
 
 /**
- * 给新建会话写标题（宿主 API 形状不一，多路尝试）。
- * @returns {boolean}
+ * 给会话写标题。宿主 create 不吃 title——必须事后 rename。
+ * 权威路径：sessionController.rename({ sessionId, title })
+ * 或 sessionTitle.rename(session, title)。
+ * @returns {Promise<boolean>}
  */
-export function applySessionTitle(ctx, sessionId, title) {
+export async function applySessionTitle(ctx, sessionId, title) {
   const sid = String(sessionId || '').trim()
   const name = String(title || '').trim().slice(0, 80)
   if (!sid || !name) return false
 
-  const sessions = serviceOf(ctx, 'sessions')
   const sc = serviceOf(ctx, 'sessionController')
-  const ui = serviceOf(ctx, 'uiWorkspace')
-  const sessionTitle = serviceOf(ctx, 'sessionTitle')
-
   try {
-    if (typeof sessionTitle?.set === 'function') {
-      sessionTitle.set(sid, name)
+    if (typeof sc?.rename === 'function') {
+      await sc.rename({ sessionId: sid, title: name })
       return true
     }
-    if (typeof sessionTitle?.update === 'function') {
-      sessionTitle.update(sid, name)
+  } catch { /* try next */ }
+
+  const sessions = serviceOf(ctx, 'sessions')
+  const sessionTitle = serviceOf(ctx, 'sessionTitle')
+  try {
+    const session = sessions?.get?.(sid)
+    if (session && typeof sessionTitle?.rename === 'function') {
+      // 宿主形状是 rename(session, title)，不是 rename(sessionId, title)
+      sessionTitle.rename(session, name)
       return true
     }
-    if (typeof sessionTitle?.rename === 'function') {
-      sessionTitle.rename(sid, name)
-      return true
-    }
-  } catch { /* ignore */ }
+  } catch { /* try next */ }
 
   try {
     const session = sessions?.get?.(sid)
-    if (session) {
-      if (typeof session.rename === 'function') {
-        session.rename(name)
-        return true
-      }
-      if (typeof session.setTitle === 'function') {
-        session.setTitle(name)
-        return true
-      }
-      if (session.header && typeof session.header === 'object') {
-        try {
-          session.header.title = name
-          if (typeof session.header === 'object' && 'name' in session.header) {
-            session.header.name = name
-          }
-          return true
-        } catch { /* ignore */ }
-      }
-      if (Object.prototype.hasOwnProperty.call(session, 'title')) {
-        session.title = name
-        return true
-      }
-    }
-  } catch { /* ignore */ }
-
-  const scFns = [
-    ['rename', [sid, name]],
-    ['renameSession', [sid, name]],
-    ['setTitle', [sid, name]],
-    ['update', [sid, { title: name }]],
-    ['updateSession', [sid, { title: name }]],
-  ]
-  for (const [fn, args] of scFns) {
-    try {
-      if (typeof sc?.[fn] === 'function') {
-        const out = sc[fn](...args)
-        if (out && typeof out.then === 'function') {
-          out.catch(() => {})
-        }
-        return true
-      }
-    } catch { /* try next */ }
-  }
-
-  const sessFns = [
-    ['rename', [sid, name]],
-    ['setTitle', [sid, name]],
-    ['update', [sid, { title: name }]],
-  ]
-  for (const [fn, args] of sessFns) {
-    try {
-      if (typeof sessions?.[fn] === 'function') {
-        sessions[fn](...args)
-        return true
-      }
-    } catch { /* try next */ }
-  }
-
-  try {
-    if (typeof ui?.renameSession === 'function') {
-      ui.renameSession(sid, name)
+    if (session && typeof session.rename === 'function') {
+      const out = session.rename(name)
+      if (out && typeof out.then === 'function') await out
       return true
     }
   } catch { /* ignore */ }
@@ -171,7 +114,8 @@ export function listWorkspaces(ctx) {
  * @param {object | null | undefined} ws
  */
 export function workspaceDisplayName(ws) {
-  return String(ws?.name || ws?.title || ws?.label || ws?.displayName || '').trim()
+  // 宿主持久字段是 title（workspace.setTitle）；name 多为路径派生
+  return String(ws?.title || ws?.name || ws?.label || ws?.displayName || '').trim()
 }
 
 /**
@@ -199,10 +143,11 @@ export function findWorkspaceForSession(ctx, sessionId) {
 }
 
 /**
- * 给工作区改显示名（宿主 API 形状不一，多路尝试）。
- * @returns {boolean}
+ * 给工作区改显示名。权威：workspaceController.rename / workspace.setTitle。
+ * 侧栏「未分组」= 会话没挂 workspaceId；分组标题读的是 workspace.title。
+ * @returns {Promise<boolean>}
  */
-export function applyWorkspaceName(ctx, workspaceOrId, name) {
+export async function applyWorkspaceName(ctx, workspaceOrId, name) {
   const want = String(name || '').trim()
   if (!want) return false
   const id = typeof workspaceOrId === 'string'
@@ -210,43 +155,43 @@ export function applyWorkspaceName(ctx, workspaceOrId, name) {
     : String(workspaceOrId?.id || '').trim()
   if (!id) return false
 
+  const wc = serviceOf(ctx, 'workspaceController')
+  try {
+    if (typeof wc?.rename === 'function') {
+      await wc.rename({ workspaceId: id, title: want })
+      return true
+    }
+  } catch { /* try next */ }
+
   const registry = serviceOf(ctx, 'workspaceRegistry')
-  const ui = serviceOf(ctx, 'uiWorkspace')
   let live = null
   try {
-    live = listWorkspaces(ctx).find((w) => String(w?.id) === id) || null
+    live = typeof registry?.get === 'function'
+      ? registry.get(id)
+      : null
   } catch { /* ignore */ }
+  if (!live) {
+    try {
+      live = listWorkspaces(ctx).find((w) => String(w?.id) === id) || null
+    } catch { /* ignore */ }
+  }
   if (!live && workspaceOrId && typeof workspaceOrId === 'object') live = workspaceOrId
 
-  if (live && typeof live === 'object') {
-    for (const key of ['name', 'title', 'label', 'displayName']) {
-      try { live[key] = want } catch { /* ignore */ }
-    }
-  }
-
-  const tryCall = (fn, args) => {
-    try {
-      if (typeof fn !== 'function') return false
-      const out = fn(...args)
-      if (out && typeof out.then === 'function') out.catch(() => {})
+  try {
+    if (live && typeof live.setTitle === 'function') {
+      await live.setTitle(want)
       return true
-    } catch {
-      return false
     }
-  }
+  } catch { /* try next */ }
 
-  if (tryCall(registry?.rename, [id, want])) return true
-  if (tryCall(registry?.renameWorkspace, [id, want])) return true
-  if (tryCall(registry?.setName, [id, want])) return true
-  if (tryCall(registry?.setTitle, [id, want])) return true
-  if (tryCall(registry?.update, [id, { name: want, title: want }])) return true
-  if (tryCall(registry?.updateWorkspace, [id, { name: want, title: want }])) return true
-  if (tryCall(ui?.renameWorkspace, [id, want])) return true
-  if (tryCall(ui?.setWorkspaceName, [id, want])) return true
-  if (tryCall(live?.rename, [want])) return true
-  if (tryCall(live?.setName, [want])) return true
+  try {
+    if (typeof registry?.rename === 'function') {
+      await registry.rename(id, want)
+      return true
+    }
+  } catch { /* ignore */ }
 
-  return workspaceDisplayName(live) === want
+  return false
 }
 
 /**
@@ -254,10 +199,24 @@ export function applyWorkspaceName(ctx, workspaceOrId, name) {
  * @param {object} ctx
  * @param {{ preferredId?: string | null, log?: (m: string) => void }} [opts]
  */
-export function ensurePetWorkspace(ctx, opts = {}) {
+export async function ensurePetWorkspace(ctx, opts = {}) {
   const log = opts.log ?? (() => {})
   const preferredId = opts.preferredId ?? null
-  const all = listWorkspaces(ctx)
+
+  let all = listWorkspaces(ctx)
+  if (!all.length) {
+    const wc = serviceOf(ctx, 'workspaceController')
+    if (typeof wc?.initializeDefault === 'function') {
+      try {
+        await wc.initializeDefault()
+        all = listWorkspaces(ctx)
+        log('workspace：已 initializeDefault')
+      } catch (e) {
+        log(`workspace：initializeDefault 失败：${e?.message ?? e}`)
+      }
+    }
+  }
+
   const named = all.find((w) => workspaceDisplayName(w) === PET_WORKSPACE_NAME)
   const fromSession = findWorkspaceForSession(ctx, preferredId)
   const byPath = all.find((w) => /default-workspace/i.test(String(w?.path || '')))
@@ -266,6 +225,7 @@ export function ensurePetWorkspace(ctx, opts = {}) {
       id: String(all[0].id),
       path: all[0].path ? String(all[0].path) : undefined,
       name: workspaceDisplayName(all[0]) || null,
+      title: all[0].title,
     }
     : null)
 
@@ -274,7 +234,7 @@ export function ensurePetWorkspace(ctx, opts = {}) {
     return { ok: false, reason: 'no-workspace' }
   }
 
-  if (workspaceDisplayName(pick) === PET_WORKSPACE_NAME || pick.name === PET_WORKSPACE_NAME) {
+  if (workspaceDisplayName(pick) === PET_WORKSPACE_NAME) {
     return {
       ok: true,
       renamed: false,
@@ -282,7 +242,7 @@ export function ensurePetWorkspace(ctx, opts = {}) {
     }
   }
 
-  const renamed = applyWorkspaceName(ctx, pick.id, PET_WORKSPACE_NAME)
+  const renamed = await applyWorkspaceName(ctx, pick.id, PET_WORKSPACE_NAME)
   log(
     renamed
       ? `workspace：已命名「${PET_WORKSPACE_NAME}」id=${pick.id}`
@@ -449,7 +409,7 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
   }
 
   const fromSessionId = pickSessionId(ctx, opts.preferredId ?? null)
-  const ensured = ensurePetWorkspace(ctx, { preferredId: fromSessionId, log })
+  const ensured = await ensurePetWorkspace(ctx, { preferredId: fromSessionId, log })
   const workspace = ensured.workspace || findWorkspaceForSession(ctx, fromSessionId)
   const agentPreset = String(opts.agentPreset || STANDARD_AGENT_PRESET).trim() || STANDARD_AGENT_PRESET
   const reasoningEffort = opts.reasoningEffort === null
@@ -464,10 +424,16 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
 
   const title = clipSessionTitle(opts.titleHint, '交办')
 
+  // 宿主：create 只认 workspaceId 或 cwd（不能同时）；只有 workspaceId 才会 attachSession。
+  // 只传 cwd → 侧栏仍显示「未分组」。title 字段会被忽略，须事后 rename。
   /** @type {Record<string, unknown>} */
-  const request = { agentPreset, title, name: title }
-  if (workspace?.id) request.workspaceId = workspace.id
-  else if (workspace?.path) request.cwd = workspace.path
+  const request = { agentPreset }
+  if (workspace?.id) {
+    request.workspaceId = workspace.id
+  } else if (workspace?.path) {
+    request.cwd = workspace.path
+    log('session-spawn：无 workspaceId，仅 cwd——侧栏可能仍显示未分组')
+  }
 
   let created
   try {
@@ -513,14 +479,15 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
     if (!reasoningApplied) log(`session-spawn：推理 ${reasoningEffort} 未能写到新会话 ${sessionId}`)
   }
 
-  let titled = applySessionTitle(ctx, sessionId, title)
+  let titled = await applySessionTitle(ctx, sessionId, title)
   if (!titled) {
-    for (let i = 0; i < 6; i += 1) {
-      await new Promise((r) => setTimeout(r, 40))
-      titled = applySessionTitle(ctx, sessionId, title)
+    for (let i = 0; i < 8; i += 1) {
+      await new Promise((r) => setTimeout(r, 50))
+      titled = await applySessionTitle(ctx, sessionId, title)
       if (titled) break
     }
   }
+  if (!titled) log(`session-spawn：标题未能写入 ${sessionId} ← ${title}`)
 
   const revealed = revealWorkspaceSession(ctx, sessionId)
   log(
