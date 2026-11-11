@@ -20,6 +20,27 @@
  */
 
 /**
+ * 从 hello.screen / shot.screen / stats.screen 取虚拟桌面边界（可含负坐标多屏）。
+ * @param {{ w?: number, h?: number, width?: number, height?: number, virtual?: { x?: number, y?: number, w?: number, h?: number } } | null | undefined} screen
+ * @returns {{ x: number, y: number, w: number, h: number } | null}
+ */
+export function resolveVirtualBounds(screen) {
+  const v = screen?.virtual
+  if (v && Number(v.w) > 0 && Number(v.h) > 0) {
+    return {
+      x: Number(v.x) || 0,
+      y: Number(v.y) || 0,
+      w: Number(v.w),
+      h: Number(v.h),
+    }
+  }
+  const w = Number(screen?.w ?? screen?.width) || 0
+  const h = Number(screen?.h ?? screen?.height) || 0
+  if (w > 0 && h > 0) return { x: 0, y: 0, w, h }
+  return null
+}
+
+/**
  * @param {number} imageX
  * @param {number} imageY
  * @param {GlanceMap} map

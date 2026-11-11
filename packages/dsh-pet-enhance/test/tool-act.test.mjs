@@ -3,11 +3,16 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
-import { createActTool } from '../src/tool-act.js'
+import { asToolOutput, createActTool } from '../src/tool-act.js'
 import { saveSettings } from '../src/settings.js'
 import { createConfirmGate } from '../src/confirm.js'
 import { createActionBudget } from '../src/policy.js'
 import { actionsFilePath } from '../src/audit.js'
+
+function assertLosslessJson(value) {
+  const again = JSON.parse(JSON.stringify(value))
+  assert.deepEqual(again, value)
+}
 
 const home = mkdtempSync(join(tmpdir(), 'glance-act-'))
 after(() => {
@@ -185,9 +190,92 @@ test('L2 用户点好 → 执行并写审计', async () => {
   assert.equal(r.meta.ok, true)
   assert.equal(r.meta.tier, 'L2')
   assert.equal(r.meta.confirmed, true)
+  assertLosslessJson(r)
   const lines = readFileSync(actionsFilePath(home), 'utf8').trim().split('\n')
   const last = JSON.parse(lines.at(-1))
   assert.equal(last.action, 'click')
   assert.equal(last.confirmed, true)
   assert.equal(last.ok, true)
+})
+
+test('策略拒绝路径返回值是 lossless JSON（无 budget 字段泄漏 undefined）', async () => {
+  process.env.DSH_PET_ENHANCE_ACT = '1'
+  const tool = createActTool({
+    home,
+    log() {},
+    isArmed: () => true,
+    budget: createActionBudget(),
+    sidecar: mockSidecar({
+      stats: () => ({
+        ok: true,
+        active: { title: '豆包' },
+        atPoint: { title: '豆包' },
+        screen: { w: 2560, h: 1600 },
+      }),
+    }),
+  })
+  const r = await tool.execute({
+    action: 'click',
+    x: -1080,
+    y: 890,
+    reason: '点输入框准备输入',
+  })
+  assert.equal(r.meta.ok, false)
+  assert.equal(r.meta.code, 'COORDS_OUT_OF_SCREEN')
+  assert.equal(Object.hasOwn(r.meta, 'budget'), false)
+  assertLosslessJson(r)
+})
+
+test('多屏负坐标：stats 带 virtual 时放行并执行', async () => {
+  process.env.DSH_PET_ENHANCE_ACT = '1'
+  let seen
+  const tool = createActTool({
+    home,
+    log() {},
+    isArmed: () => true,
+    budget: createActionBudget(),
+    sidecar: mockSidecar({
+      stats: () => ({
+        ok: true,
+        active: { title: '豆包' },
+        atPoint: { title: '豆包' },
+        screen: {
+          w: 2560,
+          h: 1600,
+          virtual: { x: -1920, y: 0, w: 4480, h: 1600 },
+        },
+      }),
+      input: (fields) => {
+        seen = fields
+        return { ok: true, done: fields.actions, cursor: { x: -1080, y: 890 } }
+      },
+    }),
+  })
+  const r = await tool.execute({
+    action: 'click',
+    x: -1080,
+    y: 890,
+    reason: '点输入框准备输入',
+  })
+  assert.equal(r.meta.ok, true)
+  assert.equal(seen.actions.some((a) => a.kind === 'click' && a.x === -1080), true)
+  assertLosslessJson(r)
+})
+
+test('asToolOutput 去掉 undefined / 非有限数字', () => {
+  const dirty = {
+    text: 'x',
+    meta: {
+      ok: false,
+      code: 'COORDS_OUT_OF_SCREEN',
+      budget: undefined,
+      x: Number.NaN,
+      y: Number.POSITIVE_INFINITY,
+    },
+  }
+  const clean = asToolOutput(dirty)
+  assert.equal(Object.hasOwn(clean.meta, 'budget'), false)
+  assert.equal(clean.meta.x, null)
+  assert.equal(clean.meta.y, null)
+  assertLosslessJson(clean)
 })

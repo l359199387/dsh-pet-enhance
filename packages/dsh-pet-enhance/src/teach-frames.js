@@ -15,6 +15,9 @@ import {
   DIGEST_SHEET_FRAMES,
   sampleFramesForDigest as sampleDigestPool,
 } from './teach-digest.js'
+import { resolveVirtualBounds } from './coords.js'
+
+export { resolveVirtualBounds }
 
 /** 开场/换窗/收尾等上下文关键帧上限（不含点击帧） */
 export const MAX_KEY_FRAMES = 5
@@ -49,26 +52,6 @@ export function teachFramesDir(home, sessionId) {
 
 export function learnedFramesDir(home, learnedId) {
   return join(home, 'learned', learnedId, 'frames')
-}
-
-/**
- * 从 hello.screen / shot.screen 取虚拟桌面边界（可含负坐标多屏）。
- * @param {{ w?: number, h?: number, width?: number, height?: number, virtual?: { x?: number, y?: number, w?: number, h?: number } } | null | undefined} screen
- */
-export function resolveVirtualBounds(screen) {
-  const v = screen?.virtual
-  if (v && Number(v.w) > 0 && Number(v.h) > 0) {
-    return {
-      x: Number(v.x) || 0,
-      y: Number(v.y) || 0,
-      w: Number(v.w),
-      h: Number(v.h),
-    }
-  }
-  const w = Number(screen?.w ?? screen?.width) || 0
-  const h = Number(screen?.h ?? screen?.height) || 0
-  if (w > 0 && h > 0) return { x: 0, y: 0, w, h }
-  return null
 }
 
 /**

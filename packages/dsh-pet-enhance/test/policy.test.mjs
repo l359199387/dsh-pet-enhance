@@ -53,6 +53,21 @@ test('坐标越界拒绝', () => {
   assert.equal(r.code, 'COORDS_OUT_OF_SCREEN')
 })
 
+test('多屏负坐标：有 virtual 时按虚拟桌面边界放行', () => {
+  const ok = validateActionCoords(
+    { action: 'click', x: -1080, y: 890 },
+    { w: 2560, h: 1600, virtual: { x: -1920, y: 0, w: 4480, h: 1600 } },
+  )
+  assert.equal(ok.ok, true)
+
+  const bad = validateActionCoords(
+    { action: 'click', x: -1080, y: 890 },
+    { w: 2560, h: 1600 },
+  )
+  assert.equal(bad.ok, false)
+  assert.equal(bad.code, 'COORDS_OUT_OF_SCREEN')
+})
+
 test('预算超过上限拒绝', () => {
   const budget = createActionBudget({ max: MAX_ACTIONS_PER_TURN })
   for (let i = 0; i < MAX_ACTIONS_PER_TURN; i += 1) {

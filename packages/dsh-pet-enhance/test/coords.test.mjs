@@ -5,6 +5,7 @@ import {
   formatCoordHint,
   mapImageToScreen,
   maybeRemapImageCoordsAsScreen,
+  resolveVirtualBounds,
 } from '../src/coords.js'
 import {
   buildGuardedInputActions,
@@ -12,6 +13,14 @@ import {
   resolveActCoords,
 } from '../src/tool-act.js'
 import { confirmSignature, evaluateActPolicy, isSubmitFamily } from '../src/policy.js'
+
+test('resolveVirtualBounds：优先 virtual，否则回落主屏', () => {
+  assert.deepEqual(
+    resolveVirtualBounds({ w: 2560, h: 1600, virtual: { x: -1920, y: 0, w: 4480, h: 1600 } }),
+    { x: -1920, y: 0, w: 4480, h: 1600 },
+  )
+  assert.deepEqual(resolveVirtualBounds({ w: 1920, h: 1080 }), { x: 0, y: 0, w: 1920, h: 1080 })
+})
 
 test('mapImageToScreen：整屏缩略图换算', () => {
   const map = {

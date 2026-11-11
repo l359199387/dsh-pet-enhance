@@ -165,6 +165,36 @@ function auditArgs(args) {
 }
 
 /**
+ * 宿主工具输出必须 lossless JSON：对象里的 undefined / NaN / Infinity 都会被拒。
+ * @param {object} value
+ */
+export function asToolOutput(value) {
+  return JSON.parse(JSON.stringify(value ?? null, (_k, v) => (
+    typeof v === 'number' && !Number.isFinite(v) ? null : v
+  )))
+}
+
+function pickScreen(raw, fallback = null) {
+  if (!raw || typeof raw !== 'object') return fallback
+  const w = Number(raw.w ?? raw.width) || 0
+  const h = Number(raw.h ?? raw.height) || 0
+  if (w <= 0 || h <= 0) return fallback
+  const out = { w, h }
+  const v = raw.virtual
+  if (v && Number(v.w) > 0 && Number(v.h) > 0) {
+    out.virtual = {
+      x: Number(v.x) || 0,
+      y: Number(v.y) || 0,
+      w: Number(v.w),
+      h: Number(v.h),
+    }
+  } else if (fallback?.virtual) {
+    out.virtual = fallback.virtual
+  }
+  return out
+}
+
+/**
  * @param {{
  *   home: string,
  *   log?: (m: string) => void,
@@ -204,14 +234,15 @@ export function createActTool(options = {}) {
       let coordRemapped = false
 
       const finishAudit = async (result) => {
+        const safe = asToolOutput(result)
         try {
           await appendAction(options.home, {
             action: args?.action,
             args: auditArgs(args),
             tier,
             confirmed,
-            ok: Boolean(result?.meta?.ok),
-            code: result?.meta?.code ?? null,
+            ok: Boolean(safe?.meta?.ok),
+            code: safe?.meta?.code ?? null,
             ms: Date.now() - t0,
             screen,
             window: windowTitle,
@@ -223,7 +254,7 @@ export function createActTool(options = {}) {
         } catch (e) {
           log(`审计写入失败：${e?.message ?? e}`)
         }
-        return result
+        return safe
       }
 
       if (!isActEnabled(options.home)) {
@@ -295,7 +326,7 @@ export function createActTool(options = {}) {
       }
 
       windowTitle = options.getWindowTitle?.() ?? null
-      screen = options.getScreen?.() ?? sidecar.getHello?.()?.screen ?? null
+      screen = pickScreen(options.getScreen?.() ?? sidecar.getHello?.()?.screen ?? null)
       /** @type {string[]} */
       let windowTitles = windowTitle ? [windowTitle] : []
 
@@ -319,9 +350,8 @@ export function createActTool(options = {}) {
               windowTitle = String(stats.atPoint.title)
             }
           }
-          if (stats.screen?.w && stats.screen?.h) {
-            screen = { w: stats.screen.w, h: stats.screen.h }
-          }
+          // 必须保留 virtual，否则多屏负坐标会被误判越界
+          screen = pickScreen(stats.screen, screen)
         }
       } catch { /* 策略仍可用缓存 */ }
 

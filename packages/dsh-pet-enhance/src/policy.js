@@ -6,6 +6,8 @@
  * @module src/policy.js
  */
 
+import { resolveVirtualBounds } from './coords.js'
+
 /** 与 C3 验收上限对齐；另存为等对话框应靠快捷路径，勿把预算耗在盲点上。 */
 export const MAX_ACTIONS_PER_TURN = 30
 export const CONFIRM_TIMEOUT_MS = 60_000
@@ -103,21 +105,28 @@ export function classifyAction(args = {}) {
 /**
  * @param {number | null | undefined} x
  * @param {number | null | undefined} y
- * @param {{ w?: number, h?: number } | null | undefined} screen
+ * @param {{ w?: number, h?: number, virtual?: { x?: number, y?: number, w?: number, h?: number } } | null | undefined} screen
  */
 export function validateCoords(x, y, screen) {
   if (x == null && y == null) return { ok: true }
-  if (!screen?.w || !screen?.h) return { ok: true } // 尚无屏幕信息时不挡（sidecar 会再校验）
+  const bounds = resolveVirtualBounds(screen)
+  if (!bounds) return { ok: true } // 尚无屏幕信息时不挡（sidecar 会再校验）
   const xx = Number(x)
   const yy = Number(y)
   if (!Number.isFinite(xx) || !Number.isFinite(yy)) {
     return { ok: false, code: 'BAD_COORDS', reason: '坐标不是有效数字' }
   }
-  if (xx < 0 || yy < 0 || xx >= screen.w || yy >= screen.h) {
+  if (
+    xx < bounds.x
+    || yy < bounds.y
+    || xx >= bounds.x + bounds.w
+    || yy >= bounds.y + bounds.h
+  ) {
     return {
       ok: false,
       code: 'COORDS_OUT_OF_SCREEN',
-      reason: `坐标 (${xx}, ${yy}) 超出屏幕 ${screen.w}×${screen.h}`,
+      reason: `坐标 (${xx}, ${yy}) 超出屏幕 ${bounds.w}×${bounds.h}`
+        + (bounds.x || bounds.y ? `（原点 ${bounds.x},${bounds.y}）` : ''),
     }
   }
   return { ok: true }

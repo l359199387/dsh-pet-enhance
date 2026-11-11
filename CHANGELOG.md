@@ -4,6 +4,11 @@
 
 ## 0.4.8 · 未发布
 
+### 修：`act` 报 `value is not lossless JSON`
+
+- 策略拒绝/成功返回里常带 `meta.budget: undefined` 等字段，宿主按 lossless JSON 校验会直接拒掉工具输出。
+- 现统一 `asToolOutput` 清洗；多屏负坐标保留 `screen.virtual`，按虚拟桌面边界校验，避免副屏点击被误判 `COORDS_OUT_OF_SCREEN`。
+
 ### 修：侧栏仍显示「未分组 / 未命名」
 
 - 宿主 `session.create` **不接收 title**，须事后 `sessionController.rename`；原先本地改字段不落盘。
