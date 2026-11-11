@@ -1,38 +1,28 @@
 # dsh-pet-enhance
 
-**中文** · UI language: 中文 / English（`settings.locale`；默认中文）
+**1.0.0** · 小蓝鲸：给 **dsh-pet** 的增强插件。
 
-给 **dsh-pet** 的增强插件（小蓝鲸）：带教落盘到 `~/.dsh/skills`；看屏/GUI 委托 **dsh-computer-use-win**；技能管理/进化用 **dsh-mnemon**。
+- 闲聊放行 dsh-pet；看屏/干活委托 **dsh-computer-use-win**
+- 带教写入 `~/.dsh/skills`；管理/进化用 **dsh-mnemon**
+- 不注册 `glance` / `act`；无「我学会的」侧栏
 
-English project README: [../../README.en.md](../../README.en.md)
-
-当前是 **1.0.0**：不注册 `glance` / `act`；无「我学会的」侧栏。对宠物说「看一眼」或交办 → 主会话 computer-use；教完写入本机技能，在记忆系统 · 技能管理里查看。
+完整说明见仓库根 [README.md](../../README.md) / [README.en.md](../../README.en.md)。
 
 ```
-Harness「插件」页 → 从目录安装 → 选这个目录
+Harness「插件」→ 从目录安装 → 选这个目录 → 重启宿主
 ```
 
-装完重启宿主后：
+建议同装 `dsh-pet`、`dsh-computer-use-win`、`dsh-mnemon`。
 
-1. 确认已装 `dsh-computer-use-win` 与（推荐）`dsh-mnemon`；
-2. 「我教你…」做成了 → 检查 `~/.dsh/skills/<name>/SKILL.md`；
-3. 「执行一下&lt;目标&gt;」应命中该技能（脚本优先）。
+1. 「我教你…」做成了 → `~/.dsh/skills/<name>/SKILL.md`
+2. 「执行一下…」或带额外要求的口令 → 匹配技能（脚本优先；原话进变通请求）
+3. 「你叫什么名字呀」→ 闲聊模型作答
 
-- 失败日志：`~/.dsh/pet-enhance-error.log`
-- 数据目录：`~/.dsh/pet-enhance/`（会话/旁证；权威技能在 `~/.dsh/skills/`）
-- 开发流程：仓库根 `docs/10-dev-process.md`
-
-## 结构
-
-| 文件 | 职责 |
+| 路径 | 用途 |
 |---|---|
-| `src/index.js` | 入口：路由、桥接（不注册 glance/act，无 learned 面板 API） |
-| `src/teach-skill.js` | 带教写 skill |
-| `src/skill-match.js` | 「再做一次」扫盘匹配 |
-| `src/computer-use-delegate.js` | 看屏/GUI 叫醒提示 |
-| `client.js` | `shell.overlay` 小鲸鱼 |
-
-## 测试
+| `~/.dsh/skills/` | 技能权威 |
+| `~/.dsh/pet-enhance/` | 旁证 / 会话 |
+| `~/.dsh/pet-enhance-error.log` | 失败日志 |
 
 ```
 node ../../tools/dev-check.mjs
