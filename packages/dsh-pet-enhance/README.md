@@ -6,7 +6,7 @@
 
 English project README: [../../README.en.md](../../README.en.md)
 
-当前是 **0.6.0**：不注册 `glance` / `act`；无「我学会的」侧栏。对宠物说「看一眼」或交办 → 主会话 computer-use；教完写入本机技能，在记忆系统 · 技能管理里查看。
+当前是 **1.0.0**：不注册 `glance` / `act`；无「我学会的」侧栏。对宠物说「看一眼」或交办 → 主会话 computer-use；教完写入本机技能，在记忆系统 · 技能管理里查看。
 
 ```
 Harness「插件」页 → 从目录安装 → 选这个目录

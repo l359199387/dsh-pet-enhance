@@ -58,7 +58,7 @@ export const name = 'dsh-pet-enhance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/pet-enhance'
-export const VERSION = '0.6.0'
+export const VERSION = '1.0.0'
 
 const startedAt = Date.now()
 

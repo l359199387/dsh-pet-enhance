@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-enhance",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "dsh-pet-enhance：带教写入 ~/.dsh/skills；看屏/GUI 委托 computer-use；技能管理交给 dsh-mnemon。",
   "type": "module",
   "main": "./src/index.js",
