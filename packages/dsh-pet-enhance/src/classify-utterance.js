@@ -81,10 +81,10 @@ export function buildClassifyPrompt(userText, { teaching = false, learnedGoals =
   return (
     `${CLASSIFY_PREFIX}`
     + '只输出一个标签词，禁止调用任何工具，禁止解释。'
-    + 'chat=闲聊问候，或只问「会不会/学会了吗」而不是现在去做；'
+    + 'chat=闲聊问候/问名字/闲扯，或只问「会不会/学会了吗」而不是现在去做；'
     + 'glance=看屏幕/截图/盯着看一会儿；'
-    + 'teach=用户要开始对话带教；teach_end=（旧）结束教学口令；'
-    + 'task=要你现在操作电脑，或执行下面已学会的某件事（说法可任意，不必固定口令）；'
+    + 'teach=用户要开始对话带教（如「我教你…」）；teach_end=（旧）结束教学口令；'
+    + 'task=要你现在操作电脑，或执行下面已学会的某件事（含沟通N轮等额外要求，说法可任意，不必固定口令）；'
     + 'new_session=新开/开启/打开一个新的聊天窗口或新会话（不是闲聊）。'
     + `已学会：${learned}。`
     + `用户：「${clipped}」`

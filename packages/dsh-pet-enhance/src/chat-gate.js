@@ -1,5 +1,5 @@
 /**
- * dsh-pet 对话闸门：任务/看屏/教学由插件接手；闲聊默认关闭（不走 dsh-pet 闲聊模型）。
+ * dsh-pet 对话闸门：任务/看屏/教学由插件接手；纯闲聊放行 dsh-pet 闲聊模型。
  *
  * @module src/chat-gate.js
  */
@@ -13,9 +13,9 @@ import { sayConclusionToPet } from './pet-chat-memory.js'
 import { t } from './i18n.js'
 import { getLocale } from './settings.js'
 
-/** 需要插件接手、跳过 dsh-pet 闲聊模型的标签（含 chat：闲聊已关）。 */
+/** 需要插件接手、跳过 dsh-pet 闲聊模型的标签（不含 chat：闲聊放行）。 */
 export const TAKEOVER_LABELS = new Set([
-  'task', 'glance', 'teach', 'teach_end', 'teach_coach', 'new_session', 'chat',
+  'task', 'glance', 'teach', 'teach_end', 'teach_coach', 'new_session',
 ])
 
 /**
@@ -49,9 +49,9 @@ export function ackForLabel(label, locale = 'zh', text = '') {
     case 'new_session':
       return '好，我新开一个工作区聊天窗…'
     case 'chat':
-      return t(loc, 'bubble.chatOff')
+      return ''
     default:
-      return t(loc, 'bubble.chatOff')
+      return t(loc, 'bubble.taskTakeover')
   }
 }
 
@@ -107,7 +107,13 @@ export async function runChatGate(options) {
     log,
   })
 
-  if (!shouldTakeoverChat(label) && !teaching) {
+  // 纯闲聊放行 dsh-pet；「学会了吗 / 执行学会的」仍接管（避免双回复或漏跑）
+  if (label === 'chat' && !teaching) {
+    const needPlugin = isSkillStatusQuestion(text) || isRunAutomationIntent(text)
+    if (!needPlugin) {
+      return { ok: true, takeover: false, label: 'chat', via }
+    }
+  } else if (!shouldTakeoverChat(label) && !teaching) {
     return { ok: true, takeover: false, label, via }
   }
 
@@ -169,7 +175,7 @@ async function dispatchTakeover(options, label, text, teaching) {
       break
     case 'chat':
     default: {
-      // 闲聊已关：仍允许「执行学会的 / 学会了吗」，其余只回 ack
+      // 仅在「学会了吗 / 执行口令」等强制接管时进入；纯闲聊不会走到这里
       if (isRunAutomationIntent(text)) {
         const ran = await options.teachBridge?.tryRunMatchingPlaybook?.(text)
         if (ran) break

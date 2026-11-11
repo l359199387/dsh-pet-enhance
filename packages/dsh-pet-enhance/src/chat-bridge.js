@@ -323,7 +323,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：闲聊已关。看屏/操控走电脑操控插件；也可教我或跑脚本。',
+      '小蓝鲸已接入：可以闲聊；看屏/干活走电脑操控；也可教我或跑脚本。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {

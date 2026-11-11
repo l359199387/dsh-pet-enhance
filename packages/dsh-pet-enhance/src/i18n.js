@@ -17,8 +17,8 @@ const ZH = Object.freeze({
 
   'bubble.liveOn': '好，开始盯屏幕；有变化会冒泡告诉你。',
   'bubble.liveOff': '好，不盯了；需要时再说「看一眼」（走电脑操控）。',
-  'bubble.greet': '小蓝鲸已接入：闲聊已关。看屏/操控走电脑操控；技能看记忆系统。',
-  'bubble.chatOff': '闲聊已关掉。看屏走电脑操控；也可带教或跑脚本/命令。',
+  'bubble.greet': '小蓝鲸已接入：可以闲聊；看屏/干活走电脑操控；带教与技能看记忆系统。',
+  'bubble.chatOff': '这句我当闲聊了。要干活直接说目标；看屏说「看一眼」；带教说「我教你」。',
   'bubble.confirmAsk': '需要你确认：{summary}。请点我头顶「好 / 不要」，或右键「更多」里选。',
   'bubble.taskTakeover': '这事我来办——主会话用电脑操控（windows_computer_use_*）…',
   'bubble.recentChatOpened': '已在浏览器打开最近聊天（含附图）。',
@@ -36,8 +36,8 @@ const EN = Object.freeze({
 
   'bubble.liveOn': 'OK — watching the screen; I’ll bubble when something changes.',
   'bubble.liveOff': 'OK — not watching. Say “look at my screen” (computer-use).',
-  'bubble.greet': 'Blue Whale online: casual chat is off. Screen/GUI via computer-use; skills in Mnemon.',
-  'bubble.chatOff': 'Casual chat is off. Look via computer-use; or teach / scripts.',
+  'bubble.greet': 'Blue Whale online: casual chat on; screen/tasks via computer-use; teach/skills in Mnemon.',
+  'bubble.chatOff': 'Treating that as chat. For work, say the goal; glance; or “teach me”.',
   'bubble.confirmAsk': 'Need your OK: {summary}. Tap 「好 / 不要」above my head, or More menu.',
   'bubble.taskTakeover': 'I’ll handle this — main session windows_computer_use_* …',
   'bubble.recentChatOpened': 'Opened recent chat in your browser (with images).',

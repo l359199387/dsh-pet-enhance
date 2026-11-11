@@ -213,7 +213,7 @@ export function createPetRouter(options) {
       }
       case 'chat':
       default: {
-        // 执行口令 / 学会了吗 仍处理；纯闲聊已关，不交给 dsh-pet 模型
+        // 纯闲聊由 dsh-pet 模型答；此处只兜底执行口令 / 学会了吗 / 技能匹配
         if (isRunAutomationIntent(userText)) {
           const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
           if (ran) break
@@ -221,10 +221,6 @@ export function createPetRouter(options) {
         if (await answerSkillStatus(userText)) break
         const ran = await options.teachBridge.tryRunMatchingPlaybook?.(userText)
         if (ran) break
-        await sayConclusionToPet(
-          t(getLocale(options.home), 'bubble.chatOff'),
-          { pet, duration: 8_000, memoryPath: options.petMemoryPath },
-        )
         break
       }
     }

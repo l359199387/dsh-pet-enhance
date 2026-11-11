@@ -18,18 +18,18 @@ import {
   patchHelperConfirmHtml,
 } from '../src/patch-dsh-pet-confirm.js'
 
-test('shouldTakeoverChat：任务/看屏/教学/新开会话/闲聊均接管', () => {
+test('shouldTakeoverChat：任务/看屏/教学/新开会话接管，闲聊放行', () => {
   assert.equal(shouldTakeoverChat('task'), true)
   assert.equal(shouldTakeoverChat('glance'), true)
   assert.equal(shouldTakeoverChat('teach'), true)
   assert.equal(shouldTakeoverChat('new_session'), true)
-  assert.equal(shouldTakeoverChat('chat'), true)
+  assert.equal(shouldTakeoverChat('chat'), false)
 })
 
-test('ackForLabel 含任务接手与闲聊关闭', () => {
+test('ackForLabel 含任务接手；纯闲聊无强制文案', () => {
   assert.match(ackForLabel('task', 'zh'), /这事我来办/)
   assert.match(ackForLabel('new_session', 'zh'), /新开/)
-  assert.match(ackForLabel('chat', 'zh'), /闲聊已关/)
+  assert.equal(ackForLabel('chat', 'zh'), '')
 })
 
 test('runChatGate：new_session 接管并开窗', async () => {
@@ -71,16 +71,26 @@ test('runChatGate：task 接管并 markHandled', async () => {
   assert.equal(tasks.length, 1)
 })
 
-test('runChatGate：chat 接管并提示闲聊已关', async () => {
+test('runChatGate：纯闲聊不接管（放行 dsh-pet）', async () => {
   const result = await runChatGate({
     ctx: {},
     home: '',
-    text: '今天天气怎么样',
+    text: '你叫什么名字呀',
+    classify: async () => ({ label: 'chat', via: 'test' }),
+  })
+  assert.equal(result.takeover, false)
+  assert.equal(result.label, 'chat')
+})
+
+test('runChatGate：学会了吗 虽标 chat 仍接管', async () => {
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '你会和豆包聊天吗',
     classify: async () => ({ label: 'chat', via: 'test' }),
   })
   assert.equal(result.takeover, true)
   assert.equal(result.label, 'chat')
-  assert.match(result.ack, /闲聊已关/)
 })
 
 test('patchHelperConfirmHtml：迁移旧 glance-confirm', () => {

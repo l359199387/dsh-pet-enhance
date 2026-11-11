@@ -129,7 +129,7 @@
 - **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` **本地分流（默认 0 token，不叫醒主会话）**；「学会了吗」对照 playbook 冒泡回答。禁止把分流提示 followup 进带工具会话（会误 click）。仅 `DSH_PET_ENHANCE_CLASSIFY=wake` 才允许旧危险路径。分发：
   - `glance` → `chat-bridge` 叫醒主会话，用 `windows_computer_use_*` 观察后回灌文字结论。
   - `task` → 先按 `~/.dsh/skills` 匹配再执行；否则 `agent-bridge` 叫醒 computer-use。
-  - `teach` / `teach_coach` → **对话带教**；`chat` → 闲聊已关，仍处理「学会了吗 / 再做一次」。
+  - `teach` / `teach_coach` → **对话带教**；`chat` → 放行 dsh-pet 闲聊模型（「学会了吗 / 再做一次」仍由插件接手）。
 - **`act`/`glance` 均不注册**；桌面 GUI 委托已装的 `dsh-computer-use-win`。
 - **对话带教 → 技能**：说「我教你…」；做成了 → 写入 `~/.dsh/skills/<name>/SKILL.md`（+ 可选 scripts / coach-log）。**不再**写 learned/automations 权威，也**无**「我学会的」侧栏；管理/进化用 **dsh-mnemon**。未明说每周几/几点 → 不向 Harness 排程。「执行一下 / 再做一次」扫 skills 匹配（旧 learned 只读回落）。
 - **语言**：`settings.locale` 默认 `zh`（`GET/PATCH /api/pet-enhance/settings`、`GET /api/pet-enhance/i18n`）；侧栏语言切换已随「我学会的」移除。
