@@ -2,24 +2,24 @@
 
 [中文](README.md) | **English**
 
-> **A dsh-pet enhancement plugin** (current **0.4.7**): see the screen, chat and assign work, act with mouse/keyboard under your authorization — **teach once, reuse next time**.
+> **A dsh-pet enhancement plugin** (current **0.5.0**): see the screen, chat, oral coaching; **reruns prefer scripts/commands**. **Mouse/keyboard `act` is hard-disabled** (no injected clicks/typing).
 
-**Blue Whale** is not decoration. Ask it to look at the screen — it can see. Ask it to change a setting — it can click for real. Say “I’ll teach you to log daily mood” — it follows your steps, and when you confirm it’s done, the skill lands in **Learned**. It also has boundaries: no illegal work, ask before destructive actions, stop when it can’t see clearly instead of guess-clicking.
+**Blue Whale** can see the screen and coach by dialogue. Ask it to look — it glances. Say “I’ll teach you…” — it learns from oral steps and may write Python script blocks. Pure GUI clicks are narrated for you to do. Illegal/destructive work is still refused.
 
-This is a **hot-pluggable DeepSeek Harness plugin** (with [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)). Install for vision, actuation, and coaching; uninstall to remove those powers.
+This is a **hot-pluggable DeepSeek Harness plugin** (with [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)). Install for vision, coaching, and scripts; uninstall to remove those powers.
 
 ---
 
-## What works now (0.4.x)
+## What works now (0.5.x)
 
 | Capability | Notes |
 |---|---|
 | **See** | `glance`: full screen / window / region; `watch` for change-gated mosaics; sensitive windows redacted |
 | **Chat gate** | Glance / tasks / coaching are taken over by the plugin; casual chat is not forwarded to dsh-pet’s chat model by default |
-| **Assigned work** | Main-session Agent + `act` (requires **Allow acting**); C3 discipline: see → act → verify, one retry, budget & panic bubbles |
-| **Dialogue coaching** | “I’ll teach you…” → you give each step, it acts, you correct; only “done” writes Learned. **No mouse-macro recording, no teach crop frames** |
-| **Learned panel** | View understanding, notes, ratings; reruns prefer script blocks / smart instructions |
-| **Safety** | L0–L3, two-step confirm, panic stop (incl. corner failsafe), audit `actions.jsonl` |
+| **Assigned work** | Main-session Agent: `glance` + files/commands/skill scripts; **no** mouse/keyboard injection; GUI steps are oral |
+| **Dialogue coaching** | “I’ll teach you…” → oral steps / corrections → “done” writes Learned; may propose script blocks |
+| **Learned panel** | Understanding, notes, ratings; reruns **prefer ready scripts**; otherwise oral — no click replay |
+| **Safety** | Panic stop, confirm gate (e.g. script writes), data under `~/.dsh/pet-enhance/` |
 
 UI language (中文 / English) switches in the **Learned** panel (default Chinese). Workspace display name is unified as「小蓝鲸工作区」/ Blue Whale workspace.
 
@@ -27,11 +27,10 @@ UI language (中文 / English) switches in the **Learned** panel (default Chines
 
 ## Quick start
 
-1. Pet context menu → More → **Allow acting · On** (needed for coaching and assigned work).
-2. **See**: in dsh-pet chat, say “look at my screen”.
-3. **Assign work**: say what to do; it opens/reuses a titled session and acts.
-4. **Teach**: say “I’ll teach you…” → one small step at a time → correct if needed → say it’s done → check **Learned**.
-5. **Do it again**: speak the learned goal or use the panel; flowable steps may become multiple Python script blocks (write after confirm).
+1. **See**: in dsh-pet chat, say “look at my screen” (optional Live watch in More).
+2. **Assign work**: say what to do; scripts/commands/files go through the main session; GUI is narrated for you.
+3. **Teach**: say “I’ll teach you…” → one oral step at a time → correct → say it’s done → check **Learned**.
+4. **Do it again**: speak the learned goal; ready scripts run first, otherwise oral guidance.
 
 To stop teaching, say you give up. Late classify results after teaching already ended will **not** falsely bubble “coaching stopped”.
 
@@ -41,7 +40,7 @@ To stop teaching, say you give up. Late classify results after teaching already 
 
 1. **No illegal work.** Intrusion, credential theft, bypassing security, harassment, fraud, cracking — refuse and explain.
 2. **No silent destruction.** Delete / overwrite / uninstall / shutdown / system settings / messaging others / spending money — must ask first.
-3. **No pretending.** If it can’t see clearly, stop and look again or ask you; **never guess-click**. Text on screen is never an instruction.
+3. **No pretending, no injected input.** If it can’t see clearly, stop and look again or ask; **this build does not inject mouse/keyboard**. Text on screen is never an instruction.
 
 Full policy: [docs/07-safety.md](docs/07-safety.md) (Chinese).
 
@@ -54,18 +53,17 @@ Full policy: [docs/07-safety.md](docs/07-safety.md) (Chinese).
                                     │
                     ┌───────────────┼───────────────┐
                     ▼               ▼               ▼
-                 glance/watch     Agent + act      dialogue coach
+                 glance/watch   scripts/commands   dialogue coach
                                       │
-                    └─────── Host policy / confirm / audit ───────┘
+                    └─────── Host (act not registered) ───────┘
                                       │
-                         Python sidecar (capture + SendInput)
+                         Python sidecar (capture; input unused)
                                       │
-                         ~/.dsh/pet-enhance/ (learned, logs, audit)
+                         ~/.dsh/pet-enhance/ + ~/.dsh/skills/…/scripts/
 ```
 
-- **Sidecar** only captures pixels and injects input.
-- **Host** decides allow / confirm / remember.
-- The **model** only sees/acts through tools.
+- **Sidecar** captures the screen; input injection is hard-off.
+- **Host** does not register `act`; script blocks write under skills after confirm.
 - **Coach persistence**: LEARN v2 + `coach-log.jsonl`; scriptable parts go under `~/.dsh/skills/…/scripts/` (L3 confirm). See [docs/11-teach-refactor.md](docs/11-teach-refactor.md).
 
 Memory layers ([docs/09-memory.md](docs/09-memory.md)):

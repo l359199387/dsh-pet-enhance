@@ -1,7 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * C2 装配：看屏 + dsh-pet 桥 + L→主会话干活 + act（策略/确认/审计/急停）。
+ * 装配：看屏 + dsh-pet 桥 + 口述带教/脚本命令；0.5+ 硬关鼠标键盘 act。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -15,7 +15,6 @@ import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
 import { createGlanceTool } from './tool-glance.js'
 import { createWakeBudget } from './watch-loop.js'
-import { createActTool, ACT_TOOL_NAME } from './tool-act.js'
 import { TOOL_NAME } from './tool-spec.js'
 import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
@@ -35,7 +34,7 @@ import { createAgentBridge } from './agent-bridge.js'
 import { createLiveWatch } from './live-watch.js'
 import { createTeachBridge } from './teach-bridge.js'
 import { createPetRouter } from './pet-router.js'
-import { getLocale, isActEnabled, loadSettings, saveSettings } from './settings.js'
+import { getLocale, loadSettings, saveSettings } from './settings.js'
 import { localeTables, menuLabelVariants, t } from './i18n.js'
 import { openRecentChat } from './recent-chat.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
@@ -46,8 +45,15 @@ import { runChatGate } from './chat-gate.js'
 import { writeHostOrigin } from './host-origin.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
-import { c3BudgetExceededBubble } from './c3-task.js'
 import { createConfirmGate } from './confirm.js'
+
+/** 0.5+：act 已硬关；教学/旧路径若仍调用则统一拒绝。 */
+export function actRemovedResult() {
+  return {
+    text: '本版本已不做鼠标/键盘操作（act 已硬关）。请用 glance 看屏，或跑脚本/命令类任务。',
+    meta: { ok: false, code: 'ACT_REMOVED' },
+  }
+}
 import { cancelAgentSession } from './wake-session.js'
 import { ensurePetWorkspace, openNewWorkspaceSession } from './session-spawn.js'
 import {
@@ -63,7 +69,7 @@ export const name = 'dsh-pet-enhance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/pet-enhance'
-export const VERSION = '0.3.0'
+export const VERSION = '0.5.0'
 
 const startedAt = Date.now()
 
@@ -321,7 +327,7 @@ async function handle(req, res, connection, log, state) {
       const patch = {}
       if (body.locale != null) patch.locale = body.locale
       if (body.liveWatch != null) patch.liveWatch = body.liveWatch
-      if (body.actEnabled != null) patch.actEnabled = body.actEnabled
+      // actEnabled 已硬关：忽略写入
       const settings = await saveSettings(enhanceHome(), patch)
       try {
         state.onLocaleChange?.(settings.locale)
@@ -345,7 +351,8 @@ async function handle(req, res, connection, log, state) {
       name,
       version: VERSION,
       stage: 'C2',
-      actEnabled: isActEnabled(glanceHome()),
+      actEnabled: false,
+      actRemoved: true,
       lastSessionId: state.lastSessionId,
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
@@ -636,7 +643,7 @@ function installTools(ctx, log, state) {
 
       scoped.effect(() => () => {
         disposed = true
-        state.tools = state.tools.filter((n) => n !== TOOL_NAME && n !== ACT_TOOL_NAME)
+        state.tools = state.tools.filter((n) => n !== TOOL_NAME)
         for (const d of disposers.splice(0)) {
           try { d() } catch { /* 已经摘过 */ }
         }
@@ -669,40 +676,8 @@ function installTools(ctx, log, state) {
         disposers.push(scoped.tools.register(state.glanceTool))
         state.tools.push(TOOL_NAME)
         log(`工具已注册：${TOOL_NAME}`)
-
-        const actTool = createActTool({
-          home: glanceHome(),
-          log,
-          sidecar: state.sidecar,
-          isArmed: () => state.glance.snapshot().guard.armed.data,
-          onActing: petHooks.onActing,
-          onIdle: petHooks.onIdle,
-          budget: state.budget,
-          confirmGate: state.confirmGate,
-          rememberedConfirms: state.rememberedConfirms,
-          turnKey: () => state.lastSessionId || 'default',
-          getWindowTitle: () => state.glance.snapshot().side.window.data?.title ?? null,
-          getScreen: () => state.sidecar?.getHello?.()?.screen ?? null,
-          getLastGlanceMap: () => state.lastGlanceMap,
-          getLastInputClick: () => state.lastInputClick,
-          onInputClick: (p) => { state.lastInputClick = p },
-          onConfirmAsk: async () => {
-            // 可见性：confirmGate.onPending → 说话气泡 + 右键「好/不要」；头顶 UI 仍由 overlay / Helper 补丁负责。
-          },
-          onPolicyDeny: async ({ code, userBubble, reason }) => {
-            const text = userBubble
-              || (code === 'DENIED_WINDOW'
-                ? '这个窗口在黑名单里，我不能点也不能打字。'
-                : code === 'BUDGET_EXCEEDED'
-                  ? c3BudgetExceededBubble()
-                  : (reason || '这个动作被策略拦住了。'))
-            await sayConclusionToPet(text, { duration: 12_000 })
-          },
-        })
-        state.runAct = (args) => actTool.execute(args)
-        disposers.push(scoped.tools.register(actTool))
-        state.tools.push(ACT_TOOL_NAME)
-        log(`工具已注册：${ACT_TOOL_NAME}（C2：策略/确认/审计；默认关闭）`)
+        state.runAct = async () => actRemovedResult()
+        log('act 已硬关：不注册鼠标/键盘工具')
       } catch (e) {
         writeError(e, 'glance-tools')
         log(`工具没挂上：${e?.message ?? e}`)
@@ -756,8 +731,8 @@ function installDshPetBridge(ctx, log, state, disposers) {
     let stopped = false
     let registered = false
     let liveWatch = false
-    let actEnabled = false
     const home = glanceHome()
+    state.runAct = async () => actRemovedResult()
     const petHooks = {
       onLooking: () => state.glance.setPet('looking'),
       onIdle: () => {
@@ -823,10 +798,7 @@ function installDshPetBridge(ctx, log, state, disposers) {
       onSession: (sid) => {
         if (sid) state.lastAgentSessionId = String(sid)
       },
-      runAct: (args) => {
-        if (typeof state.runAct === 'function') return state.runAct(args)
-        return Promise.resolve({ text: 'act 未就绪', meta: { ok: false, code: 'ACT_UNREADY' } })
-      },
+      runAct: async () => actRemovedResult(),
       onTeaching: (on) => {
         state.glance.setPet(on ? 'looking' : 'idle')
         // 对话带教：不再弹出「我教完了」录制条
@@ -879,7 +851,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
       return [
         locale,
         liveWatch ? '1' : '0',
-        actEnabled ? '1' : '0',
         pending?.id ? '1' : '0',
       ].join('|')
     }
@@ -891,7 +862,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
         ?? state.glance.snapshot().guard.pendingConfirm.data
       const r = await registerGlanceMenu({
         liveWatch,
-        actEnabled,
         pendingConfirm: Boolean(pending?.id),
         locale,
       })
@@ -949,19 +919,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
     }
     setLiveWatchRef = (on) => setLiveWatch(on, { quiet: true })
 
-    const setActEnabled = async (next) => {
-      actEnabled = Boolean(next)
-      await saveSettings(home, { actEnabled }).catch((e) => {
-        log(`保存设置失败：${e?.message ?? e}`)
-      })
-      await pushMenu()
-      await broadcastToDshPet(
-        t(locale, actEnabled ? 'bubble.actOn' : 'bubble.actOff'),
-        { duration: 10_000 },
-      )
-      log(`允许动手 → ${actEnabled ? '开' : '关'}`)
-    }
-
     const pollMenu = async () => {
       if (stopped || !registered) return
       const r = await callDshPet(
@@ -976,9 +933,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
       // 点当前文案即翻转；中英文开/关两态都认，避免重注册竞态漏点。
       if (menuHit(ev, 'menu.liveOn') || menuHit(ev, 'menu.liveOff')) {
         await setLiveWatch(!liveWatch)
-      }
-      if (menuHit(ev, 'menu.actOn') || menuHit(ev, 'menu.actOff')) {
-        await setActEnabled(!actEnabled)
       }
       if (menuHit(ev, 'menu.recentChat')) {
         try {
@@ -1021,7 +975,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
     loadSettings(home).then((s) => {
       if (stopped) return
       liveWatch = Boolean(s.liveWatch)
-      actEnabled = Boolean(s.actEnabled)
       locale = s.locale || locale
       syncLive()
       pushMenu().catch(() => {})

@@ -45,20 +45,20 @@ function mockSidecar(handlers = {}) {
   }
 }
 
-test('act 默认关闭', async () => {
+test('act 默认硬关', async () => {
   delete process.env.DSH_PET_ENHANCE_ACT
   const tool = createActTool({ home, log() {} })
   const r = await tool.execute({ action: 'screen' })
-  assert.match(r.text, /未启用/)
-  assert.equal(r.meta.code, 'ACT_DISABLED')
+  assert.match(r.text, /硬关|鼠标/)
+  assert.equal(r.meta.code, 'ACT_REMOVED')
 })
 
 test('act 启用后可调 sidecar input（L0/L1 无需确认）', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   let seen
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     sidecar: mockSidecar({
       input: (fields) => {
@@ -74,10 +74,10 @@ test('act 启用后可调 sidecar input（L0/L1 无需确认）', async () => {
 })
 
 test('disarmed 时拒绝并标 aborted', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => false,
     sidecar: mockSidecar(),
   })
@@ -86,7 +86,7 @@ test('disarmed 时拒绝并标 aborted', async () => {
   assert.equal(r.meta.code, 'DISARMED')
 })
 
-test('settings.actEnabled 可打开', async () => {
+test('settings.actEnabled 无效：产品硬关仍 ACT_REMOVED', async () => {
   delete process.env.DSH_PET_ENHANCE_ACT
   await saveSettings(home, { actEnabled: true })
   const tool = createActTool({
@@ -96,14 +96,15 @@ test('settings.actEnabled 可打开', async () => {
     sidecar: mockSidecar(),
   })
   const r = await tool.execute({ action: 'move', x: 10, y: 10 })
-  assert.equal(r.meta.ok, true)
+  assert.equal(r.meta.ok, false)
+  assert.equal(r.meta.code, 'ACT_REMOVED')
 })
 
 test('黑名单窗口拒绝点击', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     sidecar: mockSidecar({
       stats: () => ({
@@ -120,11 +121,11 @@ test('黑名单窗口拒绝点击', async () => {
 })
 
 test('前台是桌宠、点下方是密码本 → 仍拒绝并通知', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   let denied = null
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     onPolicyDeny: async (info) => { denied = info },
     sidecar: mockSidecar({
@@ -145,12 +146,12 @@ test('前台是桌宠、点下方是密码本 → 仍拒绝并通知', async () 
 })
 
 test('L2 用户点不要 → 不执行 input', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   let inputCalls = 0
   const gate = createConfirmGate({ timeoutMs: 5_000 })
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     confirmGate: gate,
     sidecar: mockSidecar({
@@ -171,11 +172,11 @@ test('L2 用户点不要 → 不执行 input', async () => {
 })
 
 test('L2 用户点好 → 执行并写审计', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   const gate = createConfirmGate({ timeoutMs: 5_000 })
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     confirmGate: gate,
     budget: createActionBudget(),
@@ -199,10 +200,10 @@ test('L2 用户点好 → 执行并写审计', async () => {
 })
 
 test('策略拒绝路径返回值是 lossless JSON（无 budget 字段泄漏 undefined）', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     budget: createActionBudget(),
     sidecar: mockSidecar({
@@ -227,11 +228,11 @@ test('策略拒绝路径返回值是 lossless JSON（无 budget 字段泄漏 und
 })
 
 test('多屏负坐标：stats 带 virtual 时放行并执行', async () => {
-  process.env.DSH_PET_ENHANCE_ACT = '1'
   let seen
   const tool = createActTool({
     home,
     log() {},
+    isActEnabled: () => true,
     isArmed: () => true,
     budget: createActionBudget(),
     sidecar: mockSidecar({

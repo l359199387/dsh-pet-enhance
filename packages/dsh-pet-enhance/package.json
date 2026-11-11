@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-enhance",
-  "version": "0.4.8",
-  "description": "dsh-pet-enhance：给 dsh-pet 增强看屏、教学与授权动手能力（小蓝鲸）。",
+  "version": "0.5.0",
+  "description": "dsh-pet-enhance：给 dsh-pet 增强看屏、口述带教与脚本/命令能力（小蓝鲸；已硬关鼠标键盘 act）。",
   "type": "module",
   "main": "./src/index.js",
   "exports": {

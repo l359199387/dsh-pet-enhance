@@ -18,8 +18,10 @@ export const MENU_OWNER = 'dsh-pet-enhance'
 export const MENU_STOP = t('zh', 'menu.stop')
 export const MENU_LIVE_ON = t('zh', 'menu.liveOn')
 export const MENU_LIVE_OFF = t('zh', 'menu.liveOff')
-export const MENU_ACT_ON = t('zh', 'menu.actOn')
-export const MENU_ACT_OFF = t('zh', 'menu.actOff')
+/** @deprecated 0.5+ 已去掉「允许动手」菜单 */
+export const MENU_ACT_ON = '允许动手 · 开'
+/** @deprecated 0.5+ 已去掉「允许动手」菜单 */
+export const MENU_ACT_OFF = '允许动手 · 关'
 export const MENU_CONFIRM_YES = t('zh', 'menu.confirmYes')
 export const MENU_CONFIRM_NO = t('zh', 'menu.confirmNo')
 /** 动作类接口必填；any = 网页/桌面都能收到。 */
@@ -30,19 +32,19 @@ export function liveWatchMenuLabel(enabled, locale = DEFAULT_LOCALE) {
   return t(locale, enabled ? 'menu.liveOn' : 'menu.liveOff')
 }
 
-export function actEnabledMenuLabel(enabled, locale = DEFAULT_LOCALE) {
-  return t(locale, enabled ? 'menu.actOn' : 'menu.actOff')
+/** @deprecated 0.5+ 已硬关 act */
+export function actEnabledMenuLabel(_enabled, locale = DEFAULT_LOCALE) {
+  return t(locale, 'menu.liveOff')
 }
 
 export function glanceMenuLabels(
   liveWatchEnabled,
-  actEnabled = false,
+  _actEnabled = false,
   pendingConfirm = false,
   locale = DEFAULT_LOCALE,
 ) {
   return menuLabelsFor(locale, {
     liveWatch: liveWatchEnabled,
-    actEnabled,
     pendingConfirm,
   })
 }
@@ -91,13 +93,12 @@ function withSurface(path, surface = PET_SURFACE) {
 }
 
 /**
- * 在 dsh-pet 右键「更多」里挂：实时看屏幕 / 允许动手 / 急停。
- * @param {{ liveWatch?: boolean, actEnabled?: boolean, target?: string } & object} [options]
+ * 在 dsh-pet 右键「更多」里挂：实时看屏幕 / 最近聊天 / 急停。
+ * @param {{ liveWatch?: boolean, pendingConfirm?: boolean, target?: string } & object} [options]
  */
 export async function registerGlanceMenu(options = {}) {
   const {
     liveWatch = false,
-    actEnabled = false,
     pendingConfirm = false,
     locale = DEFAULT_LOCALE,
     target = 'both',
@@ -107,7 +108,7 @@ export async function registerGlanceMenu(options = {}) {
     method: 'POST',
     body: {
       owner: MENU_OWNER,
-      labels: glanceMenuLabels(liveWatch, actEnabled, pendingConfirm, locale),
+      labels: glanceMenuLabels(liveWatch, false, pendingConfirm, locale),
       target,
     },
     ...rest,

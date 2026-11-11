@@ -12,7 +12,9 @@ import { DEFAULT_LOCALE, normalizeLocale } from './i18n.js'
 export const DEFAULT_SETTINGS = Object.freeze({
   /** 右键「实时看屏幕」：开则周期盯屏并冒泡变化。 */
   liveWatch: false,
-  /** C1：允许 `act` 真动手。也可用环境变量 DSH_PET_ENHANCE_ACT=1。 */
+  /**
+   * 历史字段：0.5+ 已硬关鼠标/键盘 `act`，读写仍保留以免旧 settings.json 报错，但恒视为关。
+   */
   actEnabled: false,
   /** UI / 菜单语言：zh | en，默认中文。 */
   locale: DEFAULT_LOCALE,
@@ -31,15 +33,9 @@ function readSync(home) {
   }
 }
 
-/** 同步判断 act 是否开启（工具热路径；环境变量优先）。 */
-export function isActEnabled(home) {
-  const env = String(process.env.DSH_PET_ENHANCE_ACT || process.env.DSH_GLANCE_ACT || '')
-    .trim()
-    .toLowerCase()
-  if (env === '1' || env === 'true' || env === 'yes') return true
-  if (env === '0' || env === 'false' || env === 'no') return false
-  const data = readSync(home)
-  return data ? Boolean(data.actEnabled) : DEFAULT_SETTINGS.actEnabled
+/** 0.5+：鼠标/键盘 `act` 已硬关；恒 false（环境变量与 settings 均无效）。 */
+export function isActEnabled(_home) {
+  return false
 }
 
 /** 同步判断「实时看屏幕」是否开启（教学入口用）。 */
@@ -87,7 +83,8 @@ export async function saveSettings(home, patch) {
   const cur = await loadSettings(home)
   const next = {
     liveWatch: patch.liveWatch !== undefined ? Boolean(patch.liveWatch) : cur.liveWatch,
-    actEnabled: patch.actEnabled !== undefined ? Boolean(patch.actEnabled) : cur.actEnabled,
+    // act 已硬关：落盘恒 false，忽略外部写入
+    actEnabled: false,
     locale: patch.locale !== undefined ? normalizeLocale(patch.locale) : cur.locale,
   }
   await mkdir(dirname(settingsPath(home)), { recursive: true })

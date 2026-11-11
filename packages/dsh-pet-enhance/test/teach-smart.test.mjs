@@ -50,14 +50,10 @@ test('buildSmartRunPrompt 含快捷路径与变通/高清纪律', () => {
     strategy: { fastPlan: '打开 https://www.bilibili.com', summary: '打开B站' },
   })
   assert.match(p, /bilibili/)
-  assert.match(p, /不要机械复刻/)
-  assert.match(p, /zoom/)
-  assert.match(p, /糊图/)
-  assert.match(p, /强制/)
-  assert.match(p, /新对话/)
-  assert.match(p, /imageX|缩略图/)
-  assert.match(p, /确认/)
-  assert.match(p, /动手纪律·C3/)
+  assert.match(p, /禁止.*act|禁止.*鼠标/)
+  assert.match(p, /glance|脚本/)
+  assert.match(p, /口述/)
+  assert.match(p, /执行纪律·无鼠标键盘/)
 })
 
 test('shouldUseSmartRun：有目标或步骤一律变通', () => {

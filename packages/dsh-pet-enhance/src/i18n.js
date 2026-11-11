@@ -10,21 +10,17 @@ export const SUPPORTED_LOCALES = Object.freeze(['zh', 'en'])
 const ZH = Object.freeze({
   'menu.liveOn': '实时看屏幕 · 开',
   'menu.liveOff': '实时看屏幕 · 关',
-  'menu.actOn': '允许动手 · 开',
-  'menu.actOff': '允许动手 · 关',
   'menu.stop': '小蓝鲸急停',
   'menu.recentChat': '最近聊天内容',
   'menu.confirmYes': '确认动作 · 好',
   'menu.confirmNo': '确认动作 · 不要',
 
-  'bubble.actOn': '好，允许动手了。我会按你的话点鼠标、打字；甩到左上角或点急停可立刻停。',
-  'bubble.actOff': '好，收手了。act 已关闭，不会再动鼠标键盘。',
   'bubble.liveOn': '好，开始盯屏幕；有变化会冒泡告诉你。',
   'bubble.liveOff': '好，不盯了；需要时再说「看一眼」。',
-  'bubble.greet': '小蓝鲸已接入：闲聊已关。要看屏幕、教我操作、或让我动手，直接说就行。',
-  'bubble.chatOff': '闲聊已关掉。要看屏、教我或动手，直接说就行。',
+  'bubble.greet': '小蓝鲸已接入：闲聊已关。要看屏幕、教我口述步骤、或跑脚本/命令，直接说就行。',
+  'bubble.chatOff': '闲聊已关掉。要看屏、带教口述或跑脚本/命令，直接说就行。',
   'bubble.confirmAsk': '需要你确认：{summary}。请点我头顶「好 / 不要」，或右键「更多」里选。',
-  'bubble.taskTakeover': '这事我来办——新开干净会话再动手…',
+  'bubble.taskTakeover': '这事我来办——新开干净会话（看屏 + 脚本/命令，不点鼠标键盘）…',
   'bubble.recentChatOpened': '已在浏览器打开最近聊天（含附图）。',
   'bubble.recentChatEmpty': '还没有聊天记录。',
   'bubble.recentChatFail': '打开最近聊天失败：{error}',
@@ -88,21 +84,17 @@ const ZH = Object.freeze({
 const EN = Object.freeze({
   'menu.liveOn': 'Live watch · On',
   'menu.liveOff': 'Live watch · Off',
-  'menu.actOn': 'Allow act · On',
-  'menu.actOff': 'Allow act · Off',
   'menu.stop': 'Blue Whale · Stop',
   'menu.recentChat': 'Recent chat',
   'menu.confirmYes': 'Confirm · OK',
   'menu.confirmNo': 'Confirm · No',
 
-  'bubble.actOn': 'OK — acting is on. I’ll click/type as you ask; fling the cursor to the top-left or hit Stop to abort.',
-  'bubble.actOff': 'OK — hands off. act is disabled; I won’t move mouse or keyboard.',
   'bubble.liveOn': 'OK — watching the screen; I’ll bubble when something changes.',
   'bubble.liveOff': 'OK — not watching. Say “look at my screen” when you need a glance.',
-  'bubble.greet': 'Blue Whale online: casual chat is off. Ask to look, teach me, or act.',
-  'bubble.chatOff': 'Casual chat is off. Say look / teach / act if you need me.',
+  'bubble.greet': 'Blue Whale online: casual chat is off. Ask to look, teach orally, or run scripts/commands.',
+  'bubble.chatOff': 'Casual chat is off. Say look / teach / scripts or commands if you need me.',
   'bubble.confirmAsk': 'Need your OK: {summary}. Tap 「好 / 不要」above my head, or More menu.',
-  'bubble.taskTakeover': 'I’ll handle this — opening a clean session to act…',
+  'bubble.taskTakeover': 'I’ll handle this — clean session (glance + scripts/commands, no mouse/keyboard)…',
   'bubble.recentChatOpened': 'Opened recent chat in your browser (with images).',
   'bubble.recentChatEmpty': 'No chat history yet.',
   'bubble.recentChatFail': 'Could not open recent chat: {error}',
@@ -193,10 +185,9 @@ export function menuLabelVariants(key) {
   return SUPPORTED_LOCALES.map((loc) => t(loc, key)).filter(Boolean)
 }
 
-export function menuLabelsFor(locale, { liveWatch = false, actEnabled = false, pendingConfirm = false } = {}) {
+export function menuLabelsFor(locale, { liveWatch = false, pendingConfirm = false } = {}) {
   const labels = [
     t(locale, liveWatch ? 'menu.liveOn' : 'menu.liveOff'),
-    t(locale, actEnabled ? 'menu.actOn' : 'menu.actOff'),
     t(locale, 'menu.recentChat'),
     t(locale, 'menu.stop'),
   ]

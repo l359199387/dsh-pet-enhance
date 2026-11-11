@@ -513,7 +513,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：闲聊已关。要看屏幕、教我操作、或让我动手，直接说就行。',
+      '小蓝鲸已接入：闲聊已关。要看屏幕、教我口述步骤、或跑脚本/命令，直接说就行。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {

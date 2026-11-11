@@ -257,10 +257,14 @@ export function createActTool(options = {}) {
         return safe
       }
 
-      if (!isActEnabled(options.home)) {
+      // 产品已硬关 act；单测可传 isActEnabled: () => true 仍跑通本模块。
+      const actGate = typeof options.isActEnabled === 'function'
+        ? options.isActEnabled(options.home)
+        : isActEnabled(options.home)
+      if (!actGate) {
         return finishAudit({
-          text: 'act 未启用。在右键「更多」打开「允许动手」，或设 settings.actEnabled / DSH_PET_ENHANCE_ACT=1。',
-          meta: { ok: false, code: 'ACT_DISABLED' },
+          text: '本版本已不做鼠标/键盘操作（act 已硬关）。请用 glance 看屏，或跑脚本/命令类任务。',
+          meta: { ok: false, code: 'ACT_REMOVED' },
         })
       }
       if (options.isArmed && !options.isArmed()) {
