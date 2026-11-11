@@ -7,6 +7,8 @@
 import { classifyUtterance, isSkillStatusQuestion } from './classify-utterance.js'
 import { isRunAutomationIntent, isWatchIntent, parseWatchSeconds } from './intent.js'
 import { listLearnedIndex } from './learned-automation.js'
+import { listSkillGoals, listTeachSkills } from './skill-match.js'
+import { mnemonBubbleSuffix } from './teach-skill.js'
 import { sayConclusionToPet } from './pet-chat-memory.js'
 import { t } from './i18n.js'
 import { getLocale } from './settings.js'
@@ -86,13 +88,16 @@ export async function runChatGate(options) {
   const log = options.log ?? (() => {})
   /** @type {string[]} */
   let learnedGoals = []
-  if (!teaching && options.home) {
+  if (!teaching) {
     try {
-      const list = await listLearnedIndex(options.home)
-      learnedGoals = (list || [])
-        .slice(0, 12)
-        .map((r) => String(r.goal || '').trim())
-        .filter(Boolean)
+      learnedGoals = await listSkillGoals()
+      if (!learnedGoals.length && options.home) {
+        const list = await listLearnedIndex(options.home)
+        learnedGoals = (list || [])
+          .slice(0, 12)
+          .map((r) => String(r.goal || '').trim())
+          .filter(Boolean)
+      }
     } catch { /* ignore */ }
   }
   const { label, via } = await classify(options.ctx, text, {
@@ -182,46 +187,33 @@ async function dispatchTakeover(options, label, text, teaching) {
  * @returns {Promise<boolean>}
  */
 async function answerSkillStatusInGate(options, userText) {
-  if (!options.home || !isSkillStatusQuestion(userText)) return false
+  if (!isSkillStatusQuestion(userText)) return false
   if (isRunAutomationIntent(userText)) return false
   const pet = options.petId || 'main'
-  const list = await listLearnedIndex(options.home)
+  const list = await listTeachSkills()
   const q = String(userText).toLowerCase()
   if (!list.length) {
     await sayConclusionToPet(
-      '还没学会呢。开「实时看屏幕」教我一遍，做完告诉我；问清后我会写成学习文件并建对应自动化。',
+      `还没学会呢。对我说「我教你…」，做成了后会写入本机技能。${mnemonBubbleSuffix()}`,
       { pet, duration: 14_000, memoryPath: options.petMemoryPath },
     )
     return true
   }
-  let hit = null
-  for (const row of list) {
+  const hit = list.find((row) => {
     const goal = String(row.goal || '').trim()
-    if (!goal) continue
+    if (!goal) return false
     const g = goal.toLowerCase()
-    if (q.includes(g) || g.split(/[\s，,。、]+/).filter((t) => t.length >= 2).some((tok) => q.includes(tok))) {
-      hit = row
-      break
-    }
-  }
+    return q.includes(g) || g.split(/[\s，,。、]+/).filter((t) => t.length >= 2).some((tok) => q.includes(tok))
+  })
   if (hit) {
-    const { readLearned } = await import('./learned-automation.js')
-    const learn = await readLearned(options.home, hit.id)
-    if (learn?.status === 'deprecated-reteach' || learn?.deprecatedReason) {
-      await sayConclusionToPet(
-        `「${String(hit.goal).slice(0, 36)}」旧记录已作废（教完曾误动手）。请开实时看屏幕再教一遍。`,
-        { pet, duration: 14_000, memoryPath: options.petMemoryPath },
-      )
-      return true
-    }
     await sayConclusionToPet(
-      `学会了「${String(hit.goal).slice(0, 40)}」，对应自动化已建好。要我跑一次吗？`,
+      `学会了「${String(hit.goal).slice(0, 40)}」（技能 ${hit.name}）。要我跑一次吗？${mnemonBubbleSuffix()}`,
       { pet, duration: 12_000, memoryPath: options.petMemoryPath },
     )
   } else {
     const recent = list.slice(0, 3).map((r) => `「${String(r.goal || '?').slice(0, 24)}」`).join('、')
     await sayConclusionToPet(
-      `这件事我还没学会。最近学习记录：${recent || '（空）'}。想教我直接说。`,
+      `这件事我还没学会。最近技能：${recent || '（空）'}。想教我直接说。`,
       { pet, duration: 14_000, memoryPath: options.petMemoryPath },
     )
   }

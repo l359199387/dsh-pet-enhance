@@ -2,7 +2,15 @@
 
 只记**用户能感知的变化**和**实测数字**。重构、改名、补注释不记。
 
-## 0.5.1 · 未发布
+## 0.6.0 · 未发布
+
+### 技能唯一权威（对接 mnemon）
+
+- 去掉侧栏「我学会的」与 `/api/pet-enhance/learned*`；技能编辑/进化交给 dsh-mnemon。
+- 带教「做成了」只写 `~/.dsh/skills/<name>/SKILL.md`（+ 可选 scripts/coach-log）；不再写 learned/automations 权威。
+- 「再做一次 / 执行一下」扫 skills 匹配；旧 learned 仅只读回落。
+
+## 0.5.1
 
 ### 薄胶水：看屏/操控委托 `dsh-computer-use-win`
 

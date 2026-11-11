@@ -279,7 +279,8 @@ export function goalMatchTokens(goal) {
   return [...out].filter((t) => t.length >= 2)
 }
 
-function scoreGoalAgainstQuery(goal, q) {
+/** 供 skill-match / 旧 learned 共用。 */
+export function scoreGoalAgainstQuery(goal, q) {
   const g = String(goal || '').toLowerCase()
   if (!g || !q) return 0
   let score = 0

@@ -15,8 +15,8 @@ test('normalizeLocale 默认中文', () => {
 })
 
 test('t 插值与回退', () => {
-  assert.equal(t('zh', 'learned.count', { n: 2 }), '2 条')
-  assert.equal(t('en', 'learned.count', { n: 2 }), '2 items')
+  assert.match(t('zh', 'bubble.greet'), /技能|电脑操控/)
+  assert.match(t('en', 'bubble.greet'), /Mnemon|computer-use/i)
   assert.equal(t('zh', 'menu.stop'), '小蓝鲸急停')
 })
 

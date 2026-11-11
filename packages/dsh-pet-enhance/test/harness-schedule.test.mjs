@@ -16,15 +16,13 @@ test('skillSlug 为 kebab-case', () => {
   assert.match(skillSlugFromId('20261107-014933-4caa90ac'), /^pe-learn-[a-z0-9]+$/)
 })
 
-test('prompt：点击靠 glance；文字步骤可复打', () => {
+test('prompt：脚本优先 + computer-use', () => {
   const p = buildHarnessAutomationPrompt({
     goal: '记录心情',
-    learnedId: 'x',
     skillName: 'pe-learn-x',
   })
-  assert.ok(p.includes('不要加载'))
-  assert.ok(p.includes('glance'))
-  assert.ok(p.includes('用户键入文字') || p.includes('text'))
+  assert.match(p, /windows_computer_use_|脚本/)
+  assert.match(p, /禁止.*glance|禁止.*act/)
 })
 
 test('未说明时间：只写 skill，不 create 定时', async () => {

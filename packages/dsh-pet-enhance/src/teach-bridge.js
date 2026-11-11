@@ -1,6 +1,6 @@
 /**
- * 对话带教：说话指引 / 口述 → 可沉淀脚本 → 说「做成了」落盘 LEARN v2 + coach-log。
- * 0.5+：不做鼠标键盘 act；再做一次优先跑 Python 脚本块。
+ * 对话带教：做成了 → 写入 ~/.dsh/skills（权威）；再做一次按技能匹配。
+ * 管理/进化交给 dsh-mnemon；不再写 learned/automations 权威。
  *
  * @module src/teach-bridge.js
  */
@@ -14,7 +14,7 @@ import {
   AGENT_WAKE_PREFIX,
 } from './intent.js'
 import { classifyCoachUtterance, extractCoachGoal } from './coach-intent.js'
-import { appendCoachLog, promoteCoachLog, readCoachLog } from './coach-log.js'
+import { appendCoachLog, readCoachLog } from './coach-log.js'
 import {
   buildCoachInducePrompt,
   buildCoachWakePrompt,
@@ -25,7 +25,6 @@ import {
   buildScriptProposePrompt,
   buildScriptsConfirmSummary,
   parseScriptProposals,
-  patchLearnedCapability,
   rewriteSkillWithScripts,
   runReadyCoachScripts,
   writeCoachScripts,
@@ -41,18 +40,23 @@ import {
 } from './teach-store.js'
 import {
   createLearnedAutomationPair,
-  findAutomationForQuery,
-  readAutomationPlaybook,
   readLearned,
 } from './learned-automation.js'
-import { patchLearnedScheduleMeta } from './learned-manage.js'
-import { appendLearnedRun } from './learned-runs.js'
 import { registerHarnessAutomation } from './harness-schedule.js'
 import { describeClickFramesForPrompt } from './teach-frames.js'
 import { glancePersonaBlock } from './persona.js'
 import { buildC3DisciplineBlock } from './c3-task.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 import { prepareFreshRunSession } from './session-spawn.js'
+import {
+  mnemonBubbleSuffix,
+  promoteCoachLogToSkill,
+  skillSlugFromGoal,
+} from './teach-skill.js'
+import {
+  findSkillForQuery,
+  skillToRunMeta,
+} from './skill-match.js'
 import {
   buildSmartRunPrompt,
   shouldUseSmartRun,
@@ -125,12 +129,13 @@ export function buildLearnedChatNotice(info = {}) {
   if (summary) lines.push(`理解：${clip(summary, 180)}`)
   const fast = String(info.fastPlan || '').trim()
   if (fast) lines.push(`更快做法：${clip(fast, 140)}`)
-  const id = String(info.id || '').trim()
+  const skill = String(info.skillName || info.id || '').trim()
   lines.push(
-    id
-      ? `已写入「我学会的」（id=${clip(id, 28)}）。要跑时跟我说一声。`
-      : '已写入「我学会的」。要跑时跟我说一声。',
+    skill
+      ? `已写入技能「${clip(skill, 40)}」。要跑时跟我说一声。`
+      : '已写入本机技能。要跑时跟我说一声。',
   )
+  lines.push(mnemonBubbleSuffix())
   return lines.join('\n')
 }
 
@@ -288,7 +293,7 @@ export function createTeachBridge(options) {
   let constraints = []
   let attemptCount = 0
   /** @type {string | null} */
-  let lastPairId = null
+  let lastSkillName = null
   /** 本轮带教复用的主会话，避免每步都新开「未命名」 */
   /** @type {string | null} */
   let coachAgentSessionId = null
@@ -551,103 +556,53 @@ export function createTeachBridge(options) {
       }
     }
 
-    const playbook = {
-      id,
-      goal: savedGoal,
-      approach: 'smart',
-      strategy: {
-        approach: 'smart',
-        summary,
-        fastPlan,
-      },
-      understanding: {
-        summary,
-        fastPlan,
-        constraints: mergedConstraints,
-        success: '主人对话确认做成了',
-      },
-      steps: [],
-      stats: { coachAttempts: savedAttempts, mode: 'coach' },
-      ownerNotes: '',
-    }
-
-    const now = new Date().toISOString()
-    const pair = await createLearnedAutomationPair(options.home, {
-      v: 2,
-      id,
-      goal: savedGoal,
-      teachSessionId: id,
-      understanding: {
-        summary,
-        fastPlan,
-        approach: 'smart',
-        constraints: mergedConstraints,
-        success: '主人对话确认做成了',
-        attemptCount: savedAttempts,
-      },
-      coach: {
-        status: 'verified',
-        verifiedAt: now,
-        attemptCount: savedAttempts,
-        lastFailure: null,
-      },
-      capability: { skillName: null, scripts: [] },
-      evidence: [],
-      playbook,
-      frames: { count: 0, files: [], forLearningOnly: true },
-    })
-    await promoteCoachLog(options.home, id, id)
-    lastPairId = id
-
+    const skillName = skillSlugFromGoal(savedGoal, id)
     const harness = await registerHarnessAutomation(options.ctx, {
       goal: savedGoal,
       learnedId: id,
-      automationId: pair.task.id,
+      skillName,
       summary,
+      fastPlan,
+      constraints: mergedConstraints,
       preferredSessionId: preferred,
       scheduleText: [savedGoal, summary, fastPlan].filter(Boolean).join('\n'),
       log,
     })
-    await patchLearnedScheduleMeta(options.home, id, {
-      scheduleId: harness.scheduleId || null,
-      scheduleSessionId: harness.sessionId || null,
-      scheduled: Boolean(harness.scheduled),
-      timingLabel: harness.timingLabel || null,
-      skillName: harness.skillName || null,
+    const finalSkill = harness.skillName || skillName
+    await promoteCoachLogToSkill(options.home, id, finalSkill).catch((e) => {
+      log(`coach-log→skill 失败：${e?.message ?? e}`)
     })
+    lastSkillName = finalSkill
 
     let scriptNote = ''
-    const skillName = harness.skillName || null
-    if (proposedScripts.length && skillName) {
+    if (proposedScripts.length && finalSkill) {
       let allowScripts = false
       if (options.confirmGate?.ask) {
         const verdict = await options.confirmGate.ask({
-          summary: buildScriptsConfirmSummary(proposedScripts, skillName),
+          summary: buildScriptsConfirmSummary(proposedScripts, finalSkill),
           tier: 'L3',
-          action: { teach: 'write-scripts', count: proposedScripts.length, skillName },
+          action: { teach: 'write-scripts', count: proposedScripts.length, skillName: finalSkill },
         })
         allowScripts = Boolean(verdict?.allow)
       }
       if (allowScripts) {
         try {
-          const written = await writeCoachScripts(skillName, proposedScripts)
+          const written = await writeCoachScripts(finalSkill, proposedScripts)
           await rewriteSkillWithScripts({
-            skillName,
+            skillName: finalSkill,
             goal: savedGoal,
             learnedId: id,
-            automationId: pair.task.id,
             summary,
+            fastPlan,
+            constraints: mergedConstraints,
             scripts: written.scripts,
-          })
-          await patchLearnedCapability(options.home, id, {
-            skillName,
-            scripts: written.scripts,
+            scheduleId: harness.scheduleId || null,
           })
           await appendCoachLog(options.home, id, {
             kind: 'script',
             summary: `written:${written.scripts.length}`,
-          }, { learned: true })
-          scriptNote = `\n已沉淀 ${written.scripts.length} 个脚本块（skills/${skillName}/scripts/），下次优先按需执行。`
+          })
+          scriptNote = `\n已沉淀 ${written.scripts.length} 个脚本块（skills/${finalSkill}/scripts/），下次优先按需执行。`
         } catch (e) {
           log(`写脚本失败：${e?.message ?? e}`)
           scriptNote = `\n脚本写入失败：${clip(e?.message ?? e, 60)}`
@@ -659,21 +614,25 @@ export function createTeachBridge(options) {
         await appendCoachLog(options.home, id, {
           kind: 'script',
           summary: allowScripts ? 'skip' : 'denied-or-no-gate',
-        }, { learned: true })
+        })
       }
     }
 
     await updateTeachMeta(options.home, id, {
       status: 'paired',
       mode: 'coach',
-      learnedId: pair.learn.id,
-      automationId: pair.task.id,
+      skillName: finalSkill,
       scheduleId: harness.scheduleId || null,
       scheduled: Boolean(harness.scheduled),
       scriptCount: proposedScripts.length,
     })
 
-    const notice = buildLearnedChatNotice({ goal: savedGoal, summary, fastPlan, id })
+    const notice = buildLearnedChatNotice({
+      goal: savedGoal,
+      summary,
+      fastPlan,
+      skillName: finalSkill,
+    })
     let bubble = notice
     if (harness.ok && harness.scheduled) {
       bubble += `\n已按「${clip(harness.timingLabel || '定时', 24)}」登记到 Harness。这次不自动再跑。`
@@ -692,7 +651,7 @@ export function createTeachBridge(options) {
     ).catch((e) => log(`coach：写聊天失败：${e?.message ?? e}`))
 
     await broadcastToDshPet(bubble, { pet, duration: 18_000 })
-    log(`coach：verified ${id}`)
+    log(`coach：verified skill=${finalSkill}`)
   }
 
   /**
@@ -796,19 +755,118 @@ export function createTeachBridge(options) {
     await handleCoachUtterance('做成了，可以记下来')
   }
 
-  async function recordRun(id, info) {
-    try {
-      await appendLearnedRun(options.home, id, info)
-    } catch (e) {
-      log(`写入执行记录失败：${e?.message ?? e}`)
+  async function runSkillMeta(runMeta) {
+    if (!runMeta) return
+    if (runMeta.legacy && runMeta.playbook) {
+      await broadcastToDshPet(
+        `这是旧学会条目「${clip(runMeta.goal, 28)}」，建议在技能管理里整理。先按旧记录跑…`,
+        { pet, duration: 10_000 },
+      )
+      await runPlaybook(runMeta.playbook)
+      return
     }
+    try { options.resetActBudget?.() } catch { /* ignore */ }
+    const goalText = runMeta.goal || ''
+    const summary = runMeta.understanding?.summary || runMeta.strategy?.summary || ''
+    const fastPlan = runMeta.understanding?.fastPlan || runMeta.strategy?.fastPlan || ''
+    const skillName = runMeta.skillName || runMeta.capability?.skillName
+    if (skillName) lastSkillName = skillName
+
+    const scriptCap = runMeta.capability?.scripts
+    if (Array.isArray(scriptCap) && scriptCap.some((s) => s?.status === 'ready')) {
+      await broadcastToDshPet(
+        `先按技能脚本做「${clip(goalText, 28)}」…`,
+        { pet, duration: 8_000 },
+      )
+      const ran = await runReadyCoachScripts(runMeta, { dryRunFirst: true, log })
+      if (ran.ok) {
+        const doneText = `脚本块已跑完：${clip(goalText, 40)}（${ran.results.filter((r) => r.phase === 'run').length} 块）`
+        await sayConclusionToPet(doneText, {
+          pet,
+          duration: 12_000,
+          memoryPath: options.petMemoryPath,
+        })
+        return
+      }
+      await broadcastToDshPet(
+        `脚本块未完全成功（${ran.reason || 'fail'}），改按说明变通…`,
+        { pet, duration: 8_000 },
+      )
+    }
+
+    const playbook = {
+      id: skillName || goalText,
+      goal: goalText,
+      approach: 'smart',
+      strategy: { approach: 'smart', summary, fastPlan },
+      understanding: { summary, fastPlan },
+      steps: [],
+      ownerNotes: '',
+    }
+    const learnMeta = runMeta
+    const smart = shouldUseSmartRun(playbook, learnMeta)
+    if (smart) {
+      const preferred = options.getPreferredSessionId?.() ?? null
+      const prepared = await prepareSession(options.ctx, {
+        preferredId: preferred,
+        titleHint: String(goalText || '再做一次').slice(0, 36),
+        onSession: options.onSession,
+        log,
+      })
+      if (prepared.fresh && prepared.sessionId) {
+        await broadcastToDshPet('已新开干净会话来执行（脚本/命令·标准·low）…', {
+          pet,
+          duration: 6_000,
+        })
+      }
+      const prompt = buildSmartRunPrompt({
+        ...playbook,
+        strategy: { summary, fastPlan },
+      }, {})
+      await broadcastToDshPet(
+        `按变通思路做「${clip(goalText, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
+        { pet, duration: 10_000 },
+      )
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        sessionId: prepared.sessionId || undefined,
+        preferredId: prepared.sessionId || preferred,
+      })
+      if (!woken.ok) {
+        await sayConclusionToPet(`没叫醒主会话（${woken.reason || 'unknown'}）。`, {
+          pet,
+          duration: 10_000,
+          memoryPath: options.petMemoryPath,
+        })
+        return
+      }
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+      const reply = await waitReply(options.ctx, woken.sessionId, {
+        timeoutMs: 180_000,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
+      })
+      const text = reply.ok && reply.text
+        ? clip(reply.text, 160)
+        : '主会话这轮没给出结论。'
+      await sayConclusionToPet(text, {
+        pet,
+        duration: 12_000,
+        memoryPath: options.petMemoryPath,
+      })
+      return
+    }
+    await sayConclusionToPet(`我会按「${clip(goalText, 40)}」变通做；请再说具体一点或打开技能说明。`, {
+      pet,
+      duration: 10_000,
+      memoryPath: options.petMemoryPath,
+    })
   }
 
   async function runPlaybook(playbook) {
     const id = playbook.id
     // 用户再次开口跑自动化：清掉上一轮动作预算，避免「卡在第 2 步」假死
     try { options.resetActBudget?.() } catch { /* ignore */ }
-    await readTeachSecrets(options.home, id)
+    await readTeachSecrets(options.home, id).catch(() => {})
     const learnMeta = await readLearned(options.home, id).catch(() => null)
     const summary = learnMeta?.understanding?.summary || playbook.strategy?.summary || ''
     const fastPlan = learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan || ''
@@ -833,13 +891,7 @@ export function createTeachBridge(options) {
           status: 'done',
           via: 'scripts',
           endedAt: new Date().toISOString(),
-        })
-        await recordRun(id, {
-          via: 'scripts',
-          ok: true,
-          summary: doneText,
-          understandingSnapshot: snap,
-        })
+        }).catch(() => {})
         return
       }
       await broadcastToDshPet(
@@ -910,13 +962,7 @@ export function createTeachBridge(options) {
             status: 'done',
             via: 'smart',
             endedAt: new Date().toISOString(),
-          })
-          await recordRun(id, {
-            via: 'smart',
-            ok: true,
-            summary: reply.text,
-            understandingSnapshot: snap,
-          })
+          }).catch(() => {})
           log(`teach：smart 执行完成 ${id}`)
           return
         }
@@ -947,13 +993,7 @@ export function createTeachBridge(options) {
             : `看屏步没叫醒主会话（${why}）。本版本不再回放鼠标键盘。`,
           { pet, duration: 12_000, memoryPath: options.petMemoryPath },
         )
-        await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why })
-        await recordRun(id, {
-          via: 'glance-wake-failed',
-          ok: false,
-          summary: `看屏步没叫醒主会话（${why}）`,
-          understandingSnapshot: snap,
-        })
+        await updateTeachMeta(options.home, id, { status: 'glance-wake-failed', reason: why }).catch(() => {})
         return
       }
       log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(remainder)}`)
@@ -972,13 +1012,7 @@ export function createTeachBridge(options) {
           status: 'done',
           via: 'glance-only',
           endedAt: new Date().toISOString(),
-        })
-        await recordRun(id, {
-          via: 'glance-only',
-          ok: true,
-          summary: reply.text,
-          understandingSnapshot: snap,
-        })
+        }).catch(() => {})
         return
       }
     }
@@ -998,34 +1032,27 @@ export function createTeachBridge(options) {
       status: 'oral-only',
       via: 'oral-no-act',
       endedAt: new Date().toISOString(),
-    })
-    await recordRun(id, {
-      via: 'oral-no-act',
-      ok: false,
-      summary: oral,
-      understandingSnapshot: snap,
-    })
+    }).catch(() => {})
   }
 
   /**
-   * 再次执行：按 learned↔automation 1:1 匹配，省消化 token。
+   * 再次执行：优先扫 ~/.dsh/skills；miss 时只读回落旧 learned。
    * @returns {Promise<boolean>} 是否已接手处理
    */
   async function tryRunMatchingPlaybook(userText) {
-    let playbook = await findAutomationForQuery(options.home, userText)
-    // 仅「再做一次」这类无目标口令才回落到最近一对；避免「ibli1」误触发
-    if (!playbook && lastPairId && isVagueReplayIntent(userText)) {
-      playbook = await readAutomationPlaybook(options.home, lastPairId)
-    }
-    const hasGoal = Boolean(String(playbook?.goal || '').trim())
-    const hasSteps = Array.isArray(playbook?.steps) && playbook.steps.length > 0
-    if (!playbook || (!hasGoal && !hasSteps)) return false
+    const skill = await findSkillForQuery(userText, {
+      home: options.home,
+      lastSkillName,
+      allowLegacyLearned: true,
+    })
+    const runMeta = skillToRunMeta(skill)
+    if (!runMeta || !String(runMeta.goal || '').trim()) return false
 
     await broadcastToDshPet(
-      `好，执行自动化「${clip(playbook.goal, 36)}」（脚本/命令优先，不点鼠标键盘）…`,
+      `好，执行技能「${clip(runMeta.goal, 36)}」（脚本优先，GUI 走电脑操控）…`,
       { pet, duration: 8_000 },
     )
-    await runPlaybook(playbook)
+    await runSkillMeta(runMeta)
     return true
   }
 

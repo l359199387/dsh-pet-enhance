@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-enhance",
-  "version": "0.5.1",
-  "description": "dsh-pet-enhance：给 dsh-pet 增强带教与脚本；看屏/GUI 委托 dsh-computer-use-win（不注册 glance/act）。",
+  "version": "0.6.0",
+  "description": "dsh-pet-enhance：带教写入 ~/.dsh/skills；看屏/GUI 委托 computer-use；技能管理交给 dsh-mnemon。",
   "type": "module",
   "main": "./src/index.js",
   "exports": {

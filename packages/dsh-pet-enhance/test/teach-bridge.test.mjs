@@ -10,17 +10,18 @@ import {
 } from '../src/teach-bridge.js'
 import { AGENT_WAKE_PREFIX } from '../src/intent.js'
 
-test('buildLearnedChatNotice：含目标与理解', () => {
+test('buildLearnedChatNotice：含目标与技能名', () => {
   const t = buildLearnedChatNotice({
     goal: '和豆包聊天',
     summary: '示范闲聊并看回复',
     fastPlan: '打开豆包会话直接说你好',
-    id: 'sid-1',
+    skillName: 'chat-doubao',
   })
   assert.match(t, /我学会了「和豆包聊天」/)
   assert.match(t, /理解：/)
   assert.match(t, /更快做法：/)
-  assert.match(t, /我学会的/)
+  assert.match(t, /技能「chat-doubao」/)
+  assert.match(t, /技能管理|dsh-mnemon/)
 })
 
 test('shouldAttachTeachDigestImages：键入为主不附图', () => {

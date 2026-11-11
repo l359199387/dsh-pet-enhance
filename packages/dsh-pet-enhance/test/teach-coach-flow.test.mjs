@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { createTeachBridge } from '../src/teach-bridge.js'
-import { assertLearnedAutomationPair, listLearnedIndex } from '../src/learned-automation.js'
+import { listLearnedIndex } from '../src/learned-automation.js'
 import { saveSettings } from '../src/settings.js'
-import { coachLogPath } from '../src/coach-log.js'
+import { listTeachSkills } from '../src/skill-match.js'
 
 const home = mkdtempSync(join(tmpdir(), 'glance-coach-'))
 after(() => rmSync(home, { recursive: true, force: true }))
 
-test('对话带教：做成了 → LEARN v2 + coach-log，不录宏不喂图', async () => {
+test('对话带教：做成了 → 写入 skills，不写 learned 权威', async () => {
   await saveSettings(home, { liveWatch: false, actEnabled: true })
   const wakes = []
   const memoryPath = join(home, 'pet-memory.json')
@@ -68,18 +68,17 @@ test('对话带教：做成了 → LEARN v2 + coach-log，不录宏不喂图', a
     await bridge.handleCoachUtterance('可以了，记下来吧')
     assert.equal(bridge.isTeaching(), false)
 
-    const idx = await listLearnedIndex(home)
-    assert.equal(idx.length, 1)
-    const pair = await assertLearnedAutomationPair(home, idx[0].id)
-    assert.equal(pair.ok, true)
-    assert.equal(pair.learn.v, 2)
-    assert.equal(pair.learn.coach?.status, 'verified')
-    assert.match(pair.learn.understanding?.summary || '', /笔记|心情|桌面/)
-    assert.equal(Array.isArray(pair.playbook.steps) ? pair.playbook.steps.length : 0, 0)
-    assert.ok(existsSync(coachLogPath(home, idx[0].id, { learned: true })))
+    const learnedIdx = await listLearnedIndex(home)
+    assert.equal(learnedIdx.length, 0, '不应新建 learned index')
+    const skills = await listTeachSkills(join(home, 'skills'))
+    assert.equal(skills.length, 1)
+    assert.match(skills[0].goal || skills[0].description || '', /心情|桌面|笔记/)
+    assert.equal(skills[0].status, 'verified')
+    assert.ok(existsSync(join(home, 'skills', skills[0].name, 'SKILL.md')))
+    assert.ok(existsSync(join(home, 'skills', skills[0].name, 'coach-log.jsonl')))
     const mem = JSON.parse(readFileSync(memoryPath, 'utf8'))
     const last = mem.main.main.messages.at(-1)
-    assert.match(last.content, /我学会了/)
+    assert.match(last.content, /我学会了|技能/)
   } finally {
     if (prevDsh === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevDsh

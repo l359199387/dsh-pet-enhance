@@ -127,19 +127,13 @@
   - 桌面独立窗：Host 启动时给已装 dsh-pet 的 Helper 打幂等 `dblclick → showChatFromMenu` 补丁，并 `POST /reload`；升级 dsh-pet 后重启宿主会再打一次。
 - Host 用 **绝对 origin**（`webServer.getOrigin()`）调 dsh-pet；相对路径在 Node 里会直接失败。
 - **`pet-router`** 统一轮询 `GET /chat`（近 8 轮）：每句先经 `classify-utterance` **本地分流（默认 0 token，不叫醒主会话）**；「学会了吗」对照 playbook 冒泡回答。禁止把分流提示 followup 进带工具会话（会误 click）。仅 `DSH_PET_ENHANCE_CLASSIFY=wake` 才允许旧危险路径。分发：
-  - `glance` → `chat-bridge` 抓帧附图让宠物开口。
-  - `task` → `agent-bridge` 叫醒**主会话** Agent（模型调 `glance`/`act`），结束后回灌气泡；未开「允许动手」只提示。
-  - `teach` / `teach_coach` → **对话带教**（见 [11](11-teach-refactor.md)）；`chat` → 闲聊已关时仍可由闸门处理「学会了吗 / 再做一次」。
-- **C2 `act` 管线**：策略分级 → 黑名单窗拒点 → 每轮预算 20 → L2/L3 等 `/api/pet-enhance/confirm`（**宠头顶气泡「好/不要」**，网页 overlay + 桌面 Helper 补丁；60s 超时拒）→ sidecar → 指纹校验 → `actions.jsonl`。
-- **桌面动手护盾**：`act`/`input` 期间写 `~/.dsh/pet-enhance/desktop-act.lock`；Helper `windows.js` 补丁见锁则强制点击穿透并停翻 `setIgnoreMouseEvents`（否则鼠标扫过宠体会弄丢置顶，看起来像「卡没了」）；结束后删锁并 `HWND_TOPMOST` 重钉。
-- **对话带教 → 学会（1:1）**：说「我教你…」进入带教（须开「允许动手」；**不再**录鼠标/关键帧/「我教完了」）。它动手，你用对话纠正；意图由模型判 `done/abort/correct/step/open`（不写死口令）。说做成了 → 文字归纳 LEARN v2 + 长期 `coach-log.jsonl` → learned↔automations（`approach=smart`）。**未明说每周几/几点 → 不向 Harness 排程**。用户再说「去看看B站 / 再做一次」→ 匹配目标、**重置动作预算**、优先读 understanding 变通执行。教完不自动再跑。细节见 [11-teach-refactor.md](11-teach-refactor.md)。
-- **语言**：`settings.locale` 默认 `zh`；侧栏「我学会的」可切中/英；菜单与常用气泡跟语言走（`GET/PATCH /api/pet-enhance/settings`、`GET /api/pet-enhance/i18n`）。
-- **侧栏「我学会的」**（`sidebar.panellist` + `main` key=`pet-enhance-learned`）：卡片格子 + 序号 + 标题模糊搜索；展示**学习理解**与**执行记录**（跑自动化时写入 `learned/<id>/runs.json`）。每条记录可评「好/一般/差」并写评语，`POST /api/pet-enhance/learned/:id/runs/:runId/rate` 叫醒模型改正理解。编辑弹窗可改目标 / 填**补充**（保存后并入理解并清空）；删除弹窗二次确认，联动清 `learned`+`automations`+skill，若有 `scheduleId` 则 `schedule.delete`。
-- 每次看屏追加 `~/.dsh/pet-enhance/episodes/YYYY-MM.jsonl`（无图；敏感窗标题跳过）。
-- 右键「更多」挂三项（状态写入 `~/.dsh/pet-enhance/settings.json`）：
-  - **实时看屏幕 · 开/关**：开则约每 15s 盯一帧，有变化冒泡；关则只保留主动看屏。
-  - **允许动手 · 开/关**：对应 `actEnabled`；关则 `act` 拒绝真动手。
-  - **小蓝鲸急停**。
+  - `glance` → `chat-bridge` 叫醒主会话，用 `windows_computer_use_*` 观察后回灌文字结论。
+  - `task` → 先按 `~/.dsh/skills` 匹配再执行；否则 `agent-bridge` 叫醒 computer-use。
+  - `teach` / `teach_coach` → **对话带教**；`chat` → 闲聊已关，仍处理「学会了吗 / 再做一次」。
+- **`act`/`glance` 均不注册**；桌面 GUI 委托已装的 `dsh-computer-use-win`。
+- **对话带教 → 技能**：说「我教你…」；做成了 → 写入 `~/.dsh/skills/<name>/SKILL.md`（+ 可选 scripts / coach-log）。**不再**写 learned/automations 权威，也**无**「我学会的」侧栏；管理/进化用 **dsh-mnemon**。未明说每周几/几点 → 不向 Harness 排程。「执行一下 / 再做一次」扫 skills 匹配（旧 learned 只读回落）。
+- **语言**：`settings.locale` 默认 `zh`（`GET/PATCH /api/pet-enhance/settings`、`GET /api/pet-enhance/i18n`）；侧栏语言切换已随「我学会的」移除。
+- 右键「更多」：实时看屏幕（本地盯屏已停用说明）、最近聊天、急停。
 - 未装 dsh-pet 或本地关掉「用 dsh-pet」时，回退内置 SVG + 面板。
 
 我们不注册 `petApi7340`（避免冲突）；自己的 Cordis 名是 `petEnhance`（尚未挂）。

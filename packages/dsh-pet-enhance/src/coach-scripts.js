@@ -9,9 +9,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { AGENT_WAKE_PREFIX, TEACH_FOLLOWUP_PREFIX } from './intent.js'
-import { skillSlugFromId, buildSkillMarkdown } from './harness-schedule.js'
+import { skillSlugFromId } from './harness-schedule.js'
 import { learnedPaths } from './learned-automation.js'
 import { resolvePython } from './sidecar.js'
+import { rewriteTeachSkillWithScripts } from './teach-skill.js'
 
 const FORBIDDEN_RE =
   /SendInput|mouse_event|SetCursorPos|pyautogui|pynput|win32api\.SetCursor|ctypes\.windll\.user32\.(?:SendInput|mouse_event|SetCursorPos)/i
@@ -122,37 +123,29 @@ export async function writeCoachScripts(skillName, scripts) {
 }
 
 /**
- * 把脚本目录写进 SKILL.md（覆盖说明，保留 learned 指针）。
+ * 把脚本目录写进 SKILL.md（技能权威）。
  */
 export async function rewriteSkillWithScripts({
   skillName,
   goal,
   learnedId,
-  automationId,
   summary,
+  fastPlan,
+  constraints,
   scripts = [],
+  scheduleId = null,
 }) {
   const name = skillName || skillSlugFromId(learnedId)
-  const dir = join(skillsRoot(), name)
-  await mkdir(dir, { recursive: true })
-  let body = buildSkillMarkdown({
-    name,
+  return rewriteTeachSkillWithScripts({
+    skillName: name,
     goal,
-    learnedId,
-    automationId: automationId || learnedId,
     summary,
+    fastPlan,
+    constraints,
+    teachSessionId: learnedId || '',
+    scripts,
+    scheduleId,
   })
-  body = body
-    .replace(/点击坐标仅为证据[\s\S]*?typed-text 按记录的文字复打。\n/, '优先跑 scripts/ 下的确定性脚本；不够再 glance/act。\n')
-  if (scripts.length) {
-    const lines = scripts.map(
-      (s) => `- \`${s.id}\` → \`${s.path}\`：${s.purpose}（支持 --dry-run）`,
-    )
-    body += `\n## 脚本能力（按块，用到哪个执行哪个）\n\n${lines.join('\n')}\n`
-  }
-  const path = join(dir, 'SKILL.md')
-  await writeFile(path, body, 'utf8')
-  return { name, path }
 }
 
 /**

@@ -1,19 +1,20 @@
 /**
- * 把小蓝鲸学会的自动化登记到 DeepSeek Harness 的 schedule（自动化任务页）。
+ * 把小蓝鲸学会的技能登记到 DeepSeek Harness 的 schedule（自动化任务页）。
  *
- * 规则：用户没明确说「每周几 / 几点 / 每隔…」→ 只写 skill + 本地自动化，**不** create 定时、不开启。
- * 宿主签名（当前安装版）：
- *   schedule.create(sessionId, { title, prompt, after_seconds|at|timing|… }, signal?)
+ * 规则：用户没明确说「每周几 / 几点 / 每隔…」→ 只写 skill，**不** create 定时。
+ * 技能权威：~/.dsh/skills/<name>/SKILL.md
  *
  * @module src/harness-schedule.js
  */
 
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
 import { serviceOf } from './host-ctx.js'
 import { pickSessionId } from './wake-session.js'
 import { parseScheduleSpec, timingToCreateFields } from './schedule-parse.js'
+import {
+  buildTeachSkillMarkdown,
+  skillSlugFromGoal,
+  writeTeachSkillFile,
+} from './teach-skill.js'
 
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
@@ -26,63 +27,60 @@ export function skillSlugFromId(id) {
   return `pe-learn-${tail}`
 }
 
+export { skillSlugFromGoal }
+
 /**
- * 交给 Harness 自动化 / Agent 的短指令（不含密码明文）。
+ * 交给 Harness 自动化 / Agent 的短指令。
  */
 export function buildHarnessAutomationPrompt({
   goal,
-  learnedId,
   skillName,
   ownerNotes = '',
 }) {
   const notes = String(ownerNotes || '').trim()
   return (
-    `执行小蓝鲸已学会的自动化「${clip(goal, 80)}」。`
-    + `学习 id=${learnedId}；可用 skill「${skillName}」加载说明。`
+    `执行小蓝鲸已学会的技能「${clip(goal, 80)}」。`
+    + `可用 skill「${skillName}」加载说明与 scripts。`
     + (notes ? `主人想法：${clip(notes, 400)}。` : '')
-    + '先 glance 看清**当前**屏幕，再按目标用 act。'
-    + '不要加载 learned/frames 教学图片（图只用于学习，执行不用）。'
-    + '点击坐标只是参考，界面变了要 glance 重找；'
-    + 'playbook 里 mode=script 的「用户键入文字」可按 text 复打；敏感输入只用 secretRef。一两句汇报。'
+    + '优先跑 ready 脚本；不够再用 windows_computer_use_*（优先 UIA）。'
+    + '禁止调用已下线的 glance/act。一两句汇报。'
   )
 }
 
+/** @deprecated 兼容旧测试；新路径用 buildTeachSkillMarkdown。 */
 export function buildSkillMarkdown({ name, goal, learnedId, automationId, summary }) {
-  return (
-    `---\n`
-    + `name: ${name}\n`
-    + `description: ${clip(goal, 120)}（小蓝鲸教学·与自动化一一对应）。执行前先 glance；文字步骤按 text 复打。\n`
-    + `---\n\n`
-    + `# ${clip(goal, 80)}\n\n`
-    + `- learnedId: \`${learnedId}\`\n`
-    + `- automationId: \`${automationId}\`\n`
-    + `- 路径: \`~/.dsh/pet-enhance/learned/${learnedId}/\`\n\n`
-    + `## 理解摘要\n\n${clip(summary, 800)}\n\n`
-    + `## 执行纪律\n\n`
-    + `1. 先 glance，再 act。\n`
-    + `2. 点击坐标仅为证据，界面变了要重找；typed-text 按记录的文字复打。\n`
-    + `3. 密码类只用本地 secretRef，禁止复述明文。\n`
-  )
+  return buildTeachSkillMarkdown({
+    name,
+    goal,
+    summary,
+    teachSessionId: learnedId || '',
+    scheduleId: null,
+  }) + (learnedId || automationId
+    ? `\n<!-- legacy learnedId=${learnedId || ''} automationId=${automationId || ''} -->\n`
+    : '')
 }
 
 /**
- * 写入 ~/.dsh/skills/<slug>/SKILL.md，供 DSH 热发现。
+ * 写入 ~/.dsh/skills/<slug>/SKILL.md
  */
-export async function writeGlanceSkillFile({ goal, learnedId, automationId, summary }) {
-  const name = skillSlugFromId(learnedId)
-  const root = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const dir = join(root, 'skills', name)
-  await mkdir(dir, { recursive: true })
-  const body = buildSkillMarkdown({
-    name,
+export async function writeGlanceSkillFile({
+  goal,
+  learnedId,
+  automationId,
+  summary,
+  fastPlan,
+  constraints,
+  name,
+}) {
+  const skillName = name || skillSlugFromGoal(goal, learnedId || automationId)
+  return writeTeachSkillFile({
+    name: skillName,
     goal,
-    learnedId,
-    automationId,
     summary,
+    fastPlan,
+    constraints,
+    teachSessionId: learnedId || '',
   })
-  const path = join(dir, 'SKILL.md')
-  await writeFile(path, body, 'utf8')
-  return { name, path }
 }
 
 /** @deprecated 不再用作默认定时；仅测试/显式 after 兼容。 */
@@ -104,18 +102,23 @@ export async function registerHarnessAutomation(ctx, {
   learnedId,
   automationId,
   summary,
+  fastPlan,
+  constraints,
+  skillName: preferredName,
   preferredSessionId = null,
   scheduleText = '',
   timing = null,
   log = () => {},
 } = {}) {
-  let skillName = skillSlugFromId(learnedId)
+  let skillName = preferredName || skillSlugFromGoal(goal, learnedId || automationId)
   try {
-    const sk = await writeGlanceSkillFile({
+    const sk = await writeTeachSkillFile({
+      name: skillName,
       goal,
-      learnedId,
-      automationId: automationId || learnedId,
       summary,
+      fastPlan,
+      constraints,
+      teachSessionId: learnedId || '',
     })
     skillName = sk.name
   } catch (e) {
@@ -124,16 +127,15 @@ export async function registerHarnessAutomation(ctx, {
 
   const prompt = buildHarnessAutomationPrompt({
     goal,
-    learnedId,
     skillName,
   })
-  const rawGoal = String(goal || learnedId || '自动化').trim() || '自动化'
+  const rawGoal = String(goal || skillName || '自动化').trim() || '自动化'
   const titled = rawGoal.startsWith('小蓝鲸') ? rawGoal : `小蓝鲸｜${rawGoal}`
   const title = clip(titled, 120)
 
   const spec = timing || parseScheduleSpec(scheduleText, goal, summary)
   if (!spec) {
-    log(`Harness：未说明运行时间，跳过 schedule.create（仅本地+skill=${skillName}）`)
+    log(`Harness：未说明运行时间，跳过 schedule.create（仅 skill=${skillName}）`)
     return {
       ok: true,
       scheduled: false,
