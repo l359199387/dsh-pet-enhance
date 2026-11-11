@@ -211,7 +211,7 @@ export function buildTeachUnderstandPrompt(goal, steps, sessionId) {
     }
     return (
       `${n}. 演示在 ${win} 附近${s.action}，示意坐标约(${s.x},${s.y})`
-      + '——坐标仅供参考，界面若变了请自己 glance 找目标。'
+      + '——坐标仅供参考，界面若变了请用 windows_computer_use_find 找目标。'
     )
   }).join('\n')
 
@@ -220,15 +220,15 @@ export function buildTeachUnderstandPrompt(goal, steps, sessionId) {
     + `用户刚演示了一遍。目标：「${String(goal || '').slice(0, 120)}」。\n`
     + '下面是观测证据（请理解流程，不要当成必须逐点重放的脚本）：\n'
     + `${evidence}\n\n`
-    + '请真正理解后：用 glance 看屏，用脚本/命令/写文件完成能自动化的部分；'
-    + '**禁止 act**；GUI 与敏感输入改口述。完成后用一两句口语汇报。\n\n'
+    + '请真正理解后：用 windows_computer_use_* 看屏/操作 GUI，用脚本/命令/写文件完成能自动化的部分；'
+    + '**禁止**已下线的 glance/act。完成后用一两句口语汇报。\n\n'
     + buildC3DisciplineBlock({ includeScenario: false })
     + `\n${glancePersonaBlock()}`
   )
 }
 
 /**
- * 仅 glance 步的短提示（脚本步已由 Host 跑或不送）。
+ * GUI/核对步短提示（脚本步已由 Host 跑或不送）；看屏走 computer-use。
  * @param {object} playbook
  */
 export function buildTeachGlancePrompt(playbook) {
@@ -236,8 +236,8 @@ export function buildTeachGlancePrompt(playbook) {
   return (
     `${AGENT_WAKE_PREFIX}${TEACH_FOLLOWUP_PREFIX}`
     + `已学 playbook ${playbook.id}。目标：「${clip(playbook.goal, 80)}」。`
-    + `脚本步宿主已处理或可本地跑；只需你 glance 核对：${hints}。`
-    + '**禁止 act**；GUI 口述给用户；一两句汇报。'
+    + `脚本步宿主已处理或可本地跑；剩余用 windows_computer_use_* 核对/完成：${hints}。`
+    + '**禁止** glance/act；优先 find → set_value/invoke；一两句汇报。'
     + buildC3DisciplineBlock({ includeScenario: false })
     + `\n${glancePersonaBlock()}`
   )
@@ -848,7 +848,7 @@ export function createTeachBridge(options) {
       )
     }
     const glanceSteps = (playbook.steps || []).filter((s) => s.mode === 'glance')
-    // 变通：叫醒模型用 glance + 脚本/命令（禁止 act）；不再本地鼠标键盘回放
+    // 变通：叫醒模型用 windows_computer_use_* + 脚本/命令（禁止本地 act）
     const smart = shouldUseSmartRun(playbook, learnMeta)
 
     if (smart) {

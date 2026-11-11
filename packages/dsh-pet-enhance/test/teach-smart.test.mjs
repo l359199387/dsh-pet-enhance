@@ -50,10 +50,9 @@ test('buildSmartRunPrompt 含快捷路径与变通/高清纪律', () => {
     strategy: { fastPlan: '打开 https://www.bilibili.com', summary: '打开B站' },
   })
   assert.match(p, /bilibili/)
-  assert.match(p, /禁止.*act|禁止.*鼠标/)
-  assert.match(p, /glance|脚本/)
-  assert.match(p, /口述/)
-  assert.match(p, /执行纪律·无鼠标键盘/)
+  assert.match(p, /禁止.*glance|禁止.*act/)
+  assert.match(p, /windows_computer_use_|脚本/)
+  assert.match(p, /电脑操控|windows_computer_use_/)
 })
 
 test('shouldUseSmartRun：有目标或步骤一律变通', () => {

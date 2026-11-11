@@ -24,7 +24,7 @@ export function actToolSpec() {
       + '用户把光标甩到左上角 (0,0) 或点了急停 → 立即停，返回后不要重试。\n'
       + buildC3DisciplineBlock({ includeScenario: false })
       + '\n'
-      + '**本版本已硬关 act**（不注册）；请用 glance 看屏，或脚本/命令类任务；GUI 改口述。',
+      + '**本版本已硬关 act**（不注册）；看屏/GUI 请用主会话 `windows_computer_use_*`，或脚本/命令。',
     parameters: {
       type: 'object',
       additionalProperties: false,

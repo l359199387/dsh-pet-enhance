@@ -42,13 +42,13 @@ test('isComputerTaskIntent：干活命中，闲聊/看屏/回声不命中', () =
   assert.equal(shouldSkipGlanceBridge('看一眼桌面'), false)
 })
 
-test('buildAgentWakePrompt：含用户原话与禁 act 指引', () => {
+test('buildAgentWakePrompt：含用户原话与 computer-use 指引', () => {
   const p = buildAgentWakePrompt('把记事本最小化')
   assert.ok(p.startsWith(AGENT_WAKE_PREFIX))
   assert.ok(p.includes('把记事本最小化'))
-  assert.ok(p.includes('glance'))
-  assert.match(p, /禁止.*act|禁止.*鼠标/)
-  assert.match(p, /执行纪律·无鼠标键盘/)
+  assert.match(p, /windows_computer_use_/)
+  assert.match(p, /禁止.*glance|禁止.*act/)
+  assert.match(p, /电脑操控/)
 })
 
 test('交办不再要求允许动手：直接叫醒并回灌气泡', async () => {
@@ -85,6 +85,7 @@ test('交办不再要求允许动手：直接叫醒并回灌气泡', async () =>
     petMemoryPath,
     intervalMs: 60_000,
     log() {},
+    isComputerUseInstalled: () => true,
     getPreferredSessionId: () => 'sess-9',
     prepareSession: async () => ({ sessionId: 'fresh-9', fresh: true }),
     wake: async (_ctx, opts) => {

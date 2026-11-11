@@ -1,7 +1,7 @@
 /**
  * 把小蓝鲸能力接到 dsh-pet 自带对话上（悬停按 L / Ctrl+Shift+L）。
  *
- * B2：会话记忆与气泡归 dsh-pet；我们只做看屏闭环 + episode 落盘 + 附图时注入人格。
+ * 0.5.1+：看屏意图改为叫醒主会话，用 windows_computer_use_* 观察（不再本地抓图附图）。
  *
  * @module src/chat-bridge.js
  */
@@ -9,11 +9,9 @@
 import {
   broadcastToDshPet,
   callDshPet,
-  chatWithDshPet,
 } from './dsh-pet.js'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { captureFrame } from './capture.js'
 import { appendEpisode, buildGlanceEpisode } from './episode.js'
 import { glancePersonaBlock } from './persona.js'
 import {
@@ -24,8 +22,14 @@ import {
   parseWatchSeconds,
   shouldSkipGlanceBridge,
 } from './intent.js'
-import { runWatch } from './watch-loop.js'
-import { sayConclusionToPet, stripTrailingShortAcks } from './pet-chat-memory.js'
+import { sayConclusionToPet } from './pet-chat-memory.js'
+import { wakeSession, waitAssistantReply } from './wake-session.js'
+import { prepareFreshRunSession } from './session-spawn.js'
+import {
+  buildComputerUseObservePrompt,
+  COMPUTER_USE_MISSING_BUBBLE,
+  isComputerUseInstalled as detectComputerUse,
+} from './computer-use-delegate.js'
 
 /** 最近一次盯屏/看屏拼图落盘，方便用户直接打开看。 */
 export function latestWatchPngPath(home) {
@@ -115,12 +119,18 @@ export function followUpWatchPrompt(userText, result) {
 
 /**
  * @param {{
- *   sidecar?: object | (() => object | null | undefined),
+ *   ctx?: object,
  *   home: string,
  *   log?: (m: string) => void,
  *   petId?: string,
  *   intervalMs?: number,
- *   capture?: typeof captureFrame,
+ *   getPreferredSessionId?: () => string | null,
+ *   onSession?: (sessionId: string) => void,
+ *   isAborted?: () => boolean,
+ *   wake?: typeof wakeSession,
+ *   waitReply?: typeof waitAssistantReply,
+ *   prepareSession?: typeof prepareFreshRunSession,
+ *   isComputerUseInstalled?: () => boolean,
  *   onLooking?: () => void,
  *   onIdle?: () => void,
  *   recordEpisode?: boolean,
@@ -132,10 +142,13 @@ export function createChatBridge(options) {
   const pet = options.petId || 'main'
   const log = options.log ?? (() => {})
   const intervalMs = options.intervalMs ?? 2_000
-  const capture = options.capture ?? captureFrame
   const recordEpisode = options.recordEpisode !== false
   const pollChat = options.pollChat !== false
   const greetOnStart = options.greetOnStart !== false
+  const wake = options.wake ?? wakeSession
+  const waitReply = options.waitReply ?? waitAssistantReply
+  const prepareSession = options.prepareSession ?? prepareFreshRunSession
+  const hasComputerUse = options.isComputerUseInstalled ?? detectComputerUse
   let timer = null
   let greetTimer = null
   let stopped = false
@@ -152,277 +165,124 @@ export function createChatBridge(options) {
     else if (r.skipped) log('chat-bridge episode 跳过（敏感窗口）')
   }
 
-  async function tryChatWithPng(prompt, png) {
-    return chatWithDshPet(prompt, {
-      pet,
-      attachment: {
-        mediaType: 'image/png',
-        data: png.toString('base64'),
-      },
-      timeoutMs: 120_000,
-    })
+  function clipBubble(text, max = 160) {
+    const s = String(text ?? '').replace(/\s+/g, ' ').trim()
+    if (s.length <= max) return s
+    return `${s.slice(0, max - 1)}…`
   }
 
-  /**
-   * dsh-pet /chat 一次只能附一张图：多张 sheet 按时间顺序分多次送进对话与模型。
-   */
-  async function deliverWatchSheets(userText, shot, t0) {
-    const pngs = (Array.isArray(shot.pngs) ? shot.pngs : [])
-      .filter((b) => Buffer.isBuffer(b) && b.byteLength > 0)
-    if (!pngs.length && Buffer.isBuffer(shot.png) && shot.png.byteLength > 0) {
-      pngs.push(shot.png)
-    }
-    if (!pngs.length) {
-      await sayConclusionToPet('盯完了，但图数据坏了。', {
-        pet,
-        memoryPath: options.petMemoryPath,
-      })
-      await remember({
-        userText,
-        shot,
-        result: 'bad-png',
-        durMs: Date.now() - t0,
-        error: 'bad-png',
-      })
-      return
-    }
-
-    const total = pngs.length
-    let lastReply = ''
-    let lastPrompt = ''
-    let okCount = 0
-    let lastError = ''
-
-    for (let i = 0; i < total; i += 1) {
-      const isLast = i === total - 1
-      const prompt = isLast
-        ? followUpWatchPrompt(userText, { ...shot, deliveredSheets: total })
-        : followUpWatchSheetPrompt(userText, shot, i + 1, total)
-      const chat = await tryChatWithPng(prompt, pngs[i])
-      if (!chat.ok || chat.data?.ok === false) {
-        lastError = chat.data?.reason || chat.error || `http-${chat.status}`
-        log(`chat-bridge 盯屏分张 ${i + 1}/${total} 失败：${lastError}`)
-        if (!isLast) continue
-        break
-      }
-      okCount += 1
-      lastPrompt = prompt
-      lastReply = typeof chat.data?.text === 'string' ? chat.data.text : ''
-      lastContent = prompt
-      lastTs = Date.now()
-      // 中间张：模型已看过图；清掉「嗯/好」短回复，聊天里只留图
-      if (!isLast) {
-        const stripped = await stripTrailingShortAcks(pet).catch(() => null)
-        if (stripped?.removed) {
-          log(`chat-bridge 已去掉 ${stripped.removed} 条短应答`)
-        }
-      }
-      log(`chat-bridge 盯屏分张 ${i + 1}/${total} 已送进对话`)
-    }
-
-    if (okCount === 0) {
-      const fallback = (
-        `盯完了约 ${shot.elapsedSec ?? '?'}s，留 ${shot.framesKept ?? 0} 帧，`
-        + `共 ${shot.mosaicCount || total} 张拼图。`
-        + `附图对话失败（${lastError || 'unknown'}）；请打开 cache/watch-latest.png 看。`
-      )
-      await sayConclusionToPet(fallback, {
-        pet,
-        duration: 18_000,
-        memoryPath: options.petMemoryPath,
-      })
-      await remember({
-        userText,
-        shot,
-        result: 'chat-failed',
-        durMs: Date.now() - t0,
-        error: lastError || 'all-sheets-failed',
-        reply: fallback,
-      })
-      return
-    }
-
-    await remember({
-      userText,
-      shot,
-      result: 'ok',
-      durMs: Date.now() - t0,
-      reply: lastReply || lastPrompt,
-    })
-  }
-
-  async function deliverShot(userText, shot, t0, promptBuilder = followUpPrompt) {
-    if (!shot?.png || !Buffer.isBuffer(shot.png)) {
-      await sayConclusionToPet('抓到了，但图数据坏了。', {
-        pet,
-        memoryPath: options.petMemoryPath,
-      })
-      await remember({
-        userText,
-        shot,
-        result: 'bad-png',
-        durMs: Date.now() - t0,
-        error: 'bad-png',
-      })
-      return
-    }
-
-    const prompt = promptBuilder(userText, shot)
-    const chat = await tryChatWithPng(prompt, shot.png)
-
-    if (!chat.ok || chat.data?.ok === false) {
-      const reason = chat.data?.reason || chat.error || `http-${chat.status}`
-      const msg = `图有了，但宠物没能开口（${reason}）。`
-      log(`chat-bridge 附图对话失败：${msg}`)
-      const screen = shot.screen?.w && shot.screen?.h
-        ? `${shot.screen.w}×${shot.screen.h}`
-        : '未知尺寸'
-      const where = shot.window?.title
-        ? `窗口「${shot.window.title}」`
-        : `整屏 ${screen}`
-      const fallback = (
-        `我看了一眼：${where} → ${shot.width}×${shot.height}`
-        + `（${shot.quality} · ${shot.engine} · ${shot.ms}ms）。`
-      )
-      await sayConclusionToPet(fallback, {
-        pet,
-        duration: 14_000,
-        memoryPath: options.petMemoryPath,
-      })
-      await remember({
-        userText,
-        shot,
-        result: 'chat-failed',
-        durMs: Date.now() - t0,
-        error: reason,
-        reply: fallback,
-      })
-      return
-    }
-
-    const reply = typeof chat.data?.text === 'string' ? chat.data.text : ''
-    lastContent = prompt
-    lastTs = Date.now()
-    log(`chat-bridge 已附图交给 dsh-pet 开口（${userText.slice(0, 40)}）`)
-    await remember({
-      userText,
-      shot,
-      result: 'ok',
-      durMs: Date.now() - t0,
-      reply,
-    })
-  }
-
-  async function handleWatchIntent(userText) {
-    const seconds = parseWatchSeconds(userText, 60)
+  async function wakeObserve(userText, kind = 'observe') {
     busy = true
     const t0 = Date.now()
     try {
       try { options.onLooking?.() } catch { /* ignore */ }
-      await callDshPet('/work-status', {
-        method: 'POST',
-        body: { state: 'working', task: 'watch' },
-      }).catch(() => {})
-
-      const notice = await broadcastToDshPet(
-        `好，我最多盯大约 ${seconds} 秒（有变化就留帧，优先凑满 4 帧拼成 2×2）；盯完把拼图给你。`,
-        { pet, duration: Math.min(12_000, seconds * 200) },
-      )
-      if (!notice.ok || notice.data?.ok === false) {
-        log(`chat-bridge watch 预告失败：${notice.error || notice.data?.reason || notice.status}`)
+      if (!hasComputerUse()) {
+        await sayConclusionToPet(COMPUTER_USE_MISSING_BUBBLE, {
+          pet,
+          duration: 14_000,
+          memoryPath: options.petMemoryPath,
+        })
+        await remember({
+          userText,
+          result: 'computer-use-missing',
+          durMs: Date.now() - t0,
+          error: 'missing-plugin',
+        })
+        return
       }
 
-      const sidecar = typeof options.sidecar === 'function'
-        ? options.sidecar()
-        : options.sidecar
-      let result
-      try {
-        result = await runWatch({
-          home: options.home,
-          sidecar,
-          quality: 'low',
-          seconds,
-          log,
+      await callDshPet('/work-status', {
+        method: 'POST',
+        body: { state: 'working', task: kind === 'watch' ? 'watch' : 'glance' },
+      }).catch(() => {})
+
+      await broadcastToDshPet(
+        kind === 'watch'
+          ? '好，我去主会话用电脑操控观察一段时间…'
+          : '好，我去主会话用电脑操控看一眼屏…',
+        { pet, duration: 8_000 },
+      )
+
+      const preferred = options.getPreferredSessionId?.() ?? null
+      const prepared = await prepareSession(options.ctx, {
+        preferredId: preferred,
+        titleHint: String(userText || '').slice(0, 36) || '看屏',
+        onSession: options.onSession,
+        log,
+      })
+      if (!prepared.sessionId) {
+        await sayConclusionToPet(
+          '我开不出主会话来看屏。请先在 Harness 里打开一个对话，再说一遍。',
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
+        )
+        return
+      }
+
+      const prompt = buildComputerUseObservePrompt(
+        kind === 'watch'
+          ? `${userText}（请多观察一会儿变化，用 wait_for/screenshot/ocr 核对）`
+          : userText,
+      )
+      const woken = await wake(options.ctx, {
+        text: prompt,
+        sessionId: prepared.sessionId,
+        preferredId: prepared.sessionId,
+      })
+      if (!woken.ok) {
+        await sayConclusionToPet(
+          `没叫醒主会话看屏（${woken.reason || 'unknown'}）。`,
+          { pet, duration: 12_000, memoryPath: options.petMemoryPath },
+        )
+        await remember({
+          userText,
+          result: 'wake-failed',
+          durMs: Date.now() - t0,
+          error: woken.reason || 'wake-failed',
         })
-      } catch (e) {
-        const msg = `盯屏没看成：${e?.message ?? e}`
-        log(`chat-bridge watch 失败：${msg}`)
-        await sayConclusionToPet(msg, {
+        return
+      }
+      try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
+      const reply = await waitReply(options.ctx, woken.sessionId, {
+        timeoutMs: kind === 'watch' ? 240_000 : 120_000,
+        isAborted: () => stopped || Boolean(options.isAborted?.()),
+      })
+      if (reply.ok && reply.text) {
+        await sayConclusionToPet(clipBubble(reply.text), {
+          pet,
+          duration: 14_000,
+          memoryPath: options.petMemoryPath,
+        })
+        await remember({
+          userText,
+          result: 'ok',
+          durMs: Date.now() - t0,
+          reply: reply.text,
+        })
+      } else {
+        const fail = reply.reason === 'timeout'
+          ? '主会话看屏超时了，去会话里看看进度，或再说一遍。'
+          : '主会话这轮没给出看屏结论。'
+        await sayConclusionToPet(fail, {
           pet,
           duration: 12_000,
           memoryPath: options.petMemoryPath,
         })
         await remember({
           userText,
-          result: 'watch-failed',
+          result: reply.reason || 'no-reply',
           durMs: Date.now() - t0,
-          error: e?.message ?? String(e),
+          error: reply.reason || 'empty',
         })
-        return
       }
-
-      const saved = await saveLatestPng(
-        options.home,
-        latestWatchPngPath(options.home),
-        result.png,
-        log,
-      )
-      // 分张落盘，方便最近聊天/本地翻看
-      const sheetPngs = Array.isArray(result.pngs) ? result.pngs : []
-      for (let i = 0; i < sheetPngs.length; i += 1) {
-        const name = i === 0 ? 'watch-latest.png' : `watch-latest-${i + 1}.png`
-        await saveLatestPng(
-          options.home,
-          join(options.home, 'cache', name),
-          sheetPngs[i],
-          log,
-        ).catch(() => {})
-      }
-
-      const sheetN = result.mosaicCount || sheetPngs.length || 1
-      const deliverPngs = Array.isArray(result.deliverPngs) && result.deliverPngs.length
-        ? result.deliverPngs
-        : sheetPngs.slice(-Math.max(1, result.deliveredSheets || sheetN))
-      const delivered = deliverPngs.length
-      const skipBit = result.skippedSheets > 0
-        ? `（共 ${sheetN} 张，对话分张送最近 ${delivered} 张；其余在 cache/watch-latest-*.png）`
-        : (delivered > 1 ? `（将分 ${delivered} 张依次送进对话）` : '')
-      await broadcastToDshPet(
-        (result.silent
-          ? `盯完了：约 ${result.elapsedSec}s，屏幕基本没变（${result.framesKept} 帧 / ${sheetN} 张拼图）。`
-          : `盯完了：约 ${result.elapsedSec}s，留了 ${result.framesKept} 帧，拼成 ${sheetN} 张（${result.cols || '?'}×${result.rows || '?'}）。`)
-        + skipBit
-        + (saved
-          ? ' 拼图马上分张送到对话面板（请滚到底）。'
-          : ' 拼图马上分张送到对话面板，请滚到底看。'),
-        { pet, duration: 16_000 },
-      )
-
-      const shot = {
-        png: deliverPngs[deliverPngs.length - 1] || result.png,
-        pngs: deliverPngs,
-        width: result.width,
-        height: result.height,
-        quality: result.quality,
-        engine: 'watch',
-        ms: Date.now() - t0,
-        silent: result.silent,
-        elapsedSec: result.elapsedSec,
-        framesKept: result.framesKept,
-        mosaicCount: sheetN,
-        deliveredSheets: delivered,
-        skippedSheets: result.skippedSheets || 0,
-        tokens: result.tokens,
-        maxScore: result.maxScore,
-        cols: result.cols,
-        rows: result.rows,
-      }
-      await deliverWatchSheets(userText, shot, t0)
     } finally {
       await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
       try { options.onIdle?.() } catch { /* ignore */ }
       busy = false
     }
+  }
+
+  async function handleWatchIntent(userText) {
+    await wakeObserve(userText, 'watch')
   }
 
   async function handleIntent(userText) {
@@ -430,57 +290,7 @@ export function createChatBridge(options) {
       await handleWatchIntent(userText)
       return
     }
-
-    busy = true
-    const t0 = Date.now()
-    try {
-      try { options.onLooking?.() } catch { /* 状态旁路 */ }
-
-      await callDshPet('/work-status', {
-        method: 'POST',
-        body: { state: 'working', task: 'glance' },
-      }).catch(() => {})
-
-      const notice = await broadcastToDshPet('好，我瞅一眼桌面…', { pet, duration: 6_000 })
-      if (!notice.ok || notice.data?.ok === false) {
-        log(`chat-bridge 预告气泡失败：${notice.error || notice.data?.reason || notice.status}`)
-      }
-
-      let shot
-      try {
-        const sidecar = typeof options.sidecar === 'function'
-          ? options.sidecar()
-          : options.sidecar
-        shot = await capture({
-          sidecar,
-          quality: 'low',
-          home: options.home,
-          timeoutMs: 25_000,
-        })
-      } catch (e) {
-        const msg = `我去看屏幕了，但没看成：${e?.message ?? e}`
-        log(`chat-bridge 抓屏失败：${msg}`)
-        await sayConclusionToPet(msg, {
-          pet,
-          duration: 12_000,
-          memoryPath: options.petMemoryPath,
-        })
-        await remember({
-          userText,
-          result: 'capture-failed',
-          durMs: Date.now() - t0,
-          error: e?.message ?? String(e),
-        })
-        return
-      }
-
-      await saveLatestPng(options.home, latestGlancePngPath(options.home), shot.png, log)
-      await deliverShot(userText, shot, t0, followUpPrompt)
-    } finally {
-      await callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
-      try { options.onIdle?.() } catch { /* ignore */ }
-      busy = false
-    }
+    await wakeObserve(userText, 'observe')
   }
 
   async function tick() {
@@ -513,7 +323,7 @@ export function createChatBridge(options) {
     if (greeted || stopped) return
     greeted = true
     const r = await broadcastToDshPet(
-      '小蓝鲸已接入：闲聊已关。要看屏幕、教我口述步骤、或跑脚本/命令，直接说就行。',
+      '小蓝鲸已接入：闲聊已关。看屏/操控走电脑操控插件；也可教我或跑脚本。',
       { pet, duration: 10_000 },
     )
     if (!r.ok || r.data?.ok === false) {

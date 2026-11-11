@@ -33,7 +33,7 @@ export function buildTeachSmartDigestPrompt(goal, narrative, images) {
     + '回复格式（两行）：\n'
     + 'OK: <一两句说明在教什么>\n'
     + 'FAST: <最快达成路径；例：浏览器打开 https://www.bilibili.com ；或用写文件创建当日心情笔记>\n'
-    + '看不清只回复 NEED_MORE。禁止调用 act。'
+    + '看不清只回复 NEED_MORE。禁止调用已下线的 glance/act。'
   )
 }
 
@@ -134,10 +134,10 @@ export function buildSmartRunPrompt(playbook, extras = {}) {
     + (notes ? `主人想法：${notes}。` : '')
     + (fast ? `若仍适用可参考快捷路径：${fast}。` : '')
     + '界面每天都可能变：以**当前屏幕**为准。'
-    + '**禁止** `act` / 鼠标键盘注入；**不要**复刻教学点击坐标。'
-    + '优先：已沉淀脚本、宿主文件/命令工具；需要看屏用 `glance`（可 zoom/high）。'
-    + '纯 GUI（点新对话、发消息等）：用一两句口述让用户自己点，不要假装已点过。'
-    + '聊天类意图：提醒用户先新建会话再发；勿复打教学时的拼音碎片。'
+    + '**禁止** `glance`/`act`；**不要**复刻教学点击坐标。'
+    + '优先：已沉淀脚本、宿主文件/命令工具；看屏与 GUI 用 `windows_computer_use_*`'
+    + '（list_windows / find / set_value / invoke；少坐标盲点）。'
+    + '聊天类（豆包等）：先找窗/新会话，再 set_value 或 invoke 发送。'
     + buildC3DisciplineBlock({ includeScenario: false })
     + '一两句汇报。'
     + (playbook?.id ? `（learnedId=${playbook.id}）` : '')

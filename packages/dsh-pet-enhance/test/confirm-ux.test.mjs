@@ -38,5 +38,5 @@ test('确认挂起回调收到摘要；清除时回 null', async () => {
 
 test('任务接手文案', () => {
   assert.match(t('zh', 'bubble.taskTakeover'), /这事我来办/)
-  assert.match(t('zh', 'bubble.taskTakeover'), /脚本|命令|不点鼠标/)
+  assert.match(t('zh', 'bubble.taskTakeover'), /电脑操控|windows_computer_use_/)
 })

@@ -1,7 +1,7 @@
 /**
  * 插件入口：只做装配，不做业务。
  *
- * 装配：看屏 + dsh-pet 桥 + 口述带教/脚本命令；0.5+ 硬关鼠标键盘 act。
+ * 装配：dsh-pet 桥 + 带教/脚本；看屏与 GUI 委托 dsh-computer-use-win；不注册 glance/act。
  *
  * apply 失败一律返回空 disposer：最坏是插件不能用，不能让整个应用起不来。
  *
@@ -13,10 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { rejectionFor } from './trust.js'
 import { writeError } from './log.js'
-import { createGlanceTool } from './tool-glance.js'
 import { createWakeBudget } from './watch-loop.js'
-import { TOOL_NAME } from './tool-spec.js'
-import { createSidecarManager } from './sidecar.js'
 import { createGlanceState, normalizePetState } from './state.js'
 import {
   broadcastToDshPet,
@@ -31,7 +28,6 @@ import {
 import { sayConclusionToPet } from './pet-chat-memory.js'
 import { createChatBridge } from './chat-bridge.js'
 import { createAgentBridge } from './agent-bridge.js'
-import { createLiveWatch } from './live-watch.js'
 import { createTeachBridge } from './teach-bridge.js'
 import { createPetRouter } from './pet-router.js'
 import { getLocale, loadSettings, saveSettings } from './settings.js'
@@ -46,11 +42,12 @@ import { writeHostOrigin } from './host-origin.js'
 import { ensureDesktopToken, tokenMatches } from './desktop-token.js'
 import { createActionBudget } from './policy.js'
 import { createConfirmGate } from './confirm.js'
+import { isComputerUseInstalled } from './computer-use-delegate.js'
 
-/** 0.5+：act 已硬关；教学/旧路径若仍调用则统一拒绝。 */
+/** act 已硬关；教学/旧路径若仍调用则统一拒绝。 */
 export function actRemovedResult() {
   return {
-    text: '本版本已不做鼠标/键盘操作（act 已硬关）。请用 glance 看屏，或跑脚本/命令类任务。',
+    text: '本插件不注册 act。桌面 GUI 请用主会话的 windows_computer_use_*（需已装 dsh-computer-use-win）。',
     meta: { ok: false, code: 'ACT_REMOVED' },
   }
 }
@@ -69,7 +66,7 @@ export const name = 'dsh-pet-enhance'
 export const inject = []
 
 export const ROUTE_PREFIX = '/api/pet-enhance'
-export const VERSION = '0.5.0'
+export const VERSION = '0.5.1'
 
 const startedAt = Date.now()
 
@@ -344,7 +341,6 @@ async function handle(req, res, connection, log, state) {
       send(res, 405, { ok: false, rejected: ['只支持 GET'] })
       return
     }
-    const sidecar = state.sidecar
     const dshPet = await refreshDshPet(state)
     send(res, 200, {
       ok: true,
@@ -353,6 +349,9 @@ async function handle(req, res, connection, log, state) {
       stage: 'C2',
       actEnabled: false,
       actRemoved: true,
+      glanceRemoved: true,
+      computerUse: 'delegated',
+      computerUseInstalled: isComputerUseInstalled(),
       lastSessionId: state.lastSessionId,
       home: glanceHome(),
       uptimeMs: Date.now() - startedAt,
@@ -363,9 +362,9 @@ async function handle(req, res, connection, log, state) {
       },
       pendingConfirm: state.glance.snapshot().guard.pendingConfirm.data,
       sidecar: {
-        alive: Boolean(sidecar?.isAlive?.()),
-        pid: sidecar?.getPid?.() ?? null,
-        hello: sidecar?.getHello?.() ?? null,
+        alive: false,
+        skipped: true,
+        reason: 'glance/act 已停用，不再拉起 sidecar',
       },
       pet: state.glance.snapshot().pet.state.data,
       dshPet,
@@ -633,59 +632,32 @@ function installRoutes(ctx, log, state) {
 
 function installTools(ctx, log, state) {
   if (typeof ctx?.inject !== 'function') {
-    log('宿主没有 ctx.inject，跳过工具')
+    log('宿主没有 ctx.inject，跳过工具装配钩子')
+    state.runAct = async () => actRemovedResult()
     return
   }
   try {
     ctx.inject(['tools', 'attachments'], (scoped) => {
-      const disposers = []
-      let disposed = false
-
       scoped.effect(() => () => {
-        disposed = true
-        state.tools = state.tools.filter((n) => n !== TOOL_NAME)
-        for (const d of disposers.splice(0)) {
-          try { d() } catch { /* 已经摘过 */ }
-        }
+        state.tools = []
       }, 'dsh-pet-enhance: tools')
-
       try {
-        if (disposed) return
-        const petHooks = {
-          onLooking: () => state.glance.setPet('looking'),
-          onActing: () => state.glance.setPet('acting'),
-          onIdle: () => {
-            const cur = state.glance.snapshot().pet.state.data
-            if (cur === 'looking' || cur === 'acting') state.glance.setPet('idle')
-          },
-        }
         state.attachments = scoped.attachments
         state.wakeBudget = state.wakeBudget || createWakeBudget()
         state.lastGlanceMap = null
         state.lastInputClick = null
-        state.glanceTool = createGlanceTool({
-          home: glanceHome(),
-          attachments: scoped.attachments,
-          log,
-          sidecar: state.sidecar,
-          onLooking: petHooks.onLooking,
-          onIdle: petHooks.onIdle,
-          wakeBudget: state.wakeBudget,
-          onGlanceMap: (map) => { state.lastGlanceMap = map },
-        })
-        disposers.push(scoped.tools.register(state.glanceTool))
-        state.tools.push(TOOL_NAME)
-        log(`工具已注册：${TOOL_NAME}`)
+        state.glanceTool = null
+        state.tools = []
         state.runAct = async () => actRemovedResult()
-        log('act 已硬关：不注册鼠标/键盘工具')
+        log('glance/act 均不注册；看屏与 GUI 委托 dsh-computer-use-win')
       } catch (e) {
         writeError(e, 'glance-tools')
-        log(`工具没挂上：${e?.message ?? e}`)
+        log(`工具装配钩子失败：${e?.message ?? e}`)
       }
     })
   } catch (e) {
     writeError(e, 'glance-tools')
-    log(`工具没挂上：${e?.message ?? e}`)
+    log(`工具装配钩子失败：${e?.message ?? e}`)
   }
 }
 
@@ -742,11 +714,16 @@ function installDshPetBridge(ctx, log, state, disposers) {
       },
     }
     const bridge = createChatBridge({
+      ctx,
       home,
-      sidecar: () => state.sidecar,
       log,
       pollChat: false,
       greetOnStart: false,
+      getPreferredSessionId: () => state.lastSessionId,
+      onSession: (sid) => {
+        if (sid) state.lastAgentSessionId = String(sid)
+      },
+      isAborted: () => state.glance.isPanicking?.() || !state.glance.snapshot().guard.armed.data,
       ...petHooks,
     })
     const agent = createAgentBridge({
@@ -771,23 +748,17 @@ function installDshPetBridge(ctx, log, state, disposers) {
         }
       },
     })
-    const live = createLiveWatch({
-      home,
-      sidecar: () => state.sidecar,
-      log,
-      ...petHooks,
-    })
-    // setLiveWatch 在下方定义；教学确保开实时看屏幕时经此回调，保持菜单/live 同步。
     let setLiveWatchRef = async () => {}
     const teach = createTeachBridge({
       ctx,
       home,
-      sidecar: () => state.sidecar,
       log,
       pollChat: false,
       confirmGate: state.confirmGate,
       getPreferredSessionId: () => state.lastSessionId,
-      ensureLiveWatch: async (on) => { await setLiveWatchRef(on) },
+      ensureLiveWatch: async () => {
+        // 本地 glance 已停：带教不再强制开实时盯屏
+      },
       get attachments() { return state.attachments || null },
       resetActBudget: () => {
         state.budget?.reset()
@@ -801,7 +772,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
       runAct: async () => actRemovedResult(),
       onTeaching: (on) => {
         state.glance.setPet(on ? 'looking' : 'idle')
-        // 对话带教：不再弹出「我教完了」录制条
         state.glance.setTeachEndOffer(false)
       },
     })
@@ -833,11 +803,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
         return Date.now() - Number(h.at || 0) < 90_000
       },
     })
-
-    const syncLive = () => {
-      if (liveWatch) live.start()
-      else live.stop()
-    }
 
     let locale = getLocale(home)
     /** 避免反复 register 冲掉未取走的菜单点击（急停点了却像没反应）。 */
@@ -902,22 +867,21 @@ function installDshPetBridge(ctx, log, state, disposers) {
       }
     }
 
-    const setLiveWatch = async (next, { quiet = false } = {}) => {
-      liveWatch = Boolean(next)
-      await saveSettings(home, { liveWatch }).catch((e) => {
+    const setLiveWatch = async (_next, { quiet = false } = {}) => {
+      liveWatch = false
+      await saveSettings(home, { liveWatch: false }).catch((e) => {
         log(`保存设置失败：${e?.message ?? e}`)
       })
-      syncLive()
       await pushMenu()
       if (!quiet) {
         await broadcastToDshPet(
-          t(locale, liveWatch ? 'bubble.liveOn' : 'bubble.liveOff'),
-          { duration: 10_000 },
+          '宠物侧已停用本地盯屏（glance）。看屏请说「看一眼」，会走主会话电脑操控；持续观察请在主会话布置。',
+          { duration: 12_000 },
         )
       }
-      log(`实时看屏幕 → ${liveWatch ? '开' : '关'}`)
+      log('实时看屏幕：已停用（委托 computer-use）')
     }
-    setLiveWatchRef = (on) => setLiveWatch(on, { quiet: true })
+    setLiveWatchRef = async () => setLiveWatch(false, { quiet: true })
 
     const pollMenu = async () => {
       if (stopped || !registered) return
@@ -930,9 +894,8 @@ function installDshPetBridge(ctx, log, state, disposers) {
       if (menuHit(ev, 'menu.stop')) {
         await doPanicFromMenu('menu')
       }
-      // 点当前文案即翻转；中英文开/关两态都认，避免重注册竞态漏点。
       if (menuHit(ev, 'menu.liveOn') || menuHit(ev, 'menu.liveOff')) {
-        await setLiveWatch(!liveWatch)
+        await setLiveWatch(false)
       }
       if (menuHit(ev, 'menu.recentChat')) {
         try {
@@ -974,9 +937,11 @@ function installDshPetBridge(ctx, log, state, disposers) {
 
     loadSettings(home).then((s) => {
       if (stopped) return
-      liveWatch = Boolean(s.liveWatch)
+      liveWatch = false
       locale = s.locale || locale
-      syncLive()
+      if (s.liveWatch) {
+        saveSettings(home, { liveWatch: false }).catch(() => {})
+      }
       pushMenu().catch(() => {})
     }).catch(() => {})
 
@@ -988,7 +953,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
     let menuTicks = 0
     const timer = setInterval(() => {
       menuTicks += 1
-      // 每秒捞菜单事件：急停/确认不能等；重注册仅在文案变化时（见 pushMenu）
       pollMenu().catch(() => {})
       if (menuTicks % 8 === 0) {
         ensureMenu().catch(() => {})
@@ -1001,7 +965,6 @@ function installDshPetBridge(ctx, log, state, disposers) {
       bridge.stop()
       agent.stop()
       teach.stop()
-      live.stop()
       if (registered) clearGlanceMenu().catch(() => {})
     }
   }
@@ -1083,31 +1046,10 @@ function installSessionTracker(ctx, log, state) {
   }
 }
 
-function installSidecar(ctx, log, state, disposers) {
-  const manager = createSidecarManager({ log, home: glanceHome() })
-  state.sidecar = manager
-
-  if (process.env.DSH_PET_ENHANCE_NO_SIDECAR === '1' || process.env.DSH_GLANCE_NO_SIDECAR === '1') {
-    log('DSH_PET_ENHANCE_NO_SIDECAR=1，跳过 sidecar')
-    return
-  }
-
-  const startSafe = () => {
-    manager.start().catch((e) => {
-      log(`sidecar 未能启动：${e?.message ?? e}`)
-    })
-  }
-
-  if (typeof ctx?.effect === 'function') {
-    ctx.effect(() => {
-      startSafe()
-      return () => { void manager.stop() }
-    }, 'dsh-pet-enhance: sidecar')
-    return
-  }
-
-  startSafe()
-  disposers.push(() => { void manager.stop() })
+function installSidecar(_ctx, log, state, _disposers) {
+  // glance/act 已停：不再拉起 Python sidecar（模块仍保留便于日后开回）
+  state.sidecar = null
+  log('跳过 sidecar（看屏/操控已委托 computer-use）')
 }
 
 export async function apply(ctx) {
