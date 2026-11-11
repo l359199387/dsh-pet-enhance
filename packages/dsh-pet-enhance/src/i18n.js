@@ -21,7 +21,7 @@ const ZH = Object.freeze({
   'bubble.chatOff': '这句我当闲聊了。要干活直接说目标；看屏说「看一眼」；带教说「我教你」。',
   'bubble.confirmAsk': '需要你确认：{summary}。请点我头顶「好 / 不要」，或右键「更多」里选。',
   'bubble.taskTakeover': '这事我来办——主会话用电脑操控（windows_computer_use_*）…',
-  'bubble.recentChatOpened': '已在浏览器打开最近聊天（含附图）。',
+  'bubble.recentChatOpened': '已打开最近聊天。对话更新后浏览器按 F5；仍旧再点菜单。',
   'bubble.recentChatEmpty': '还没有聊天记录。',
   'bubble.recentChatFail': '打开最近聊天失败：{error}',
 })
@@ -40,7 +40,7 @@ const EN = Object.freeze({
   'bubble.chatOff': 'Treating that as chat. For work, say the goal; glance; or “teach me”.',
   'bubble.confirmAsk': 'Need your OK: {summary}. Tap 「好 / 不要」above my head, or More menu.',
   'bubble.taskTakeover': 'I’ll handle this — main session windows_computer_use_* …',
-  'bubble.recentChatOpened': 'Opened recent chat in your browser (with images).',
+  'bubble.recentChatOpened': 'Opened recent chat. Press F5 after new messages; or reopen from menu.',
   'bubble.recentChatEmpty': 'No chat history yet.',
   'bubble.recentChatFail': 'Could not open recent chat: {error}',
 })

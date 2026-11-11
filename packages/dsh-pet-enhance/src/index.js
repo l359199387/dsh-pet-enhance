@@ -32,7 +32,7 @@ import { createTeachBridge } from './teach-bridge.js'
 import { createPetRouter } from './pet-router.js'
 import { getLocale, loadSettings, saveSettings } from './settings.js'
 import { localeTables, menuLabelVariants, t } from './i18n.js'
-import { openRecentChat } from './recent-chat.js'
+import { disposeRecentChatLiveSync, openRecentChat } from './recent-chat.js'
 import { applyDshPetClickPatches } from './patch-dsh-pet-click.js'
 import { applyDshPetConfirmPatches } from './patch-dsh-pet-confirm.js'
 import { applyDshPetChatGatePatches } from './patch-dsh-pet-chat-gate.js'
@@ -987,7 +987,12 @@ export async function apply(ctx) {
     return () => {}
   }
 
+  if (typeof ctx?.effect === 'function') {
+    ctx.effect(() => () => disposeRecentChatLiveSync(), 'dsh-pet-enhance: recent-chat sync')
+  }
+
   return () => {
+    try { disposeRecentChatLiveSync() } catch { /* ignore */ }
     for (const d of disposers.reverse()) { try { d() } catch { /* 同上 */ } }
   }
 }

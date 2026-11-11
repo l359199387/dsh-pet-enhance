@@ -2,14 +2,17 @@
  * 从 dsh-pet memory.json 生成「最近聊天」HTML，用系统浏览器打开。
  * 桌面双击对话只是输入框，没有历史列表——靠这个补上。
  *
+ * 这是落盘快照（非 live SSR）：打开后监视 memory.json，有更新就回写同一 HTML，
+ * 浏览器 F5 才能看到最新；只刷新旧标签、宿主又没在跑监视时，内容不会变。
+ *
  * 分页：先显示最新一页；滚到顶部再拼更早一页（微信上滑回看）。
- * 附图落到 cache 相对路径；头像用 data URI，避免 file:// 裂图。
+ * 附图落到 cache；头像用 data URI，避免 file:// 裂图。
  *
  * @module src/recent-chat.js
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, watch } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -372,11 +375,14 @@ export async function buildRecentChatHtml(options) {
   void log
   void HERE
 
+  const generatedAt = formatTs(Date.now(), Date.now()) || new Date().toLocaleString('zh-CN', { hour12: false })
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
 <title>小蓝鲸 · 最近聊天</title>
 <style>
   :root {
@@ -403,6 +409,7 @@ export async function buildRecentChatHtml(options) {
   }
   header.bar h1 { margin: 0; font-size: 17px; font-weight: 600; }
   header.bar p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+  header.bar p.hint { margin-top: 6px; line-height: 1.45; max-width: 36em; margin-left: auto; margin-right: auto; }
   .quick {
     max-width: 680px; margin: 0 auto;
     display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
@@ -546,7 +553,8 @@ export async function buildRecentChatHtml(options) {
 <body>
 <header class="bar">
   <h1>小蓝鲸</h1>
-  <p id="header-sub">共 ${rows.length} 条 · ${pages.length} 页 · 上滑加载更早</p>
+  <p id="header-sub">共 ${rows.length} 条 · ${pages.length} 页 · ${escapeHtml(generatedAt)} 生成</p>
+  <p class="hint">对话有更新时宿主会回写本页；按 F5 看最新。仍旧则再点宠物右键「最近聊天内容」。</p>
 </header>
 ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
 <main class="chat">
@@ -919,10 +927,14 @@ ${shortcuts.length ? `<div class="quick">${shortcuts.join('')}</div>` : ''}
   return { ok: true, path: out, count: rows.length, pages: pages.length }
 }
 
-/** Windows：用默认浏览器打开本地 HTML。 */
+/** Windows：用默认浏览器打开本地 HTML（带 cache-bust，减少旧标签缓存）。 */
 export function openPathDefault(filePath) {
   return new Promise((resolve) => {
-    const child = spawn('cmd', ['/c', 'start', '', filePath], {
+    let target = filePath
+    try {
+      target = `${pathToFileURL(filePath).href}?t=${Date.now()}`
+    } catch { /* 退回裸路径 */ }
+    const child = spawn('cmd', ['/c', 'start', '', target], {
       windowsHide: true,
       detached: true,
       stdio: 'ignore',
@@ -933,12 +945,136 @@ export function openPathDefault(filePath) {
   })
 }
 
+const LIVE_IDLE_MS = 30 * 60 * 1000
+
+/** @type {null | { dispose: () => void, arm: (opts: object) => void }} */
+let liveSync = null
+
+/**
+ * 打开「最近聊天」后监视 memory.json，有改动就回写同一 HTML，便于浏览器 F5。
+ * @param {{ home: string, petId?: string, rounds?: number, pageSize?: number, maxRows?: number, memoryPath?: string, log?: (m: string) => void }} options
+ */
+export function armRecentChatLiveSync(options) {
+  const log = options.log ?? (() => {})
+  const memoryPath = options.memoryPath || dshPetMemoryPath()
+
+  if (liveSync) {
+    liveSync.arm(options)
+    return liveSync
+  }
+
+  /** @type {import('node:fs').FSWatcher | null} */
+  let watcher = null
+  let debounceTimer = null
+  let idleTimer = null
+  let building = false
+  let pending = false
+  /** @type {object} */
+  let opts = options
+
+  function clearDebounce() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+    }
+  }
+
+  function clearIdle() {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+
+  function stopWatcher() {
+    clearDebounce()
+    if (watcher) {
+      try { watcher.close() } catch { /* ignore */ }
+      watcher = null
+    }
+  }
+
+  function bumpIdle() {
+    clearIdle()
+    idleTimer = setTimeout(() => {
+      idleTimer = null
+      stopWatcher()
+      log('最近聊天实时同步已闲置停止（再打开菜单会重新监视）')
+    }, LIVE_IDLE_MS)
+  }
+
+  async function rebuild() {
+    if (building) {
+      pending = true
+      return
+    }
+    building = true
+    try {
+      const r = await buildRecentChatHtml(opts)
+      if (r.ok) log(`最近聊天已同步落盘：${r.count} 条`)
+      else log(`最近聊天同步跳过：${r.error || 'unknown'}`)
+    } catch (e) {
+      log(`最近聊天同步失败：${e?.message ?? e}`)
+    } finally {
+      building = false
+      if (pending) {
+        pending = false
+        schedule()
+      }
+    }
+  }
+
+  function schedule() {
+    bumpIdle()
+    clearDebounce()
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null
+      rebuild().catch(() => {})
+    }, 450)
+  }
+
+  function ensureWatcher() {
+    if (watcher) return
+    try {
+      watcher = watch(memoryPath, { persistent: false }, () => schedule())
+      if (typeof watcher.on === 'function') {
+        watcher.on('error', () => stopWatcher())
+      }
+      log(`最近聊天开始监视：${memoryPath}`)
+    } catch (e) {
+      log(`最近聊天监视失败：${e?.message ?? e}`)
+    }
+  }
+
+  liveSync = {
+    arm(next) {
+      opts = next || opts
+      ensureWatcher()
+      bumpIdle()
+    },
+    dispose() {
+      clearIdle()
+      stopWatcher()
+      liveSync = null
+    },
+  }
+  liveSync.arm(options)
+  return liveSync
+}
+
+/** 插件卸载时停掉监视。 */
+export function disposeRecentChatLiveSync() {
+  try { liveSync?.dispose() } catch { /* ignore */ }
+  liveSync = null
+}
+
 /**
  * @param {{ home: string, petId?: string, rounds?: number, pageSize?: number, maxRows?: number, memoryPath?: string, log?: (m: string) => void }} options
  */
 export async function openRecentChat(options) {
   const built = await buildRecentChatHtml(options)
   if (!built.ok || !built.path) return built
+  armRecentChatLiveSync(options)
   const opened = await openPathDefault(built.path)
   if (!opened) return { ok: false, error: '无法打开浏览器', path: built.path, count: built.count }
   return built
