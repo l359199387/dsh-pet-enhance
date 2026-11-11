@@ -755,14 +755,15 @@ export function createTeachBridge(options) {
     await handleCoachUtterance('做成了，可以记下来')
   }
 
-  async function runSkillMeta(runMeta) {
+  async function runSkillMeta(runMeta, userText = '') {
     if (!runMeta) return
+    const requestText = String(userText || '').trim()
     if (runMeta.legacy && runMeta.playbook) {
       await broadcastToDshPet(
         `这是旧学会条目「${clip(runMeta.goal, 28)}」，建议在技能管理里整理。先按旧记录跑…`,
         { pet, duration: 10_000 },
       )
-      await runPlaybook(runMeta.playbook)
+      await runPlaybook(runMeta.playbook, requestText)
       return
     }
     try { options.resetActBudget?.() } catch { /* ignore */ }
@@ -772,8 +773,17 @@ export function createTeachBridge(options) {
     const skillName = runMeta.skillName || runMeta.capability?.skillName
     if (skillName) lastSkillName = skillName
 
+    // 本轮原话带额外要求（轮数/话题等）时，不要只跑默认可脚本就收工
+    const hasExtraAsk = Boolean(requestText)
+      && requestText !== goalText
+      && !/^(再做一次|再来一遍|执行一下|运行一下)$/i.test(requestText)
+
     const scriptCap = runMeta.capability?.scripts
-    if (Array.isArray(scriptCap) && scriptCap.some((s) => s?.status === 'ready')) {
+    if (
+      !hasExtraAsk
+      && Array.isArray(scriptCap)
+      && scriptCap.some((s) => s?.status === 'ready')
+    ) {
       await broadcastToDshPet(
         `先按技能脚本做「${clip(goalText, 28)}」…`,
         { pet, duration: 8_000 },
@@ -809,7 +819,7 @@ export function createTeachBridge(options) {
       const preferred = options.getPreferredSessionId?.() ?? null
       const prepared = await prepareSession(options.ctx, {
         preferredId: preferred,
-        titleHint: String(goalText || '再做一次').slice(0, 36),
+        titleHint: String(requestText || goalText || '再做一次').slice(0, 36),
         onSession: options.onSession,
         log,
       })
@@ -822,9 +832,9 @@ export function createTeachBridge(options) {
       const prompt = buildSmartRunPrompt({
         ...playbook,
         strategy: { summary, fastPlan },
-      }, {})
+      }, { userRequest: requestText })
       await broadcastToDshPet(
-        `按变通思路做「${clip(goalText, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
+        `按变通思路做「${clip(goalText, 28)}」${requestText && hasExtraAsk ? `（按你说的：${clip(requestText, 40)}）` : (fastPlan ? `：${clip(fastPlan, 36)}` : '')}…`,
         { pet, duration: 10_000 },
       )
       const woken = await wake(options.ctx, {
@@ -862,8 +872,9 @@ export function createTeachBridge(options) {
     })
   }
 
-  async function runPlaybook(playbook) {
+  async function runPlaybook(playbook, userText = '') {
     const id = playbook.id
+    const requestText = String(userText || '').trim()
     // 用户再次开口跑自动化：清掉上一轮动作预算，避免「卡在第 2 步」假死
     try { options.resetActBudget?.() } catch { /* ignore */ }
     await readTeachSecrets(options.home, id).catch(() => {})
@@ -871,10 +882,17 @@ export function createTeachBridge(options) {
     const summary = learnMeta?.understanding?.summary || playbook.strategy?.summary || ''
     const fastPlan = learnMeta?.understanding?.fastPlan || playbook.strategy?.fastPlan || ''
     const snap = String(summary || '').slice(0, 800)
+    const hasExtraAsk = Boolean(requestText)
+      && requestText !== String(playbook.goal || '').trim()
+      && !/^(再做一次|再来一遍|执行一下|运行一下)$/i.test(requestText)
 
-    // S 优先：有 ready 脚本则先按块执行（可 dry-run）
+    // S 优先：有 ready 脚本则先按块执行（可 dry-run）；本轮有额外口令则跳过，交给变通
     const scriptCap = learnMeta?.capability?.scripts
-    if (Array.isArray(scriptCap) && scriptCap.some((s) => s?.status === 'ready')) {
+    if (
+      !hasExtraAsk
+      && Array.isArray(scriptCap)
+      && scriptCap.some((s) => s?.status === 'ready')
+    ) {
       await broadcastToDshPet(
         `先按学会的脚本块做「${clip(playbook.goal, 28)}」…`,
         { pet, duration: 8_000 },
@@ -931,9 +949,10 @@ export function createTeachBridge(options) {
         },
       }, {
         ownerNotes: learnMeta?.ownerNotes || playbook.ownerNotes,
+        userRequest: requestText,
       })
       await broadcastToDshPet(
-        `按变通思路做「${clip(playbook.goal, 28)}」${fastPlan ? `：${clip(fastPlan, 36)}` : ''}…`,
+        `按变通思路做「${clip(playbook.goal, 28)}」${requestText && hasExtraAsk ? `（按你说的：${clip(requestText, 40)}）` : (fastPlan ? `：${clip(fastPlan, 36)}` : '')}…`,
         { pet, duration: 10_000 },
       )
       const woken = await wake(options.ctx, {
@@ -1049,10 +1068,10 @@ export function createTeachBridge(options) {
     if (!runMeta || !String(runMeta.goal || '').trim()) return false
 
     await broadcastToDshPet(
-      `好，执行技能「${clip(runMeta.goal, 36)}」（脚本优先，GUI 走电脑操控）…`,
+      `好，执行技能「${clip(runMeta.goal, 36)}」（按你这轮原话变通；GUI 走电脑操控）…`,
       { pet, duration: 8_000 },
     )
-    await runSkillMeta(runMeta)
+    await runSkillMeta(runMeta, userText)
     return true
   }
 

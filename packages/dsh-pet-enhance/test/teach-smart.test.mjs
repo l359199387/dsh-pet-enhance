@@ -55,6 +55,20 @@ test('buildSmartRunPrompt 含快捷路径与变通/高清纪律', () => {
   assert.match(p, /电脑操控|windows_computer_use_/)
 })
 
+test('buildSmartRunPrompt 带入主人本轮原话额外要求', () => {
+  const p = buildSmartRunPrompt({
+    id: 'x',
+    goal: '和豆包聊天',
+    strategy: { summary: '闲聊', fastPlan: '' },
+  }, {
+    userRequest: '去和豆包姐姐交流一下聊天技巧,沟通3轮',
+  })
+  assert.match(p, /主人本轮原话/)
+  assert.match(p, /沟通3轮/)
+  assert.match(p, /必须遵守/)
+  assert.match(p, /沟通N轮|做满/)
+})
+
 test('shouldUseSmartRun：有目标或步骤一律变通', () => {
   assert.equal(
     shouldUseSmartRun({

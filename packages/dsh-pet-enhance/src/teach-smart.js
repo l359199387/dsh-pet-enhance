@@ -122,14 +122,19 @@ export function shouldUseSmartRun(playbook, _learnMeta = null) {
 /**
  * 执行时叫醒主会话：按目标变通达成（界面可变）。
  * @param {{ goal?: string, strategy?: { fastPlan?: string, summary?: string }, id?: string }} playbook
+ * @param {{ ownerNotes?: string, userRequest?: string, userText?: string }} [extras]
  */
 export function buildSmartRunPrompt(playbook, extras = {}) {
   const goal = String(playbook?.goal || '').slice(0, 120)
   const fast = String(playbook?.strategy?.fastPlan || '').slice(0, 400)
   const summary = String(playbook?.strategy?.summary || playbook?.understanding?.summary || '').slice(0, 300)
   const notes = String(extras.ownerNotes || playbook?.ownerNotes || '').trim().slice(0, 400)
+  const userRequest = String(extras.userRequest || extras.userText || '').trim().slice(0, 240)
   return (
     `【小蓝鲸交办·必须变通】执行已学会的自动化「${goal}」。`
+    + (userRequest
+      ? `主人本轮原话（**必须遵守**其中的额外要求，如轮数/话题/语气/对象）：「${userRequest}」。`
+      : '')
     + (summary ? `学习理解（目标与意图，不是坐标脚本）：${summary}。` : '')
     + (notes ? `主人想法：${notes}。` : '')
     + (fast ? `若仍适用可参考快捷路径：${fast}。` : '')
@@ -137,7 +142,7 @@ export function buildSmartRunPrompt(playbook, extras = {}) {
     + '**禁止** `glance`/`act`；**不要**复刻教学点击坐标。'
     + '优先：已沉淀脚本、宿主文件/命令工具；看屏与 GUI 用 `windows_computer_use_*`'
     + '（list_windows / find / set_value / invoke；少坐标盲点）。'
-    + '聊天类（豆包等）：先找窗/新会话，再 set_value 或 invoke 发送。'
+    + '聊天类（豆包等）：先找窗/新会话，再 set_value 或 invoke 发送；有「沟通N轮」等要求须做满。'
     + buildC3DisciplineBlock({ includeScenario: false })
     + '一两句汇报。'
     + (playbook?.id ? `（learnedId=${playbook.id}）` : '')
