@@ -48,6 +48,19 @@ test('writeTeachSkillFile + findSkillForQuery', async () => {
     })
     assert.ok(hit)
     assert.equal(hit.name, 'daily-mood-note')
+
+    await writeTeachSkillFile({
+      goal: '和豆包聊天',
+      name: 'chat-doubao',
+      summary: '闲聊',
+      teachSessionId: 'sess2',
+    })
+    const softHit = await findSkillForQuery('和豆包姐姐聊聊天,沟通3轮', {
+      root: join(root, 'skills'),
+      allowLegacyLearned: false,
+    })
+    assert.ok(softHit)
+    assert.equal(softHit.name, 'chat-doubao')
   } finally {
     if (prev === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prev

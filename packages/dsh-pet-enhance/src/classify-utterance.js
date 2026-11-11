@@ -11,6 +11,7 @@ import {
   AGENT_WAKE_PREFIX,
   GLANCE_FOLLOWUP_PREFIX,
   TEACH_FOLLOWUP_PREFIX,
+  hasSkillReplaySoftCue,
   isComputerTaskIntent,
   isGlanceIntent,
   isNewSessionIntent,
@@ -18,6 +19,7 @@ import {
   isTeachEndIntent,
   isTeachStartIntent,
 } from './intent.js'
+import { scoreGoalAgainstQuery } from './learned-automation.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 
 /** 分流跟催前缀——不得再被当成用户话。 */
@@ -122,6 +124,27 @@ export function isSkillStatusQuestion(text) {
 }
 
 /**
+ * 话里点到已学目标，且有「聊/沟通 N 轮」等软执行气味 → 当干活（不必写「执行一下」）。
+ * @param {string} text
+ * @param {string[] | null | undefined} learnedGoals
+ */
+export function isLearnedGoalReplayIntent(text, learnedGoals = []) {
+  const s = String(text ?? '').trim()
+  if (!s || isSkillStatusQuestion(s)) return false
+  if (!hasSkillReplaySoftCue(s)) return false
+  const goals = (Array.isArray(learnedGoals) ? learnedGoals : [])
+    .map((g) => String(g ?? '').trim())
+    .filter(Boolean)
+  if (!goals.length) return false
+  const q = s.toLowerCase()
+  let best = 0
+  for (const goal of goals) {
+    best = Math.max(best, scoreGoalAgainstQuery(goal, q))
+  }
+  return best >= 2
+}
+
+/**
  * 极明确口令：本地优先，不交给模型（避免「开启新窗口」被判成闲聊）。
  * @returns {string | null}
  */
@@ -142,9 +165,9 @@ export function localClassifyClear(text, { teaching = false } = {}) {
 /**
  * 本地分流（兜底）：明确口令 + 少量执行启发式；闲聊 vs 干活主要交给模型。
  * @param {string} text
- * @param {{ teaching?: boolean }} [opts]
+ * @param {{ teaching?: boolean, learnedGoals?: string[] }} [opts]
  */
-export function localClassify(text, { teaching = false } = {}) {
+export function localClassify(text, { teaching = false, learnedGoals = [] } = {}) {
   const s = String(text ?? '').trim()
   if (!s) return 'chat'
   const clear = localClassifyClear(s, { teaching })
@@ -153,6 +176,8 @@ export function localClassify(text, { teaching = false } = {}) {
   if (isSkillStatusQuestion(s)) return 'chat'
   // 兜底：仍认一批执行/操作口令，避免模型失败时全变闲聊
   if (isRunAutomationIntent(s) || isComputerTaskIntent(s)) return 'task'
+  // 已学目标 +「聊 N 轮 / 聊聊天」等 → task（无「执行一下」也行）
+  if (isLearnedGoalReplayIntent(s, learnedGoals)) return 'task'
   return 'chat'
 }
 
@@ -235,14 +260,15 @@ export async function classifyUtterance(ctx, userText, opts = {}) {
     return { label: clear, via: 'local' }
   }
 
-  const localLabel = localClassify(text, { teaching })
+  const learnedGoals = Array.isArray(opts.learnedGoals) ? opts.learnedGoals : []
+  const localLabel = localClassify(text, { teaching, learnedGoals })
   const mode = opts.mode || classifyMode()
   const wantModel = mode === 'llm'
     || (mode === 'hybrid' && localLabel === 'chat' && shouldEscalateChatToModel(text))
 
   const prompt = buildClassifyPrompt(text, {
     teaching,
-    learnedGoals: opts.learnedGoals,
+    learnedGoals,
   })
 
   // 无工具注入（测试 / 外接小模型）

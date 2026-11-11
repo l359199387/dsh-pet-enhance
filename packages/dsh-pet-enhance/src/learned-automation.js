@@ -266,7 +266,10 @@ export function goalMatchTokens(goal) {
     out.add(t)
   }
   // 常见短词：整句里也能命中
-  for (const tip of ['b站', '哔哩哔哩', 'bilibili', '心情', '记事本', '浏览器', 'edge', 'chrome']) {
+  for (const tip of [
+    'b站', '哔哩哔哩', 'bilibili', '心情', '记事本', '浏览器', 'edge', 'chrome',
+    '豆包', 'doubao', '微信', 'qq', 'notepad',
+  ]) {
     if (g.includes(tip)) out.add(tip)
   }
   // 「我教你看看B站」→ 看看b站 / b站

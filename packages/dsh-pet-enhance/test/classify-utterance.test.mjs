@@ -6,12 +6,14 @@ import {
   classifyMode,
   classifyUtterance,
   formatLearnedGoalsForClassify,
+  isLearnedGoalReplayIntent,
   isSkillStatusQuestion,
   localClassify,
   parseClassifyLabel,
   regexClassifyFallback,
   shouldEscalateChatToModel,
 } from '../src/classify-utterance.js'
+import { hasSkillReplaySoftCue } from '../src/intent.js'
 
 test('buildClassifyPrompt：带分流前缀、禁工具、含已学会列表', () => {
   const p = buildClassifyPrompt('帮我把记事本最小化', {
@@ -56,6 +58,28 @@ test('localClassify 兜底：明确口令仍可用', () => {
   assert.equal(localClassify('随便纠正一句', { teaching: true }), 'teach_coach')
 })
 
+test('已学目标 + 聊N轮 / 聊聊天 → 本地 task（不必写执行一下）', () => {
+  const goals = ['和豆包聊天', '记录每日心情']
+  assert.equal(hasSkillReplaySoftCue('和豆包姐姐聊聊天,学习一下聊天技巧,沟通3轮'), true)
+  assert.equal(
+    isLearnedGoalReplayIntent('和豆包姐姐聊聊天,学习一下聊天技巧,沟通3轮', goals),
+    true,
+  )
+  assert.equal(
+    localClassify('和豆包姐姐聊聊天,学习一下聊天技巧,沟通3轮', { learnedGoals: goals }),
+    'task',
+  )
+  // 无已学列表时仍当闲聊（避免误干活）
+  assert.equal(localClassify('和豆包姐姐聊聊天,沟通3轮', { learnedGoals: [] }), 'chat')
+  // 只问状态仍 chat
+  assert.equal(localClassify('你会和豆包聊天吗', { learnedGoals: goals }), 'chat')
+  // 参谋类无「聊N轮」气味 → 不本地 task（留给 hybrid 叫醒）
+  assert.equal(
+    localClassify('帮我参谋一下怎么跟豆包打招呼', { learnedGoals: ['与豆包姐姐聊天'] }),
+    'chat',
+  )
+})
+
 test('classifyUtterance：新开窗本地优先，不叫醒模型', async () => {
   let woke = 0
   const r = await classifyUtterance({ fake: true }, '开启一个新的窗口', {
@@ -94,6 +118,20 @@ test('hybrid：短问候不叫醒；模糊干活才叫醒', async () => {
   })
   assert.equal(localRun.label, 'task')
   assert.equal(localRun.via, 'local')
+  assert.equal(woke, 0)
+
+  // 无「执行一下」但带已学目标 + 沟通3轮 → 本地 task，不叫醒分流模型
+  const soft = await classifyUtterance(
+    { fake: true },
+    '和豆包姐姐聊聊天,学习一下聊天技巧,沟通3轮',
+    {
+      learnedGoals: ['和豆包聊天'],
+      wake: async () => { woke += 1; return { ok: true, sessionId: 's' } },
+      waitReply: async () => ({ ok: true, text: 'chat' }),
+    },
+  )
+  assert.equal(soft.label, 'task')
+  assert.equal(soft.via, 'local')
   assert.equal(woke, 0)
 
   const r = await classifyUtterance({ fake: true }, '帮我参谋一下怎么跟豆包打招呼', {
