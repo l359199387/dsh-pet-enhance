@@ -13,6 +13,9 @@ export const AGENT_WAKE_PREFIX = '【小蓝鲸交办】'
 /** 教学收束后叫醒主会话的标记（避免再被当成新教学口令）。 */
 export const TEACH_FOLLOWUP_PREFIX = '【小蓝鲸教学回放】'
 
+/** 学会后写入宠物聊天的伪用户行——不得再命中「带教」开场。 */
+export const TEACH_DONE_CHAT_PREFIX = '【带教完成】'
+
 export const GLANCE_INTENT_RE =
   /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上(?:是什么|有什么|写了什么|怎么样|显示什么)|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)(?:上)?(?:是什么|有什么)?|这个窗口|窗口里|(?:看|瞅)一眼|glance|(?:盯着|看着|陪看|盯一会儿|看一会儿|看一会|连续看).{0,12}?(?:屏幕|桌面|画面)?|盯着看|看着看/i
 
@@ -28,6 +31,7 @@ export function isEnhanceSelfTalk(text) {
   if (
     s.startsWith(GLANCE_FOLLOWUP_PREFIX)
     || s.startsWith(AGENT_WAKE_PREFIX)
+    || s.startsWith(TEACH_DONE_CHAT_PREFIX)
     || s.includes(TEACH_FOLLOWUP_PREFIX)
   ) {
     return true
@@ -85,13 +89,17 @@ export function isWatchIntent(text) {
 export const COMPUTER_TASK_RE =
   /(?:帮我|请(?:你)?|麻烦|给我)?[\s\S]{0,40}?(?:点(?:击|一下|开)?|双击|右键|拖(?:拽|到)?|滚(?:动|轮)?|输入|键入|打字|按下|按一下|按住|按键|打开|关闭|关掉|退出|杀掉|最小化|最大化|还原|聚焦|切换到?|选中|勾选|取消|保存|发送|复制|粘贴|剪切|删除|清空|刷新|提交|确认|搜索|改成|设置成|调成|移到|挪到|放到|运行|启动|click|type|minimize|maximize)|(?:把|将|让).{0,40}?(?:最小化|最大化|关掉|关闭|点(?:一下|开)?|输入|改成|移到|打开)/i
 
-/** 「我教你」→ 进入对话带教（它动手，你说话纠正）。 */
+/** 「我教你 / 我来教你一下」→ 进入对话带教（它动手，你说话纠正）。
+ *  裸「带教」不能吃「带教完成」（学会后写入聊天的伪用户行）。 */
 export const TEACH_START_RE =
-  /(?:我?教你(?:一下|一遍|一回)?|教你(?:怎么|如何)?做|带教|开始带教|开始教学|进入教学|跟我学(?:一遍|一下)?|学一下我的操作)/i
+  /(?:我来教你(?:一下|一遍|一回)?|我?教你(?:一下|一遍|一回)?|教你(?:怎么|如何)?做|开始带教|进入带教|带教(?!完成)|开始教学|进入教学|跟我学(?:一遍|一下)?|学一下我的操作)/i
 
-/** 旧「教完了」口令：非带教中时仍可识别；带教中改走 coach-intent（做成了/放弃）。 */
+/**
+ * 「我教完了 / 教学结束」→ 收束带教并写入技能（不是新开一轮）。
+ * 带教中由 coach-intent 本地优先；非带教中仍可识别。
+ */
 export const TEACH_END_RE =
-  /(?:教完了|教好了|学完了|结束教学|停止教学|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
+  /(?:(?:我)?(?:教|学)完了|教好了|学好了|教学结束|结束教学|停止教学|做成了|可以记下来|记下来吧|加入技能|写入技能|按刚才教的(?:去做|做)|照着(?:刚才|我教的)做)/i
 
 /**
  * 「执行一下 / 去记录一下 / 去看看 / 继续刷 / 跑自动化 / 用你学会的…」→ 跑已学会的自动化（不是闲聊）。
@@ -152,16 +160,36 @@ export function isComputerTaskIntent(text) {
   return COMPUTER_TASK_RE.test(s) || isRunAutomationIntent(s)
 }
 
-export function isTeachStartIntent(text) {
-  const s = String(text ?? '').trim()
-  if (!s || isBridgeEcho(s)) return false
-  return TEACH_START_RE.test(s)
-}
-
 export function isTeachEndIntent(text) {
   const s = String(text ?? '').trim()
   if (!s || isBridgeEcho(s)) return false
   return TEACH_END_RE.test(s)
+}
+
+export function isTeachStartIntent(text) {
+  const s = String(text ?? '').trim()
+  if (!s || isBridgeEcho(s)) return false
+  // 「我教完了」绝不能开新一轮带教
+  if (isTeachEndIntent(s)) return false
+  return TEACH_START_RE.test(s)
+}
+
+/** 明确放弃本轮（短句）。 */
+const COACH_ABORT_CLEAR_RE =
+  /(?:^|。)(?:算了(?:吧)?(?:不教(?:了)?)?|不教了|取消带教|停止带教|不想教了|先别教|放弃(?:吧|了)?)[.。!！…]*$/u
+
+/**
+ * 带教中极明确收束 / 放弃：本地优先。
+ * 「我教完了 / 教学结束」→ done（写入技能）；「不教了」→ abort。
+ * @param {string} userText
+ * @returns {'done'|'abort'|null}
+ */
+export function localCoachClearLabel(userText) {
+  const s = String(userText ?? '').trim()
+  if (!s || s.length > 48) return null
+  if (isTeachEndIntent(s)) return 'done'
+  if (COACH_ABORT_CLEAR_RE.test(s)) return 'abort'
+  return null
 }
 
 /** 干活 / 教学 / 新开会话优先；chat-bridge 应跳过，避免又抓一帧抢话。 */

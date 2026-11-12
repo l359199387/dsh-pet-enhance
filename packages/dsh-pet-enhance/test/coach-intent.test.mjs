@@ -18,7 +18,7 @@ test('buildCoachClassifyPrompt：五类标签且要求语义理解', () => {
   assert.match(p, /\bcorrect=/)
   assert.match(p, /\bstep=/)
   assert.match(p, /\bopen=/)
-  assert.match(p, /不要死抠固定口令/)
+  assert.match(p, /我教完了\/教学结束.*done/)
   assert.doesNotMatch(p, /guide=/)
 })
 

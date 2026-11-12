@@ -12,6 +12,7 @@ import {
   isTeachEndIntent,
   isTeachStartIntent,
   shouldLeaveCoaching,
+  TEACH_DONE_CHAT_PREFIX,
   TEACH_FOLLOWUP_PREFIX,
   AGENT_WAKE_PREFIX,
 } from './intent.js'
@@ -668,7 +669,7 @@ export function createTeachBridge(options) {
     bubble += scriptNote
     await appendPetChatMessages(
       [
-        { role: 'user', content: `【带教完成】${clip(userText, 80)}` },
+        { role: 'user', content: `${TEACH_DONE_CHAT_PREFIX}${clip(userText, 80)}` },
         { role: 'assistant', content: bubble },
       ],
       { petId: pet, memoryPath: options.petMemoryPath },
@@ -1139,7 +1140,17 @@ export function createTeachBridge(options) {
     const msg = lastUserMessage(r.data.messages)
     if (!msg) return
     if (msg.ts && msg.ts <= lastTs && msg.content === lastContent) return
-    if (msg.content.startsWith(TEACH_FOLLOWUP_PREFIX) || msg.content.startsWith(AGENT_WAKE_PREFIX)) return
+    // 插件自写聊天（学会伪用户行 / 叫醒回声）绝不能再开一轮带教
+    if (
+      isEnhanceSelfTalk(msg.content)
+      || msg.content.startsWith(TEACH_FOLLOWUP_PREFIX)
+      || msg.content.startsWith(TEACH_DONE_CHAT_PREFIX)
+      || msg.content.startsWith(AGENT_WAKE_PREFIX)
+    ) {
+      lastTs = msg.ts || Date.now()
+      lastContent = msg.content
+      return
+    }
 
     lastTs = msg.ts || Date.now()
     lastContent = msg.content

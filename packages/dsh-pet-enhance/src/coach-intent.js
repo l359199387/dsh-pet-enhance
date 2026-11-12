@@ -1,10 +1,11 @@
 /**
- * 对话带教意图：一律短提示让模型判标签 / 抽目标。
- * 禁止用用户口令正则写死 done/abort/step/open 等。
+ * 对话带教意图：短提示让模型判标签 / 抽目标。
+ * 极明确收束/放弃口令本地优先（「我教完了」绝不能再当 step 动手）。
  *
  * @module src/coach-intent.js
  */
 
+import { localCoachClearLabel } from './intent.js'
 import { wakeSession, waitAssistantReply } from './wake-session.js'
 
 /** 带教中分流前缀——不得再被当成用户话。 */
@@ -30,12 +31,12 @@ export function buildCoachClassifyPrompt(userText, opts = {}) {
   return (
     `${COACH_CLASSIFY_PREFIX}`
     + '当前正在对话带教。只输出一个英文标签词，禁止工具与解释、禁止中文标签。\n'
-    + 'done=主人认为已经做成、可以记成学会；\n'
+    + 'done=主人认为已经做成、可以记成学会（含「我教完了/教学结束/加入技能」）；\n'
     + 'abort=主人明确要取消或中止本轮带教；\n'
     + 'correct=主人在纠正刚才做法、要求改这一步；\n'
     + 'step=主人给出了本步可动手的小步骤；\n'
     + 'open=开场、宣布开课、只说总目标、闲聊问名字、或还没有具体小步骤（不要动手）。\n'
-    + '问名字/问候/业务问答/看屏都不是 abort。根据语义理解归类，不要死抠固定口令。\n'
+    + '「我教完了/教学结束」一律 done，绝不是 step。问名字/问候/业务问答/看屏都不是 abort。\n'
     + (goal ? `已知带教总目标：「${goal}」。\n` : '尚未锁定总目标。\n')
     + `用户：「${clipped}」`
   )
@@ -103,6 +104,12 @@ export async function classifyCoachUtterance(ctx, userText, opts = {}) {
   const log = opts.log ?? (() => {})
   const s = String(userText ?? '').trim()
   if (!s) return 'open'
+
+  const clear = localCoachClearLabel(s)
+  if (clear) {
+    log(`coach-classify → ${clear}（local-clear）`)
+    return clear
+  }
 
   // 已有总目标时，分流失败宁动手做本步，也不要静默 open 丢掉指导
   const failLabel = String(opts.goal || '').trim() ? 'step' : 'open'

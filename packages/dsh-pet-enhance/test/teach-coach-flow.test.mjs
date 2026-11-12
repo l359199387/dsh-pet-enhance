@@ -147,6 +147,102 @@ test('对话带教：模型判 abort → 不落学会', async () => {
   bridge.stop()
 })
 
+test('对话带教：我说「我教完了」即写入技能，不依赖模型标签', async () => {
+  await saveSettings(home, { actEnabled: true })
+  const wakes = []
+  const memoryPath = join(home, 'pet-memory-wojiaowanle.json')
+  const prevDsh = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  const bridge = createTeachBridge({
+    home,
+    petMemoryPath: memoryPath,
+    ctx: { get: () => null },
+    log() {},
+    pollChat: false,
+    getPreferredSessionId: () => 'sess-wjwl',
+    prepareSession: async () => ({ sessionId: 'swjwl', fresh: true }),
+    wake: async (_ctx, opts) => {
+      wakes.push(String(opts.text || ''))
+      return { ok: true, sessionId: 'swjwl' }
+    },
+    waitReply: async () => {
+      const last = wakes[wakes.length - 1] || ''
+      if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 看微博热搜' }
+      // 故意回 step：本地收束必须压过模型（不应走到分流叫醒）
+      if (last.includes('带教分流')) return { ok: true, text: 'step' }
+      if (last.includes('带教归纳')) {
+        return { ok: true, text: 'OK: 打开微博热搜并总结\nFAST: 打开 s.weibo.com/top/summary' }
+      }
+      if (last.includes('脚本拆分')) return { ok: true, text: 'NONE' }
+      if (last.includes('可执行的本步指示')) {
+        assert.fail('我教完了不应再叫醒动手')
+      }
+      return { ok: true, text: 'ok' }
+    },
+  })
+
+  try {
+    await bridge.startTeaching('我来教你一下看看微博热搜')
+    await bridge.handleCoachUtterance('我教完了')
+    assert.equal(bridge.isTeaching(), false)
+    assert.ok(!wakes.some((t) => t.includes('带教分流')), '明确收束不应再走模型分流')
+    assert.ok(wakes.some((t) => t.includes('带教归纳')), '应收束并归纳')
+    const skills = await listTeachSkills(join(home, 'skills'))
+    assert.ok(skills.some((s) => /微博|热搜/.test(String(s.goal || s.description || ''))))
+  } finally {
+    if (prevDsh === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevDsh
+    bridge.stop()
+  }
+})
+
+test('对话带教：学会后的【带教完成】伪用户行不得再开 coaching', async () => {
+  await saveSettings(home, { actEnabled: true })
+  const wakes = []
+  const memoryPath = join(home, 'pet-memory-done-echo.json')
+  const bridge = createTeachBridge({
+    home,
+    petMemoryPath: memoryPath,
+    ctx: { get: () => null },
+    log() {},
+    pollChat: false,
+    getPreferredSessionId: () => 'sess-done-echo',
+    prepareSession: async () => ({ sessionId: 'sdone', fresh: true }),
+    wake: async (_ctx, opts) => {
+      wakes.push(String(opts.text || ''))
+      return { ok: true, sessionId: 'sdone' }
+    },
+    waitReply: async () => {
+      const last = wakes[wakes.length - 1] || ''
+      if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 记心情' }
+      if (last.includes('带教分流')) return { ok: true, text: 'done' }
+      if (last.includes('带教归纳')) {
+        return { ok: true, text: 'OK: 记今日心情\nFAST: 写文件' }
+      }
+      if (last.includes('脚本拆分')) return { ok: true, text: 'NONE' }
+      return { ok: true, text: 'ok' }
+    },
+  })
+
+  await bridge.startTeaching('我教你记心情')
+  await bridge.handleCoachUtterance('做成了，记下来')
+  assert.equal(bridge.isTeaching(), false)
+
+  const mem = JSON.parse(readFileSync(memoryPath, 'utf8'))
+  const doneLine = (mem?.main?.main?.messages || [])
+    .filter((m) => m.role === 'user')
+    .map((m) => String(m.content || ''))
+    .find((c) => c.startsWith('【带教完成】'))
+  assert.ok(doneLine, '应写入【带教完成】伪用户行')
+  assert.equal(bridge.isTeaching(), false)
+
+  // tick / chat-gate 靠这两层挡回声，绝不能再判成「我教你」
+  const { isTeachStartIntent, isEnhanceSelfTalk } = await import('../src/intent.js')
+  assert.equal(isTeachStartIntent(doneLine), false)
+  assert.equal(isEnhanceSelfTalk(doneLine), true)
+  bridge.stop()
+})
+
 test('对话带教：带教已结束后迟到的 abort 分流不再冒泡', async () => {
   await saveSettings(home, { actEnabled: true })
   const wakes = []
@@ -179,7 +275,8 @@ test('对话带教：带教已结束后迟到的 abort 分流不再冒泡', asyn
 
   await bridge.startTeaching('我教你记心情')
   assert.equal(bridge.isTeaching(), true)
-  const pending = bridge.handleCoachUtterance('算了不教了')
+  // 用非本地收束短句，迫使走模型分流挂起（「不教了」会 local-clear 秒回）
+  const pending = bridge.handleCoachUtterance('这次先停一下，后面再说')
   for (let i = 0; i < 40 && !releaseClassify; i += 1) {
     await new Promise((r) => setTimeout(r, 5))
   }

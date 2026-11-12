@@ -2,21 +2,50 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   isComputerTaskIntent,
+  isEnhanceSelfTalk,
   isNewSessionIntent,
   isRunAutomationIntent,
   isTeachEndIntent,
   isTeachStartIntent,
   shouldSkipAgentBridge,
   shouldSkipGlanceBridge,
+  TEACH_DONE_CHAT_PREFIX,
 } from '../src/intent.js'
 import { shouldWakeAgent as agentShouldWake } from '../src/agent-bridge.js'
 
 test('教学口令识别', () => {
   assert.equal(isTeachStartIntent('我教你一下怎么保存'), true)
+  assert.equal(isTeachStartIntent('我来教你一下看看微博热搜'), true)
   assert.equal(isTeachStartIntent('学一下我的操作'), true)
+  assert.equal(isTeachStartIntent('开始带教'), true)
   assert.equal(isTeachEndIntent('教完了'), true)
+  assert.equal(isTeachEndIntent('我教完了'), true)
+  assert.equal(isTeachEndIntent('教学结束'), true)
+  assert.equal(isTeachEndIntent('加入技能中'), true)
   assert.equal(isTeachEndIntent('按刚才教的去做'), true)
   assert.equal(isTeachStartIntent('看一眼桌面'), false)
+  // 收束口令绝不能开新一轮
+  assert.equal(isTeachStartIntent('我教完了'), false)
+  assert.equal(isTeachStartIntent('教学结束'), false)
+  // 学会后写入聊天的伪用户行绝不能再开带教
+  assert.equal(isTeachStartIntent(`${TEACH_DONE_CHAT_PREFIX}加入技能中`), false)
+  assert.equal(isTeachStartIntent('带教完成'), false)
+  assert.equal(isEnhanceSelfTalk(`${TEACH_DONE_CHAT_PREFIX}加入技能中`), true)
+})
+
+test('带教收束本地优先：我教完了→done，不教了→abort', async () => {
+  const { localCoachClearLabel, classifyCoachUtterance } = await import('../src/intent.js')
+  assert.equal(localCoachClearLabel('我教完了'), 'done')
+  assert.equal(localCoachClearLabel('教学结束'), 'done')
+  assert.equal(localCoachClearLabel('加入技能中'), 'done')
+  assert.equal(localCoachClearLabel('不教了'), 'abort')
+  // 即使模型会回 step，本地也要做成 done
+  assert.equal(await classifyCoachUtterance({}, '我教完了', {
+    goal: '看微博热搜',
+    wake: async () => ({ ok: true, sessionId: 's' }),
+    waitReply: async () => ({ ok: true, text: 'step' }),
+    log: () => {},
+  }), 'done')
 })
 
 test('教学时 glance/agent 让路', () => {
