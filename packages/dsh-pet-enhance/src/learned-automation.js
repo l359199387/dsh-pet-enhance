@@ -265,15 +265,14 @@ export function goalMatchTokens(goal) {
   for (const t of g.split(/[\s，,。、！？!?.；;：:\-/\\|]+/).filter((x) => x.length >= 2)) {
     out.add(t)
   }
-  // 常见短词：整句里也能命中
+  // 常见 App/动作短词（产品级，不是某个教会的技能名）
   for (const tip of [
     'b站', '哔哩哔哩', 'bilibili', '心情', '记事本', '浏览器', 'edge', 'chrome',
     '豆包', 'doubao', '微信', 'qq', 'notepad',
-    '丰田', '二手车', 'ucar360', '出库', '零售',
   ]) {
     if (g.includes(tip)) out.add(tip)
   }
-  // 中文 bigram：否则「丰田项目代码」对不上「丰田项目的…」
+  // 中文 bigram：技能正文里的词会自动变成可匹配 token，教新技能不用改代码
   const cjk = g.replace(/[^\u4e00-\u9fff]/g, '')
   for (let i = 0; i < cjk.length - 1 && out.size < 48; i += 1) {
     out.add(cjk.slice(i, i + 2))
