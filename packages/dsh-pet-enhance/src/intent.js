@@ -14,7 +14,44 @@ export const AGENT_WAKE_PREFIX = '【小蓝鲸交办】'
 export const TEACH_FOLLOWUP_PREFIX = '【小蓝鲸教学回放】'
 
 export const GLANCE_INTENT_RE =
-  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)|这个窗口|窗口里|(?:看|瞅)一眼|glance|(?:盯着|看着|陪看|盯一会儿|看一会儿|看一会|连续看).{0,12}?(?:屏幕|桌面|画面)?|盯着看|看着看/i
+  /(?:看(?:一?眼|看|下|一下)?|帮我看(?:一?眼|一下)?)(?:我的|下我的)?(?:屏幕|桌面|画面)|(?:屏幕|桌面)上(?:是什么|有什么|写了什么|怎么样|显示什么)|截(?:个|一)?图|现在(?:的)?(?:桌面|屏幕)(?:上)?(?:是什么|有什么)?|这个窗口|窗口里|(?:看|瞅)一眼|glance|(?:盯着|看着|陪看|盯一会儿|看一会儿|看一会|连续看).{0,12}?(?:屏幕|桌面|画面)?|盯着看|看着看/i
+
+/**
+ * 插件自己冒过的泡 / 结论——禁止再当作用户口令分流（否则「屏幕上是记事本」会再次看屏，叠出自言自语）。
+ */
+export const ENHANCE_SELF_TALK_RE =
+  /^(?:屏幕上是|屏幕上有|这件事我还没学会|还没学会呢|好，这轮带教先停下|现在不在带教|闲聊已关|这事我来办|嗯，我听着|好，我去主会话|好，执行技能|按变通思路做|主会话这轮没给出|主会话看屏|已急停|小蓝鲸已接入)/u
+
+export function isEnhanceSelfTalk(text) {
+  const s = String(text ?? '').trim()
+  if (!s) return false
+  if (
+    s.startsWith(GLANCE_FOLLOWUP_PREFIX)
+    || s.startsWith(AGENT_WAKE_PREFIX)
+    || s.includes(TEACH_FOLLOWUP_PREFIX)
+  ) {
+    return true
+  }
+  return ENHANCE_SELF_TALK_RE.test(s)
+}
+
+/**
+ * 带教中若主人明显改去闲聊/看屏/业务问答，应安静退出带教，不要误 abort。
+ * 注意：不要把「先在桌面创建文件」这类本步指示当成离开（那是 step）。
+ */
+export function shouldLeaveCoaching(text) {
+  const s = String(text ?? '').trim()
+  if (!s || isEnhanceSelfTalk(s)) return false
+  if (isTeachStartIntent(s) || isTeachEndIntent(s)) return false
+  if (/放弃|不教了|取消带教|停止带教|不想教了|先别教/.test(s)) return false
+  if (isGlanceIntent(s) || isWatchIntent(s) || isNewSessionIntent(s)) return true
+  if (/^(?:你叫什么|你好|嗨|哈喽|在吗|早上好|晚上好|晚安|谢谢)/i.test(s)) return true
+  // 问已学技能的标准/条件（不是在教本步）
+  if (/(?:标准|条件|流程|规则).{0,8}?(?:是什么|有哪些)|(?:是什么|什么是).{0,24}?(?:标准|条件)/.test(s)) {
+    return true
+  }
+  return false
+}
 
 /**
  * 「盯着看一会儿 / watch 60 秒」→ 走阻塞陪看，不是单帧 see。
@@ -79,11 +116,7 @@ export const NEW_SESSION_RE =
   /(?:新开|另开|再开|开启)(?:一个)?(?:新的)?(?:工作区)?(?:聊天窗口|聊天窗|窗口聊天|窗口|会话|对话|聊天)|(?:开|建|开启)(?:一?个)?新(?:的)?(?:工作区)?(?:聊天窗口|聊天窗|窗口|会话|对话|聊天)|新建(?:一个)?(?:会话|对话|聊天窗口|聊天)|开个新(?:窗口|会话|对话|聊天)|打开(?:一个)?新(?:的)?(?:窗口|会话|对话|聊天)/i
 
 function isBridgeEcho(s) {
-  return (
-    s.startsWith(GLANCE_FOLLOWUP_PREFIX)
-    || s.startsWith(AGENT_WAKE_PREFIX)
-    || s.includes(TEACH_FOLLOWUP_PREFIX)
-  )
+  return isEnhanceSelfTalk(s)
 }
 
 export function isGlanceIntent(text) {

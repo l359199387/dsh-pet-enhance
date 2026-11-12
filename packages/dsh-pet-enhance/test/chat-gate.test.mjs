@@ -82,6 +82,45 @@ test('runChatGate：纯闲聊不接管（放行 dsh-pet）', async () => {
   assert.equal(result.label, 'chat')
 })
 
+test('runChatGate：插件自述回声吞掉，不派发', async () => {
+  let dispatched = 0
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '屏幕上是记事本。',
+    classify: async () => {
+      dispatched += 1
+      return { label: 'glance', via: 'test' }
+    },
+    chatBridge: { handleIntent: async () => { dispatched += 10 } },
+  })
+  assert.equal(result.takeover, true)
+  assert.equal(result.via, 'self-talk')
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(dispatched, 0)
+})
+
+test('runChatGate：带教中改口闲聊则安静退出再放行', async () => {
+  let quiet = 0
+  const result = await runChatGate({
+    ctx: {},
+    home: '',
+    text: '你叫什么名字呀',
+    teachBridge: {
+      isTeaching: () => true,
+      cancelTeachingQuiet: () => { quiet += 1 },
+      handleCoachUtterance: async () => { quiet += 10 },
+    },
+    classify: async (_ctx, _t, opts) => {
+      assert.equal(opts.teaching, false)
+      return { label: 'chat', via: 'test' }
+    },
+  })
+  assert.equal(quiet, 1)
+  assert.equal(result.takeover, false)
+  assert.equal(result.label, 'chat')
+})
+
 test('runChatGate：学会了吗 虽标 chat 仍接管', async () => {
   const result = await runChatGate({
     ctx: {},

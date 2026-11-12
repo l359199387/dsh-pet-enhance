@@ -28,6 +28,8 @@ test('isGlanceIntent：看屏/桌面相关命中，闲聊与 follow-up 不命中
   assert.equal(isGlanceIntent('陪我看一会儿屏幕'), true)
   assert.equal(isGlanceIntent('今天吃什么'), false)
   assert.equal(isGlanceIntent('帮我看一下天气预报'), false)
+  assert.equal(isGlanceIntent('屏幕上是记事本。'), false)
+  assert.equal(isGlanceIntent('这件事我还没学会。最近技能：「和豆包姐姐聊天」。'), false)
   assert.equal(isGlanceIntent(`${GLANCE_FOLLOWUP_PREFIX}请描述`), false)
   assert.equal(isGlanceIntent(''), false)
 })

@@ -5,7 +5,13 @@
  */
 
 import { classifyUtterance, isSkillStatusQuestion } from './classify-utterance.js'
-import { isRunAutomationIntent, isWatchIntent, parseWatchSeconds } from './intent.js'
+import {
+  isEnhanceSelfTalk,
+  isRunAutomationIntent,
+  isWatchIntent,
+  parseWatchSeconds,
+  shouldLeaveCoaching,
+} from './intent.js'
 import { listLearnedIndex } from './learned-automation.js'
 import { listSkillGoals, listTeachSkills } from './skill-match.js'
 import { mnemonBubbleSuffix } from './teach-skill.js'
@@ -82,10 +88,24 @@ export async function runChatGate(options) {
     return { ok: true, takeover: false, label: 'chat', via: 'empty' }
   }
 
-  const teaching = Boolean(options.teachBridge?.isTeaching?.())
   const preferredId = options.getPreferredSessionId?.() ?? null
   const classify = options.classify ?? classifyUtterance
   const log = options.log ?? (() => {})
+
+  // 插件自己的气泡回声：吞掉，避免「屏幕上是记事本」再触发看屏/带教 abort
+  if (isEnhanceSelfTalk(text)) {
+    log('chat-gate：忽略插件自述回声')
+    return { ok: true, takeover: true, label: 'chat', via: 'self-talk', ack: '' }
+  }
+
+  let teaching = Boolean(options.teachBridge?.isTeaching?.())
+  // 带教卡住时主人改口闲聊/干活：安静退出，再按正常标签分流
+  if (teaching && shouldLeaveCoaching(text)) {
+    try { options.teachBridge?.cancelTeachingQuiet?.('leave-coaching') } catch { /* ignore */ }
+    teaching = false
+    log('chat-gate：带教态已安静退出，改走正常分流')
+  }
+
   /** @type {string[]} */
   let learnedGoals = []
   if (!teaching) {

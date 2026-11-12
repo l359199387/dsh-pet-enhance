@@ -12,7 +12,7 @@ import {
   isClassifyEcho,
   isSkillStatusQuestion,
 } from './classify-utterance.js'
-import { isRunAutomationIntent } from './intent.js'
+import { isEnhanceSelfTalk, isRunAutomationIntent, shouldLeaveCoaching } from './intent.js'
 import { listLearnedIndex } from './learned-automation.js'
 import { listSkillGoals, listTeachSkills } from './skill-match.js'
 import { mnemonBubbleSuffix } from './teach-skill.js'
@@ -166,7 +166,16 @@ export function createPetRouter(options) {
   }
 
   async function route(userText) {
-    const teaching = Boolean(options.teachBridge?.isTeaching?.())
+    if (isEnhanceSelfTalk(userText)) {
+      log(`pet-router：忽略插件自述回声 ← ${String(userText).slice(0, 40)}`)
+      return
+    }
+    let teaching = Boolean(options.teachBridge?.isTeaching?.())
+    if (teaching && shouldLeaveCoaching(userText)) {
+      try { options.teachBridge?.cancelTeachingQuiet?.('leave-coaching') } catch { /* ignore */ }
+      teaching = false
+      log('pet-router：带教态已安静退出，改走正常分流')
+    }
     const preferredId = options.getPreferredSessionId?.() ?? null
     const learnedGoals = teaching ? [] : await loadLearnedGoals()
     const { label, via } = await classify(options.ctx, userText, {

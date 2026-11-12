@@ -8,8 +8,10 @@
 import { broadcastToDshPet, callDshPet } from './dsh-pet.js'
 import { appendPetChatMessages, sayConclusionToPet } from './pet-chat-memory.js'
 import {
+  isEnhanceSelfTalk,
   isTeachEndIntent,
   isTeachStartIntent,
+  shouldLeaveCoaching,
   TEACH_FOLLOWUP_PREFIX,
   AGENT_WAKE_PREFIX,
 } from './intent.js'
@@ -304,6 +306,7 @@ export function createTeachBridge(options) {
   function endTeachingFlag() {
     teaching = false
     coachEpoch += 1
+    // coachBusy 不在这里清：调用方在 finally 里清
     coachAgentSessionId = null
     try { options.onTeaching?.(false) } catch { /* ignore */ }
     callDshPet('/work-status', { method: 'DELETE' }).catch(() => {})
@@ -432,6 +435,27 @@ export function createTeachBridge(options) {
     } finally {
       coachBusy = false
     }
+  }
+
+  /** 安静退出带教（不冒「先停下」），用于主人已改口去闲聊/干活时。 */
+  function cancelTeachingQuiet(reason = 'quiet') {
+    if (!teaching) return false
+    const id = sessionId
+    endTeachingFlag()
+    sessionId = null
+    goal = ''
+    constraints = []
+    attemptCount = 0
+    if (id) {
+      updateTeachMeta(options.home, id, {
+        status: 'aborted',
+        endedAt: new Date().toISOString(),
+        quiet: true,
+        reason: String(reason || 'quiet').slice(0, 40),
+      }).catch(() => {})
+    }
+    log(`coach：安静退出带教（${reason}）`)
+    return true
   }
 
   async function finishCoachAbort(userText, epoch = coachEpoch) {
@@ -661,8 +685,16 @@ export function createTeachBridge(options) {
   async function handleCoachUtterance(userText) {
     const text = String(userText || '').trim()
     if (!text) return
+    if (isEnhanceSelfTalk(text)) {
+      log('coach：忽略插件自述回声')
+      return
+    }
     if (!teaching || !sessionId) {
       await broadcastToDshPet('现在不在带教。想教我说「我教你…」。', { pet, duration: 8_000 })
+      return
+    }
+    if (shouldLeaveCoaching(text)) {
+      cancelTeachingQuiet('leave-coaching')
       return
     }
     if (coachBusy) {
@@ -1145,6 +1177,7 @@ export function createTeachBridge(options) {
     getSessionId: () => sessionId,
     startTeaching,
     handleCoachUtterance,
+    cancelTeachingQuiet,
     stopAndRun,
     tryRunMatchingPlaybook,
     runPlaybook,
