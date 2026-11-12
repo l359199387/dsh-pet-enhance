@@ -243,14 +243,16 @@ export function createChatBridge(options) {
       }
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: kind === 'watch' ? 240_000 : 120_000,
+        timeoutMs: kind === 'watch' ? 360_000 : 240_000,
+        settleMs: 2_500,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       if (reply.ok && reply.text) {
-        await sayConclusionToPet(clipBubble(reply.text), {
+        await sayConclusionToPet(reply.text, {
           pet,
-          duration: 14_000,
+          duration: 16_000,
           memoryPath: options.petMemoryPath,
+          maxChars: 900,
         })
         await remember({
           userText,

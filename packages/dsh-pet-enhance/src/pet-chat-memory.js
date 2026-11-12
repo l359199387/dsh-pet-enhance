@@ -91,6 +91,27 @@ export async function appendPetChatMessages(messages, {
 }
 
 /**
+ * 主会话长文结论压成适合宠物冒泡/聊天记录的摘要（尽量保住 SQL/代码块）。
+ * @param {string} text
+ * @param {number} [max]
+ */
+export function formatPetConclusion(text, max = 800) {
+  let s = String(text ?? '').trim()
+  if (!s) return ''
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
+  if (s.length <= max) return s
+  const fence = s.match(/```[\s\S]*?```/)
+  if (fence && fence[0].length <= max - 48) {
+    const idx = s.indexOf(fence[0])
+    const head = s.slice(0, Math.min(Math.max(idx, 0), 120)).trim()
+    const out = `${head ? `${head}\n` : ''}${fence[0]}`
+    if (out.length <= max) return out
+    if (fence[0].length <= max) return fence[0]
+  }
+  return `${s.slice(0, max - 1)}…`
+}
+
+/**
  * 结论性回复：头顶冒泡 + 写入聊天记录（进度/短应答请继续用 broadcastToDshPet）。
  * @param {string} text
  * @param {{
@@ -100,13 +121,15 @@ export async function appendPetChatMessages(messages, {
  *   surface?: string,
  *   memoryPath?: string,
  *   record?: boolean,
+ *   maxChars?: number,
  *   broadcast?: typeof broadcastToDshPet,
  *   append?: typeof appendPetChatMessages,
  * }} [opts]
  * @returns {Promise<{ ok: boolean, recorded: boolean, broadcast?: object, error?: string }>}
  */
 export async function sayConclusionToPet(text, opts = {}) {
-  const content = String(text ?? '').trim()
+  const maxChars = Number(opts.maxChars) > 0 ? Number(opts.maxChars) : 800
+  const content = formatPetConclusion(text, maxChars)
   const pet = opts.pet || 'main'
   const record = opts.record !== false
   const broadcast = opts.broadcast ?? broadcastToDshPet

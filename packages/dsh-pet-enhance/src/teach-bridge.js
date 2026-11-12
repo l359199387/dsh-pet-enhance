@@ -884,16 +884,20 @@ export function createTeachBridge(options) {
       }
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 180_000,
+        timeoutMs: 360_000,
+        settleMs: 2_500,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       const text = reply.ok && reply.text
-        ? clip(reply.text, 160)
-        : '主会话这轮没给出结论。'
+        ? reply.text
+        : (reply.reason === 'timeout'
+          ? '主会话还在忙或超时了。请去主会话看完整结论，或再说一遍。'
+          : '主会话这轮没给出结论。')
       await sayConclusionToPet(text, {
         pet,
-        duration: 12_000,
+        duration: 16_000,
         memoryPath: options.petMemoryPath,
+        maxChars: 900,
       })
       return
     }
@@ -1000,14 +1004,16 @@ export function createTeachBridge(options) {
       } else {
         try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
         const reply = await waitReply(options.ctx, woken.sessionId, {
-          timeoutMs: 180_000,
+          timeoutMs: 360_000,
+          settleMs: 2_500,
           isAborted: () => stopped || Boolean(options.isAborted?.()),
         })
         if (reply.ok && reply.text) {
-          await sayConclusionToPet(clip(reply.text, 160), {
+          await sayConclusionToPet(reply.text, {
             pet,
-            duration: 14_000,
+            duration: 16_000,
             memoryPath: options.petMemoryPath,
+            maxChars: 900,
           })
           await updateTeachMeta(options.home, id, {
             status: 'done',
@@ -1050,14 +1056,16 @@ export function createTeachBridge(options) {
       log(`teach：glance 短叫醒 ${woken.sessionId} hints=${compactGlanceHints(remainder)}`)
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 180_000,
+        timeoutMs: 360_000,
+        settleMs: 2_500,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       if (reply.ok && reply.text) {
-        await sayConclusionToPet(clip(reply.text, 160), {
+        await sayConclusionToPet(reply.text, {
           pet,
-          duration: 14_000,
+          duration: 16_000,
           memoryPath: options.petMemoryPath,
+          maxChars: 900,
         })
         await updateTeachMeta(options.home, id, {
           status: 'done',

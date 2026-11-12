@@ -145,22 +145,33 @@ export function createAgentBridge(options) {
       log(`agent-bridge 已叫醒会话 ${woken.sessionId}`)
       try { options.onSession?.(woken.sessionId) } catch { /* ignore */ }
       const reply = await waitReply(options.ctx, woken.sessionId, {
-        timeoutMs: 180_000,
+        timeoutMs: 360_000,
+        settleMs: 2_500,
         isAborted: () => stopped || Boolean(options.isAborted?.()),
       })
       if (options.isAborted?.() || reply.reason === 'aborted') {
-        await sayConclusionToPet('已急停，这轮先停下。', {
-          pet,
-          duration: 8_000,
-          memoryPath: options.petMemoryPath,
-        })
+        if (reply.ok && reply.text) {
+          await sayConclusionToPet(reply.text, {
+            pet,
+            duration: 14_000,
+            memoryPath: options.petMemoryPath,
+            maxChars: 900,
+          })
+        } else {
+          await sayConclusionToPet('已急停，这轮先停下。', {
+            pet,
+            duration: 8_000,
+            memoryPath: options.petMemoryPath,
+          })
+        }
         return
       }
       if (reply.ok && reply.text) {
-        await sayConclusionToPet(clipBubble(reply.text), {
+        await sayConclusionToPet(reply.text, {
           pet,
-          duration: 14_000,
+          duration: 16_000,
           memoryPath: options.petMemoryPath,
+          maxChars: 900,
         })
         log(`agent-bridge 已回灌结论（${reply.text.slice(0, 40)}）`)
       } else {

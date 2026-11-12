@@ -227,13 +227,48 @@ export async function cancelAgentSession(ctx, {
 }
 
 /**
- * 等本轮 turn 结束后取出助手文本（给桌宠冒泡）。
+ * 从会话事件/消息里抠助手纯文本。
+ * @param {object | null | undefined} session
+ * @returns {string}
+ */
+export function extractAssistantTextFromSession(session) {
+  if (!session) return ''
+  try {
+    const msgs = typeof session.messages === 'function'
+      ? session.messages()
+      : (session.messages || session.history || [])
+    if (Array.isArray(msgs)) {
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        const m = msgs[i]
+        if (!m || (m.role !== 'assistant' && m.role !== 'model')) continue
+        const chunks = []
+        const content = m.content
+        if (typeof content === 'string' && content.trim()) return content.trim()
+        if (Array.isArray(content)) {
+          for (const b of content) {
+            if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+              chunks.push(b.text.trim())
+            }
+          }
+        }
+        if (chunks.length) return chunks.join('\n\n')
+      }
+    }
+  } catch { /* ignore */ }
+  return ''
+}
+
+/**
+ * 等本轮结束后取出助手文本（给桌宠冒泡）。
+ * 工具轮常有「空正文 turn/end」：不可立刻当失败；应继续等到有正文，或超时回落最后正文。
  * @returns {Promise<{ ok: boolean, text?: string, reason?: string }>}
  */
 export async function waitAssistantReply(ctx, sessionId, {
   baselineSeq = null,
   timeoutMs = 120_000,
   pollMs = 800,
+  /** 拿到正文后安静多久视为本轮说完（避免工具中途一句「我先查」就收工） */
+  settleMs = 2_500,
   isAborted = () => false,
 } = {}) {
   const sessions = serviceOf(ctx, 'sessions')
@@ -244,9 +279,16 @@ export async function waitAssistantReply(ctx, sessionId, {
   const started = Date.now()
   let seq = baselineSeq
   const turns = new Map()
+  /** @type {string | null} */
+  let lastText = null
+  let lastTextAt = 0
+  let lastEventAt = Date.now()
 
   while (Date.now() - started < timeoutMs) {
-    if (isAborted()) return { ok: false, reason: 'aborted' }
+    if (isAborted()) {
+      if (lastText) return { ok: true, text: lastText, reason: 'aborted-partial' }
+      return { ok: false, reason: 'aborted' }
+    }
     let session
     try {
       session = sessions.get(sid)
@@ -275,9 +317,10 @@ export async function waitAssistantReply(ctx, sessionId, {
       seq = cur
       for (const event of events) {
         if (!event) continue
+        lastEventAt = Date.now()
         const data = event.data || {}
         if (data.turn === undefined || data.turn === null) continue
-        if (event.type === 'assistant/message') {
+        if (event.type === 'assistant/message' || event.type === 'assistant/text') {
           const parts = turns.get(data.turn) || []
           const blocks = data.message?.content
           if (Array.isArray(blocks)) {
@@ -287,22 +330,45 @@ export async function waitAssistantReply(ctx, sessionId, {
               }
             }
           }
+          if (typeof data.text === 'string' && data.text.trim()) {
+            parts.push(data.text.trim())
+          }
           turns.set(data.turn, parts)
         } else if (event.type === 'turn/end') {
           const parts = turns.get(data.turn) || []
           turns.delete(data.turn)
-          if (data.reason?.kind === 'completed') {
+          const kind = data.reason?.kind
+          if (kind === 'completed' || kind === 'end' || kind == null) {
             if (parts.length) {
-              return { ok: true, text: parts.join('\n\n') }
+              lastText = parts.join('\n\n')
+              lastTextAt = Date.now()
             }
-            // 空正文（推理折叠 / 只调工具）→ 立刻失败，勿空等到 timeout
-            return { ok: false, reason: 'empty-text' }
+            // 空正文多半是「只调工具」的中间轮：继续等，不要 empty-text 早退
           }
         }
       }
     }
+
+    // 有正文且随后安静一段时间 → 当作最终结论
+    if (
+      lastText
+      && lastTextAt > 0
+      && Date.now() - lastTextAt >= settleMs
+      && Date.now() - lastEventAt >= settleMs
+    ) {
+      return { ok: true, text: lastText }
+    }
+
     await sleep(pollMs)
   }
+
+  if (lastText) return { ok: true, text: lastText, reason: 'timeout-partial' }
+
+  let session
+  try { session = sessions.get(sid) } catch { session = null }
+  const salvaged = extractAssistantTextFromSession(session)
+  if (salvaged) return { ok: true, text: salvaged, reason: 'salvaged' }
+
   return { ok: false, reason: 'timeout' }
 }
 
