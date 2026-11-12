@@ -13,8 +13,28 @@ export const DEFAULT_TRANSCRIPT_MODE = 'standard'
 export const STANDARD_AGENT_PRESET = 'standard'
 /** 完全权限：沙箱放行 + 审批 never。 */
 export const FULL_ACCESS_PERMISSION = 'danger-full-access'
-/** 有思考档位时的默认档：省钱；若用户上次用过其它档则优先沿用。 */
+/**
+ * 偏好的轻档名。只在「模型菜单里真有这一档」时才用；
+ * 没有就从该模型自己的 efforts 里挑最轻的一档，绝不无条件硬写。
+ */
 export const DEFAULT_REASONING_EFFORT = 'low'
+
+/** 档位强度：越小越省。未知档排中间偏后，避免误当最轻。 */
+const EFFORT_RANK = new Map([
+  ['none', 0],
+  ['off', 0],
+  ['disabled', 0],
+  ['minimal', 1],
+  ['light', 1],
+  ['low', 2],
+  ['medium', 3],
+  ['balanced', 3],
+  ['high', 4],
+  ['deep', 4],
+  ['extra_high', 5],
+  ['xhigh', 5],
+  ['max', 6],
+])
 
 /** 侧栏工作区统一显示名。 */
 export const PET_WORKSPACE_NAME = '小蓝鲸工作区'
@@ -357,25 +377,46 @@ export async function modelReasoningMenu(ctx, provider, model) {
 }
 
 /**
- * 决定会话推理档。三条规则（都通过宿主能力判断，避免 UNSUPPORTED_REASONING_EFFORT）：
- * 1. 模型没有思考档位菜单 → 不给它写档位（返回 null，跳过）。
- * 2. 用户上次用过的档位在支持列表里 → 沿用。
- * 3. 否则回落默认档（low）；默认档不在列表里 → 用模型自带的 defaultEffort；再没有就不写。
- * @param {string} defaultEffort 我们想要的默认档（通常 low）
+ * 从模型自己的 efforts 里挑最轻一档（对齐 ofm catalog / channel-pack 的档位集合）。
+ * @param {string[]} efforts
+ * @returns {string | null}
+ */
+export function lightestReasoningEffort(efforts) {
+  if (!Array.isArray(efforts) || efforts.length === 0) return null
+  let best = null
+  let bestRank = Number.POSITIVE_INFINITY
+  for (const raw of efforts) {
+    const id = String(raw || '').trim()
+    if (!id) continue
+    const rank = EFFORT_RANK.has(id) ? EFFORT_RANK.get(id) : 50
+    if (rank < bestRank) {
+      best = id
+      bestRank = rank
+    }
+  }
+  return best
+}
+
+/**
+ * 决定会话推理档。规则（档位集合必须来自该模型菜单，避免 UNSUPPORTED_REASONING_EFFORT）：
+ * 1. 模型没有思考档位菜单 → 不写（null）。
+ * 2. 用户上次用过的档位在菜单里 → 沿用。
+ * 3. 偏好档（通常 low）在菜单里 → 用偏好档。
+ * 4. 否则取该模型 efforts 里最轻的一档（例如只有 high/max 就用 high，不会硬写 low）。
+ * @param {string} preferredEffort 偏好档（有则用；没有就从菜单里挑）
  * @param {string | null | undefined} previous 用户上次用的档
  * @param {{ efforts: string[], defaultEffort: string | null } | null} menu 模型能力
  * @returns {string | null} 真正要写的档位；null 表示不写
  */
-export function pickReasoningEffort(defaultEffort, previous, menu) {
+export function pickReasoningEffort(preferredEffort, previous, menu) {
   if (!menu) return null
   const { efforts } = menu
   if (!efforts.length) return null
   const prev = String(previous || '').trim()
   if (prev && efforts.includes(prev)) return prev
-  const want = String(defaultEffort || '').trim()
+  const want = String(preferredEffort || '').trim()
   if (want && efforts.includes(want)) return want
-  if (menu.defaultEffort && efforts.includes(menu.defaultEffort)) return menu.defaultEffort
-  return null
+  return lightestReasoningEffort(efforts)
 }
 
 /**
@@ -399,8 +440,8 @@ export async function readSessionReasoningEffort(ctx, sessionId) {
 
 /**
  * 把会话推理档设好，但只在模型确实支持思考档位时才写。
- * 优先沿用 previousEffort（上一会话用户档），其次目标会话自己的 current，
- * 再回落 preferredEffort（默认 low）。
+ * 档位集合来自 llm.resolveModelInfo（与 ofm catalog 的 efforts 同形）；
+ * 选择顺序：上一会话用户档 → 偏好档（若菜单含）→ 菜单最轻档。
  * 优先 sessionController.selectModel，其次 agent.model.select。
  * @returns {Promise<{ applied: boolean, effort: string | null }>}
  */

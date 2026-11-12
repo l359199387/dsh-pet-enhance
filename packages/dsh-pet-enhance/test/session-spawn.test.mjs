@@ -15,30 +15,42 @@ import {
   findWorkspaceForSession,
   openNewWorkspaceSession,
   PET_WORKSPACE_NAME,
+  lightestReasoningEffort,
   pickReasoningEffort,
   prepareFreshRunSession,
   readSessionPermissionPreset,
   readSessionReasoningEffort,
 } from '../src/session-spawn.js'
 
-test('pickReasoningEffort：无菜单跳过；有菜单优先上次，否则 low', () => {
+test('lightestReasoningEffort：从模型自己的档位里挑最轻', () => {
+  assert.equal(lightestReasoningEffort(['high', 'max']), 'high')
+  assert.equal(lightestReasoningEffort(['disabled', 'low', 'medium', 'high']), 'disabled')
+  assert.equal(lightestReasoningEffort(['medium', 'max']), 'medium')
+  assert.equal(lightestReasoningEffort([]), null)
+})
+
+test('pickReasoningEffort：看模型菜单，不无条件写 low', () => {
   assert.equal(pickReasoningEffort('low', 'high', null), null)
   assert.equal(pickReasoningEffort('low', 'high', { efforts: [], defaultEffort: null }), null)
+  // 上次 high 在菜单里 → 沿用
   assert.equal(
     pickReasoningEffort('low', 'high', { efforts: ['low', 'high', 'max'], defaultEffort: 'high' }),
     'high',
   )
+  // 菜单含 low → 用偏好 low
   assert.equal(
     pickReasoningEffort('low', null, { efforts: ['low', 'high'], defaultEffort: 'high' }),
     'low',
   )
+  // 菜单无 low（如部分模型只有 high/max）→ 取最轻 high，绝不硬写 low
   assert.equal(
-    pickReasoningEffort('low', 'xhigh', { efforts: ['high', 'max'], defaultEffort: 'high' }),
+    pickReasoningEffort('low', null, { efforts: ['high', 'max'], defaultEffort: 'max' }),
     'high',
   )
+  // 上次不在菜单 → 回落偏好；偏好也不在 → 最轻
   assert.equal(
-    pickReasoningEffort('low', null, { efforts: ['medium', 'max'], defaultEffort: null }),
-    null,
+    pickReasoningEffort('low', 'xhigh', { efforts: ['medium', 'max'], defaultEffort: null }),
+    'medium',
   )
 })
 
