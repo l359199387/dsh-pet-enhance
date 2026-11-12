@@ -1,6 +1,6 @@
 /**
  * 主人说「新开窗口聊天」或交办/执行时：新建工作区会话。
- * 默认：完全权限 + 标准模式 + 推理 low（干净会话，避免吃肥历史）。
+ * 默认：完全权限 + 标准模式；推理档按模型能力决定——无档不加，有档优先沿用上次，否则 low。
  *
  * @module src/session-spawn.js
  */
@@ -13,7 +13,7 @@ export const DEFAULT_TRANSCRIPT_MODE = 'standard'
 export const STANDARD_AGENT_PRESET = 'standard'
 /** 完全权限：沙箱放行 + 审批 never。 */
 export const FULL_ACCESS_PERMISSION = 'danger-full-access'
-/** 默认推理档：省钱；复杂任务可再升。 */
+/** 有思考档位时的默认档：省钱；若用户上次用过其它档则优先沿用。 */
 export const DEFAULT_REASONING_EFFORT = 'low'
 
 /** 侧栏工作区统一显示名。 */
@@ -330,51 +330,139 @@ export function applyStandardTranscriptMode(ctx) {
 }
 
 /**
- * 把会话推理档设为 low（或指定档）。优先 sessionController.selectModel，其次 agent.model.select。
- * @returns {Promise<boolean>}
+ * 查模型是否声明思考档位菜单，以及支持哪些档。
+ * 走宿主 `llm` 服务的 resolveModelInfo(provider, model)：它按 adapter 解析并校验，
+ * 返回带 `reasoning.efforts` / `reasoning.defaultEffort` 的能力；取不到服务或模型时
+ * 一律当「不支持档位」处理——宁可少写，也不能写错把运行时炸挂
+ *（trae/DeepSeek-V4-Flash 一类无 thinkingConfig 的模型就是这样炸的）。
+ * @returns {Promise<{ efforts: string[], defaultEffort: string | null } | null>}
  */
-export async function applySessionReasoningEffort(ctx, sessionId, effort = DEFAULT_REASONING_EFFORT) {
-  const want = String(effort || '').trim()
+export async function modelReasoningMenu(ctx, provider, model) {
+  const llm = serviceOf(ctx, 'llm')
+  if (!llm || typeof llm.resolveModelInfo !== 'function') return null
+  let info
+  try {
+    info = await llm.resolveModelInfo(String(provider), String(model))
+  } catch {
+    return null
+  }
+  const reasoning = info?.reasoning
+  if (!reasoning || !Array.isArray(reasoning.efforts) || reasoning.efforts.length === 0) return null
+  return {
+    efforts: reasoning.efforts
+      .map((e) => String(typeof e === 'string' ? e : (e?.id || '')).trim())
+      .filter(Boolean),
+    defaultEffort: reasoning.defaultEffort ? String(reasoning.defaultEffort) : null,
+  }
+}
+
+/**
+ * 决定会话推理档。三条规则（都通过宿主能力判断，避免 UNSUPPORTED_REASONING_EFFORT）：
+ * 1. 模型没有思考档位菜单 → 不给它写档位（返回 null，跳过）。
+ * 2. 用户上次用过的档位在支持列表里 → 沿用。
+ * 3. 否则回落默认档（low）；默认档不在列表里 → 用模型自带的 defaultEffort；再没有就不写。
+ * @param {string} defaultEffort 我们想要的默认档（通常 low）
+ * @param {string | null | undefined} previous 用户上次用的档
+ * @param {{ efforts: string[], defaultEffort: string | null } | null} menu 模型能力
+ * @returns {string | null} 真正要写的档位；null 表示不写
+ */
+export function pickReasoningEffort(defaultEffort, previous, menu) {
+  if (!menu) return null
+  const { efforts } = menu
+  if (!efforts.length) return null
+  const prev = String(previous || '').trim()
+  if (prev && efforts.includes(prev)) return prev
+  const want = String(defaultEffort || '').trim()
+  if (want && efforts.includes(want)) return want
+  if (menu.defaultEffort && efforts.includes(menu.defaultEffort)) return menu.defaultEffort
+  return null
+}
+
+/**
+ * 读会话当前选中的推理档（宿主 model/selection 投影）。
+ * @returns {Promise<string | null>}
+ */
+export async function readSessionReasoningEffort(ctx, sessionId) {
   const sid = String(sessionId || '').trim()
-  if (!want || !sid) return false
+  if (!sid) return null
+  const sc = serviceOf(ctx, 'sessionController')
+  if (!sc || typeof sc.resolveAgent !== 'function') return null
+  try {
+    const resolved = await sc.resolveAgent(sid)
+    const cur = resolved?.agent?.model?.current?.()
+    const effort = cur?.reasoningEffort
+    return effort ? String(effort).trim() || null : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 把会话推理档设好，但只在模型确实支持思考档位时才写。
+ * 优先沿用 previousEffort（上一会话用户档），其次目标会话自己的 current，
+ * 再回落 preferredEffort（默认 low）。
+ * 优先 sessionController.selectModel，其次 agent.model.select。
+ * @returns {Promise<{ applied: boolean, effort: string | null }>}
+ */
+export async function applySessionReasoningEffort(ctx, sessionId, effort = DEFAULT_REASONING_EFFORT, opts = {}) {
+  const want = effort === null
+    ? null
+    : String(effort || DEFAULT_REASONING_EFFORT).trim() || DEFAULT_REASONING_EFFORT
+  const sid = String(sessionId || '').trim()
+  if (!sid) return { applied: false, effort: null }
 
   const sc = serviceOf(ctx, 'sessionController')
-  if (!sc || typeof sc.resolveAgent !== 'function') return false
+  if (!sc || typeof sc.resolveAgent !== 'function') return { applied: false, effort: null }
 
   let resolved
   try {
     resolved = await sc.resolveAgent(sid)
   } catch {
-    return false
+    return { applied: false, effort: null }
   }
   const agent = resolved?.agent
   const cur = agent?.model?.current?.()
-  if (!cur?.provider || !cur?.model) return false
+  if (!cur?.provider || !cur?.model) return { applied: false, effort: null }
+
+  const provider = String(cur.provider)
+  const model = String(cur.model)
+  const previous = opts.previousEffort != null
+    ? String(opts.previousEffort).trim() || null
+    : (cur?.reasoningEffort ? String(cur.reasoningEffort).trim() || null : null)
+  const menu = await modelReasoningMenu(ctx, provider, model)
+  const picked = pickReasoningEffort(want || DEFAULT_REASONING_EFFORT, previous, menu)
+  if (!picked) return { applied: false, effort: null }
+
+  // 已是目标档就别再 append model/selection，避免空写。
+  if (cur.reasoningEffort && String(cur.reasoningEffort) === picked) {
+    return { applied: true, effort: picked }
+  }
 
   const selection = {
-    provider: String(cur.provider),
-    model: String(cur.model),
-    reasoningEffort: want,
+    provider,
+    model,
+    reasoningEffort: picked,
   }
 
   if (typeof sc.selectModel === 'function') {
     try {
       await sc.selectModel({ sessionId: sid, ...selection })
-      return true
+      return { applied: true, effort: picked }
     } catch { /* fall through */ }
   }
 
   try {
     if (typeof agent.model?.select === 'function') {
       agent.model.select(selection)
-      return true
+      return { applied: true, effort: picked }
     }
   } catch { /* ignore */ }
-  return false
+  return { applied: false, effort: null }
 }
 
 /**
- * 新开工作区聊天窗口：同 workspace、完全权限、标准模式、推理 low。
+ * 新开工作区聊天窗口：同 workspace、完全权限、标准模式；
+ * 推理档按模型能力写入（无档跳过；有档优先沿用上一会话用户档，否则 low）。
  *
  * @param {object} ctx
  * @param {{
@@ -412,7 +500,8 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
   const ensured = await ensurePetWorkspace(ctx, { preferredId: fromSessionId, log })
   const workspace = ensured.workspace || findWorkspaceForSession(ctx, fromSessionId)
   const agentPreset = String(opts.agentPreset || STANDARD_AGENT_PRESET).trim() || STANDARD_AGENT_PRESET
-  const reasoningEffort = opts.reasoningEffort === null
+  // null = 显式不碰推理档；否则 preferred 默认 low，真正写入值由模型菜单 + 上次档位决定
+  const preferredEffort = opts.reasoningEffort === null
     ? null
     : String(opts.reasoningEffort || DEFAULT_REASONING_EFFORT).trim() || DEFAULT_REASONING_EFFORT
 
@@ -474,9 +563,23 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
 
   const modeStandard = applyStandardTranscriptMode(ctx)
   let reasoningApplied = false
-  if (reasoningEffort) {
-    reasoningApplied = await applySessionReasoningEffort(ctx, sessionId, reasoningEffort)
-    if (!reasoningApplied) log(`session-spawn：推理 ${reasoningEffort} 未能写到新会话 ${sessionId}`)
+  /** @type {string | null} */
+  let reasoningEffort = null
+  if (preferredEffort !== null) {
+    // 新会话自己还没有用户选择；沿用上一会话（fromSessionId）的档位
+    const previousEffort = await readSessionReasoningEffort(ctx, fromSessionId)
+    const applied = await applySessionReasoningEffort(ctx, sessionId, preferredEffort, {
+      previousEffort,
+    })
+    reasoningApplied = applied.applied
+    reasoningEffort = applied.effort
+    if (!reasoningApplied) {
+      log(
+        previousEffort
+          ? `session-spawn：模型无可用推理档（想要 ${preferredEffort}，上次 ${previousEffort}），跳过`
+          : `session-spawn：模型无可用推理档（想要 ${preferredEffort}），跳过`,
+      )
+    }
   }
 
   let titled = await applySessionTitle(ctx, sessionId, title)
@@ -497,7 +600,9 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
     + ` preset=${agentPreset}`
     + (permission ? ` perm=${permission}${permissionCopied ? '✓' : '✗'}` : '')
     + (modeStandard ? ' mode=standard' : '')
-    + (reasoningEffort ? ` effort=${reasoningEffort}${reasoningApplied ? '✓' : '✗'}` : '')
+    + (reasoningEffort
+      ? ` effort=${reasoningEffort}${reasoningApplied ? '✓' : '✗'}`
+      : ' effort=skip')
     + (revealed ? ' revealed' : ' reveal-skip'),
   )
 
@@ -519,7 +624,7 @@ export async function openNewWorkspaceSession(ctx, opts = {}) {
 }
 
 /**
- * 交办/执行专用：始终新开干净会话（完全权限 + standard + low）。
+ * 交办/执行专用：始终新开干净会话（完全权限 + standard；推理档按模型能力）。
  * create 失败时回落上一会话 id（仍可叫醒，只是吃旧历史）。
  *
  * @param {object} ctx

@@ -15,9 +15,32 @@ import {
   findWorkspaceForSession,
   openNewWorkspaceSession,
   PET_WORKSPACE_NAME,
+  pickReasoningEffort,
   prepareFreshRunSession,
   readSessionPermissionPreset,
+  readSessionReasoningEffort,
 } from '../src/session-spawn.js'
+
+test('pickReasoningEffort：无菜单跳过；有菜单优先上次，否则 low', () => {
+  assert.equal(pickReasoningEffort('low', 'high', null), null)
+  assert.equal(pickReasoningEffort('low', 'high', { efforts: [], defaultEffort: null }), null)
+  assert.equal(
+    pickReasoningEffort('low', 'high', { efforts: ['low', 'high', 'max'], defaultEffort: 'high' }),
+    'high',
+  )
+  assert.equal(
+    pickReasoningEffort('low', null, { efforts: ['low', 'high'], defaultEffort: 'high' }),
+    'low',
+  )
+  assert.equal(
+    pickReasoningEffort('low', 'xhigh', { efforts: ['high', 'max'], defaultEffort: 'high' }),
+    'high',
+  )
+  assert.equal(
+    pickReasoningEffort('low', null, { efforts: ['medium', 'max'], defaultEffort: null }),
+    null,
+  )
+})
 
 test('clipSessionTitle', () => {
   assert.equal(clipSessionTitle('记录心情'), '小蓝鲸｜记录心情')
@@ -105,13 +128,24 @@ test('findWorkspaceForSession / 权限读写', () => {
   assert.equal(applyStandardTranscriptMode(ctx), true)
 })
 
-test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () => {
+function makeSpawnCtx({
+  oldEffort = null,
+  newEffort = null,
+  reasoning = {
+    efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+    defaultEffort: 'high',
+  },
+} = {}) {
   const sessions = new Map([['old', { id: 'old' }]])
   const perms = new Map([[sessions.get('old'), 'workspace-write']])
   const selections = []
   let modes = []
   let createReq = null
   const renames = []
+  const modelState = {
+    old: { provider: 'deepseek', model: 'deepseek-chat', ...(oldEffort ? { reasoningEffort: oldEffort } : {}) },
+    new: { provider: 'deepseek', model: 'deepseek-chat', ...(newEffort ? { reasoningEffort: newEffort } : {}) },
+  }
   const ctx = {
     get(name) {
       if (name === 'sessionController') {
@@ -132,13 +166,17 @@ test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () =>
             return { title: req.title, seq: 1 }
           },
           async resolveAgent(id) {
-            const session = sessions.get(String(id))
+            const sid = String(id)
+            const session = sessions.get(sid)
             return {
               agent: {
                 session,
                 model: {
-                  current: () => ({ provider: 'deepseek', model: 'deepseek-chat' }),
-                  select: (sel) => { selections.push(sel) },
+                  current: () => ({ ...modelState[sid] }),
+                  select: (sel) => {
+                    selections.push(sel)
+                    modelState[sid] = { ...modelState[sid], ...sel }
+                  },
                 },
               },
             }
@@ -169,10 +207,28 @@ test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () =>
       if (name === 'presentationPolicy') {
         return { setMode(m) { modes.push(m) } }
       }
+      if (name === 'llm') {
+        return {
+          async resolveModelInfo() {
+            if (!reasoning) {
+              return { provider: 'trae', id: 'DeepSeek-V4-Flash' }
+            }
+            return {
+              provider: 'deepseek',
+              id: 'deepseek-chat',
+              reasoning,
+            }
+          },
+        }
+      }
       return null
     },
   }
+  return { ctx, sessions, selections, modes, getCreateReq: () => createReq, renames, perms }
+}
 
+test('openNewWorkspaceSession：有档默认 low；无档跳过', async () => {
+  const { ctx, sessions, selections, modes, getCreateReq, renames } = makeSpawnCtx()
   const opened = []
   const r = await openNewWorkspaceSession({
     get(name) {
@@ -190,8 +246,8 @@ test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () =>
   assert.equal(r.reasoningApplied, true)
   assert.equal(r.revealed, true)
   assert.equal(r.titled, true)
-  assert.deepEqual(createReq?.agentPreset, STANDARD_AGENT_PRESET)
-  assert.equal(createReq?.workspaceId, 'ws1')
+  assert.deepEqual(getCreateReq()?.agentPreset, STANDARD_AGENT_PRESET)
+  assert.equal(getCreateReq()?.workspaceId, 'ws1')
   assert.deepEqual(renames[0], { sessionId: 'new', title: '小蓝鲸｜交办' })
   assert.equal(sessions.get('new').title, '小蓝鲸｜交办')
   assert.deepEqual(modes, ['standard'])
@@ -202,6 +258,41 @@ test('openNewWorkspaceSession：workspaceId + 事后 rename 标题', async () =>
     model: 'deepseek-chat',
     reasoningEffort: 'low',
   })
+})
+
+test('openNewWorkspaceSession：沿用上一会话的高档', async () => {
+  const { ctx, selections } = makeSpawnCtx({ oldEffort: 'high' })
+  const r = await openNewWorkspaceSession({
+    get(name) {
+      if (name === 'uiWorkspace') return { openSession() {} }
+      return ctx.get(name)
+    },
+  }, { preferredId: 'old' })
+  assert.equal(r.ok, true)
+  assert.equal(r.reasoningApplied, true)
+  assert.equal(r.reasoningEffort, 'high')
+  assert.deepEqual(selections.at(-1), {
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    reasoningEffort: 'high',
+  })
+})
+
+test('openNewWorkspaceSession：trae 无思考档位时不写 reasoningEffort', async () => {
+  const { ctx, selections } = makeSpawnCtx({
+    oldEffort: 'low',
+    reasoning: null,
+  })
+  const r = await openNewWorkspaceSession({
+    get(name) {
+      if (name === 'uiWorkspace') return { openSession() {} }
+      return ctx.get(name)
+    },
+  }, { preferredId: 'old' })
+  assert.equal(r.ok, true)
+  assert.equal(r.reasoningApplied, false)
+  assert.equal(r.reasoningEffort, null)
+  assert.equal(selections.length, 0)
 })
 
 test('prepareFreshRunSession：失败时回落旧会话', async () => {
@@ -253,7 +344,7 @@ test('applySessionTitle：sessionController.rename', async () => {
   assert.equal(sessions.get('s1').title, '小蓝鲸｜带教｜记心情')
 })
 
-test('applySessionReasoningEffort：无 model 时 false', async () => {
+test('applySessionReasoningEffort：无 model 时不写', async () => {
   const ctx = {
     get(name) {
       if (name === 'sessionController') {
@@ -266,5 +357,34 @@ test('applySessionReasoningEffort：无 model 时 false', async () => {
       return null
     },
   }
-  assert.equal(await applySessionReasoningEffort(ctx, 'x', 'low'), false)
+  assert.deepEqual(await applySessionReasoningEffort(ctx, 'x', 'low'), {
+    applied: false,
+    effort: null,
+  })
+})
+
+test('readSessionReasoningEffort：读上一会话档位', async () => {
+  const ctx = {
+    get(name) {
+      if (name === 'sessionController') {
+        return {
+          async resolveAgent() {
+            return {
+              agent: {
+                model: {
+                  current: () => ({
+                    provider: 'deepseek',
+                    model: 'deepseek-chat',
+                    reasoningEffort: 'max',
+                  }),
+                },
+              },
+            }
+          },
+        }
+      }
+      return null
+    },
+  }
+  assert.equal(await readSessionReasoningEffort(ctx, 'old'), 'max')
 })
