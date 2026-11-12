@@ -80,6 +80,15 @@ test('已学目标 + 聊N轮 / 聊聊天 → 本地 task（不必写执行一下
   )
 })
 
+test('已学技能 + 业务问答（标准是什么）→ 本地 task', () => {
+  const goals = ['用丰田二手车项目 ftms-ucar360-platform 的代码来回答业务问题']
+  const q = '丰田项目的精英零售出库的标准是什么?'
+  assert.equal(hasSkillReplaySoftCue(q), true)
+  assert.equal(isLearnedGoalReplayIntent(q, goals), true)
+  assert.equal(localClassify(q, { learnedGoals: goals }), 'task')
+  assert.equal(localClassify('你叫什么名字呀', { learnedGoals: goals }), 'chat')
+})
+
 test('classifyUtterance：新开窗本地优先，不叫醒模型', async () => {
   let woke = 0
   const r = await classifyUtterance({ fake: true }, '开启一个新的窗口', {

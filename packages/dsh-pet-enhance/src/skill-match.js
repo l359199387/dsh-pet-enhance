@@ -11,6 +11,7 @@ import { isRunAutomationIntent } from './intent.js'
 import {
   findAutomationForQuery,
   goalMatchTokens,
+  isPlaceholderGoal,
   scoreGoalAgainstQuery,
 } from './learned-automation.js'
 import { skillsRoot } from './teach-skill.js'
@@ -155,19 +156,35 @@ export async function listTeachSkills(root = skillsRoot()) {
   return out
 }
 
+/** 匹配用文案：占位 goal 时改用 description / 理解摘要。 */
+export function skillMatchLabel(skill) {
+  if (!skill) return ''
+  const goal = String(skill.goal || '').trim()
+  if (goal && !isPlaceholderGoal(goal)) return goal
+  const desc = String(skill.description || '').trim()
+  if (desc) return desc
+  const summary = String(skill.summary || '').trim()
+  if (summary) return summary.slice(0, 120)
+  return goal
+}
+
 export async function listSkillGoals(root = skillsRoot()) {
   const list = await listTeachSkills(root)
-  return list.map((s) => s.goal).filter(Boolean).slice(0, 12)
+  return list.map((s) => skillMatchLabel(s)).filter(Boolean).slice(0, 12)
 }
 
 function scoreSkillAgainstQuery(skill, q) {
-  let score = scoreGoalAgainstQuery(skill.goal, q)
+  let score = scoreGoalAgainstQuery(skillMatchLabel(skill), q)
   score = Math.max(score, scoreGoalAgainstQuery(skill.description, q))
+  score = Math.max(score, scoreGoalAgainstQuery(skill.summary, q))
   for (const a of skill.aliases || []) {
     score = Math.max(score, scoreGoalAgainstQuery(a, q))
     if (q.includes(String(a).toLowerCase())) score += Math.min(String(a).length, 8)
   }
-  for (const token of goalMatchTokens(skill.goal)) {
+  for (const token of goalMatchTokens(skillMatchLabel(skill))) {
+    if (q.includes(token)) score += Math.min(token.length, 8)
+  }
+  for (const token of goalMatchTokens(skill.description || '')) {
     if (q.includes(token)) score += Math.min(token.length, 8)
   }
   return score
@@ -244,10 +261,11 @@ export function skillToRunMeta(skill) {
       capability: { skillName: null, scripts: [] },
     }
   }
+  const label = skillMatchLabel(skill)
   return {
     legacy: false,
     skillName: skill.skillName || skill.name,
-    goal: skill.goal,
+    goal: label || skill.goal,
     understanding: {
       summary: skill.summary || '',
       fastPlan: skill.fastPlan || '',

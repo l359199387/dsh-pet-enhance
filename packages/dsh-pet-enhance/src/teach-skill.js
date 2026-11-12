@@ -69,8 +69,13 @@ export function skillSlugFromGoal(goal, fallbackId = '') {
  */
 export function buildTeachSkillMarkdown(spec) {
   const name = String(spec.name || 'pe-learn-x')
-  const goal = clip(spec.goal, 120)
   const summary = clip(spec.summary, 800)
+  // 带教占位 goal 落盘时改用理解摘要，否则「再问业务问题」永远匹配不上
+  let goalRaw = String(spec.goal || '').trim()
+  if (!goalRaw || /完成主人要教|主人要教的这件事/.test(goalRaw)) {
+    goalRaw = summary.split(/[。；;\n]/)[0]?.trim() || goalRaw || '未命名技能'
+  }
+  const goal = clip(goalRaw, 120)
   const fastPlan = clip(spec.fastPlan, 600)
   const constraints = Array.isArray(spec.constraints)
     ? spec.constraints.map((c) => clip(c, 120)).filter(Boolean).slice(0, 12)

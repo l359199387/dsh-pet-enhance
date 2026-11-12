@@ -257,7 +257,7 @@ export async function assertLearnedAutomationPair(home, id) {
   return { ok: true, learn, task, playbook }
 }
 
-/** 从目标里抠可匹配关键词（B站 / 心情 等），避免整句 goal 对不上口语。 */
+/** 从目标里抠可匹配关键词（B站 / 心情 / 中文 bigram 等），避免整句 goal 对不上口语。 */
 export function goalMatchTokens(goal) {
   const g = String(goal || '').toLowerCase().replace(/\s+/g, '')
   if (!g) return []
@@ -269,8 +269,14 @@ export function goalMatchTokens(goal) {
   for (const tip of [
     'b站', '哔哩哔哩', 'bilibili', '心情', '记事本', '浏览器', 'edge', 'chrome',
     '豆包', 'doubao', '微信', 'qq', 'notepad',
+    '丰田', '二手车', 'ucar360', '出库', '零售',
   ]) {
     if (g.includes(tip)) out.add(tip)
+  }
+  // 中文 bigram：否则「丰田项目代码」对不上「丰田项目的…」
+  const cjk = g.replace(/[^\u4e00-\u9fff]/g, '')
+  for (let i = 0; i < cjk.length - 1 && out.size < 48; i += 1) {
+    out.add(cjk.slice(i, i + 2))
   }
   // 「我教你看看B站」→ 看看b站 / b站
   const stripped = g
@@ -282,10 +288,18 @@ export function goalMatchTokens(goal) {
   return [...out].filter((t) => t.length >= 2)
 }
 
+/** 占位 goal：带教未抽出真实目标时不要拿去匹配。 */
+export function isPlaceholderGoal(goal) {
+  const g = String(goal || '').trim()
+  if (!g) return true
+  return /完成主人要教|主人要教的这件事|做成主人教的/.test(g)
+}
+
 /** 供 skill-match / 旧 learned 共用。 */
 export function scoreGoalAgainstQuery(goal, q) {
   const g = String(goal || '').toLowerCase()
   if (!g || !q) return 0
+  if (isPlaceholderGoal(g)) return 0
   let score = 0
   if (q.includes(g) || g.includes(q)) score = Math.max(score, g.length)
   // 「继续去看看B站」→ 去掉续跑口令后再比

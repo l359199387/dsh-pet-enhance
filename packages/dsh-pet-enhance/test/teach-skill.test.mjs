@@ -79,3 +79,28 @@ test('parseSkillFrontmatter', () => {
   assert.equal(meta.status, 'verified')
   assert.match(body, /理解摘要/)
 })
+
+test('占位 goal 落盘改用理解摘要；业务问答可匹配', async () => {
+  const prev = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  try {
+    await writeTeachSkillFile({
+      goal: '完成主人要教的这件事',
+      name: 'toyota-qa',
+      summary: '教我用丰田二手车项目 ftms-ucar360-platform 的代码来回答业务问题，只看不改。',
+      teachSessionId: 'sess-toyota',
+    })
+    const md = readFileSync(join(root, 'skills', 'toyota-qa', 'SKILL.md'), 'utf8')
+    assert.match(md, /丰田二手车/)
+    assert.doesNotMatch(md, /goal: "完成主人要教的这件事"/)
+    const hit = await findSkillForQuery('丰田项目的精英零售出库的标准是什么?', {
+      root: join(root, 'skills'),
+      allowLegacyLearned: false,
+    })
+    assert.ok(hit)
+    assert.equal(hit.name, 'toyota-qa')
+  } finally {
+    if (prev === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prev
+  }
+})
