@@ -34,7 +34,8 @@ Errors: `~/.dsh/pet-enhance-error.log`
 
 ## How to use
 
-Talk to the pet:
+**Double-click the pet** → opens the chat window (same as right-click **Chat** / hover `L`).  
+Single-click still does the bounce; coaching, glance, and tasks are all spoken in that chat.
 
 | Goal | Say |
 |---|---|
