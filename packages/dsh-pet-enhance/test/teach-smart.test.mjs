@@ -13,9 +13,9 @@ import { parseTeachDigestReply } from '../src/teach-bridge.js'
 
 test('parseTeachSmartReply：OK + FAST + NAME', () => {
   const named = parseTeachSmartReply(
-    'OK: 和豆包聊天\nFAST: 打开豆包会话\nNAME: 和豆包姐姐聊天',
+    'OK: 和豆包聊天\nFAST: 打开豆包会话\nNAME: chat-doubao',
   )
-  assert.equal(named.name, '和豆包姐姐聊天')
+  assert.equal(named.name, 'chat-doubao')
   const r = parseTeachSmartReply('OK: 每天记心情\nFAST: 写文件到「每日心情/日期.txt」')
   assert.equal(r.name, '')
   assert.equal(r.ok, true)

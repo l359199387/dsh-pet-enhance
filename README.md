@@ -63,6 +63,10 @@
 插件旁证数据：`~/.dsh/pet-enhance/`  
 整理技能：打开 **dsh-mnemon（记忆系统）**。
 
+> **技能 `name` 必须是英文 kebab**（如 `chat-doubao`）。这是 DSH 原生限制：中文 `name` 会被跳过、加载不到。  
+> 中文意图写在 `goal` / `description` / 正文标题里；调用时说中文口令即可匹配。  
+> 若坚持要用中文目录名，需另装社区插件 [dsh-chinese-skill-patch](https://github.com/FeatherHunter/dsh-chinese-skill-patch)。
+
 ---
 
 ## 注意

@@ -42,7 +42,7 @@ test('对话带教：做成了 → 写入 skills，不写 learned 权威', async
         return { ok: true, text: 'open' }
       }
       if (last.includes('带教归纳')) {
-        return { ok: true, text: 'OK: 写今日桌面笔记\nFAST: 用写文件创建今日笔记\nNAME: 写今日桌面笔记' }
+        return { ok: true, text: 'OK: 写今日桌面笔记\nFAST: 用写文件创建今日笔记\nNAME: desktop-mood-note' }
       }
       if (last.includes('脚本拆分')) {
         return { ok: true, text: 'NONE' }
@@ -72,7 +72,7 @@ test('对话带教：做成了 → 写入 skills，不写 learned 权威', async
     assert.equal(learnedIdx.length, 0, '不应新建 learned index')
     const skills = await listTeachSkills(join(home, 'skills'))
     assert.equal(skills.length, 1)
-    assert.equal(skills[0].name, '写今日桌面笔记')
+    assert.equal(skills[0].name, 'desktop-mood-note')
     assert.match(skills[0].goal || skills[0].description || '', /心情|桌面|笔记/)
     assert.equal(skills[0].status, 'verified')
     assert.ok(existsSync(join(home, 'skills', skills[0].name, 'SKILL.md')))
@@ -172,7 +172,7 @@ test('对话带教：我说「我教完了」即写入技能，不依赖模型�
       // 故意回 step：本地收束必须压过模型（不应走到分流叫醒）
       if (last.includes('带教分流')) return { ok: true, text: 'step' }
       if (last.includes('带教归纳')) {
-        return { ok: true, text: 'OK: 打开微博热搜并总结\nFAST: 打开 s.weibo.com/top/summary\nNAME: 微博热搜总结' }
+        return { ok: true, text: 'OK: 打开微博热搜并总结\nFAST: 打开 s.weibo.com/top/summary\nNAME: weibo-hot-search' }
       }
       if (last.includes('脚本拆分')) return { ok: true, text: 'NONE' }
       if (last.includes('可执行的本步指示')) {
@@ -218,7 +218,7 @@ test('对话带教：学会后的【带教完成】伪用户行不得再开 coac
       if (last.includes('带教抽目标')) return { ok: true, text: 'GOAL: 记心情' }
       if (last.includes('带教分流')) return { ok: true, text: 'done' }
       if (last.includes('带教归纳')) {
-        return { ok: true, text: 'OK: 记今日心情\nFAST: 写文件\nNAME: 记今日心情' }
+        return { ok: true, text: 'OK: 记今日心情\nFAST: 写文件\nNAME: daily-mood' }
       }
       if (last.includes('脚本拆分')) return { ok: true, text: 'NONE' }
       return { ok: true, text: 'ok' }

@@ -6,7 +6,8 @@ import { after, test } from 'node:test'
 import {
   buildTeachSkillMarkdown,
   ensureUniqueSkillName,
-  normalizeSkillName,
+  intentSlugFromText,
+  normalizeSkillSlug,
   skillSlugFromGoal,
   writeTeachSkillFile,
 } from '../src/teach-skill.js'
@@ -17,11 +18,11 @@ after(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-test('技能名：中文意图优先', () => {
-  assert.equal(normalizeSkillName('和豆包姐姐聊天'), '和豆包姐姐聊天')
-  assert.equal(normalizeSkillName('我来教你一下看微博热搜'), '看微博热搜')
-  assert.equal(skillSlugFromGoal('和豆包姐姐聊天', 'abc1234567890'), '和豆包姐姐聊天')
-  assert.equal(skillSlugFromGoal('daily mood note', 'x'), 'dailymoodnote')
+test('技能名：英文 kebab（DSH 不支持中文 name）', () => {
+  assert.equal(normalizeSkillSlug('Chat Doubao!!'), 'chat-doubao')
+  assert.equal(intentSlugFromText('和豆包姐姐聊天'), 'doubao-chat')
+  assert.equal(skillSlugFromGoal('和豆包姐姐聊天', 'abc1234567890'), 'doubao-chat')
+  assert.equal(skillSlugFromGoal('daily mood note', 'x'), 'daily-mood-note')
   assert.match(skillSlugFromGoal('完成主人要教的这件事', 'abc1234567890'), /^pe-learn-/)
 })
 
@@ -29,9 +30,9 @@ test('ensureUniqueSkillName：重名加后缀', () => {
   const prev = process.env.DSH_HOME
   process.env.DSH_HOME = root
   try {
-    assert.equal(ensureUniqueSkillName('和豆包姐姐聊天'), '和豆包姐姐聊天')
-    mkdirSync(join(root, 'skills', '和豆包姐姐聊天'), { recursive: true })
-    assert.equal(ensureUniqueSkillName('和豆包姐姐聊天'), '和豆包姐姐聊天-2')
+    assert.equal(ensureUniqueSkillName('doubao-chat'), 'doubao-chat')
+    mkdirSync(join(root, 'skills', 'doubao-chat'), { recursive: true })
+    assert.equal(ensureUniqueSkillName('doubao-chat'), 'doubao-chat-2')
   } finally {
     if (prev === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prev
@@ -44,14 +45,14 @@ test('writeTeachSkillFile + findSkillForQuery', async () => {
   try {
     const written = await writeTeachSkillFile({
       goal: '记录每日心情',
-      name: '记录每日心情',
+      name: 'daily-mood-note',
       summary: '写到桌面日记',
       fastPlan: '写文件',
       teachSessionId: 'sess1',
       aliases: ['心情'],
     })
-    assert.equal(written.name, '记录每日心情')
-    const md = readFileSync(join(root, 'skills', '记录每日心情', 'SKILL.md'), 'utf8')
+    assert.equal(written.name, 'daily-mood-note')
+    const md = readFileSync(join(root, 'skills', 'daily-mood-note', 'SKILL.md'), 'utf8')
     assert.match(md, /status: verified/)
     assert.match(md, /source: pet-teach/)
     assert.match(md, /windows_computer_use_/)
@@ -65,11 +66,11 @@ test('writeTeachSkillFile + findSkillForQuery', async () => {
       allowLegacyLearned: false,
     })
     assert.ok(hit)
-    assert.equal(hit.name, '记录每日心情')
+    assert.equal(hit.name, 'daily-mood-note')
 
     await writeTeachSkillFile({
       goal: '和豆包聊天',
-      name: '和豆包聊天',
+      name: 'chat-doubao',
       summary: '闲聊',
       teachSessionId: 'sess2',
     })
@@ -78,7 +79,7 @@ test('writeTeachSkillFile + findSkillForQuery', async () => {
       allowLegacyLearned: false,
     })
     assert.ok(softHit)
-    assert.equal(softHit.name, '和豆包聊天')
+    assert.equal(softHit.name, 'chat-doubao')
   } finally {
     if (prev === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prev
@@ -87,13 +88,13 @@ test('writeTeachSkillFile + findSkillForQuery', async () => {
 
 test('parseSkillFrontmatter', () => {
   const raw = buildTeachSkillMarkdown({
-    name: '打开B站',
+    name: 'open-bilibili',
     goal: '打开B站',
     summary: '开网页',
     aliases: ['b站'],
   })
   const { meta, body } = parseSkillFrontmatter(raw)
-  assert.equal(meta.name, '打开B站')
+  assert.equal(meta.name, 'open-bilibili')
   assert.equal(meta.status, 'verified')
   assert.match(body, /理解摘要/)
 })
@@ -104,11 +105,11 @@ test('占位 goal 落盘改用理解摘要；业务问答可匹配', async () =>
   try {
     await writeTeachSkillFile({
       goal: '完成主人要教的这件事',
-      name: '丰田二手车代码问答',
+      name: 'toyota-ucar-qa',
       summary: '教我用丰田二手车项目 ftms-ucar360-platform 的代码来回答业务问题，只看不改。',
       teachSessionId: 'sess-toyota',
     })
-    const md = readFileSync(join(root, 'skills', '丰田二手车代码问答', 'SKILL.md'), 'utf8')
+    const md = readFileSync(join(root, 'skills', 'toyota-ucar-qa', 'SKILL.md'), 'utf8')
     assert.match(md, /丰田二手车/)
     assert.doesNotMatch(md, /goal: "完成主人要教的这件事"/)
     const hit = await findSkillForQuery('丰田项目的精英零售出库的标准是什么?', {
@@ -116,7 +117,7 @@ test('占位 goal 落盘改用理解摘要；业务问答可匹配', async () =>
       allowLegacyLearned: false,
     })
     assert.ok(hit)
-    assert.equal(hit.name, '丰田二手车代码问答')
+    assert.equal(hit.name, 'toyota-ucar-qa')
   } finally {
     if (prev === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prev

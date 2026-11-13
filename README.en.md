@@ -61,6 +61,8 @@ Next time ask it to run → match skill
 
 Skills: `~/.dsh/skills/` · Sidecar data: `~/.dsh/pet-enhance/` · Manage via **dsh-mnemon**.
 
+> Skill `name` must be English kebab-case (e.g. `chat-doubao`) — a DSH core rule; Chinese `name` is skipped. Keep Chinese intent in `goal` / `description` / title. For Chinese directory names, install [dsh-chinese-skill-patch](https://github.com/FeatherHunter/dsh-chinese-skill-patch).
+
 ---
 
 ## Notes

@@ -42,66 +42,102 @@ export const MNEMON_MISSING_HINT =
   '建议安装 dsh-mnemon 以管理/进化技能（本插件不再提供「我学会的」侧栏）。'
 
 /**
- * 技能目录 / frontmatter name：优先中文意图短名。
- * 去掉路径非法字符；保留中文、字母数字与少量连接符。
+ * DSH 原生 skill name 只认 kebab：^[a-z0-9]+(?:-[a-z0-9]+)*$
+ * 中文目录名会被 dsh-skill-filesystem 跳过（除非另装 chinese-skill-patch）。
  */
-export function normalizeSkillName(raw, maxLen = 24) {
+export function normalizeSkillSlug(raw, maxLen = 48) {
   let s = String(raw || '')
     .trim()
-    .replace(/^["「『]|["」』]$/g, '')
-    .replace(/[\\/:*?"<>|]+/g, '')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s+/g, '')
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
-  // 剥套话，留下意图核
-  s = s
-    .replace(/^(?:我来)?(?:教你(?:一下|一遍)?)?/u, '')
-    .replace(/^(?:请|帮我|给我)/u, '')
-    .replace(/[。！？.!?]+$/u, '')
-    .trim()
+    .slice(0, maxLen)
+    .replace(/-+$/g, '')
   if (!s) return ''
-  // 按码点截断，避免半截 emoji
-  const points = Array.from(s)
-  if (points.length > maxLen) s = points.slice(0, maxLen).join('')
-  if (s.length < 2) return ''
-  if (/完成主人要教|主人要教的这件事|未命名技能|^pe-learn-/i.test(s)) return ''
+  if (/^[0-9]/.test(s)) s = `s-${s}`
+  if (!/^[a-z][a-z0-9-]*$/.test(s) || s.length < 2) return ''
   return s
 }
 
-/** @deprecated 兼容旧测试/调用；请用 normalizeSkillName */
-export function normalizeSkillSlug(raw, maxLen = 48) {
-  return normalizeSkillName(raw, maxLen)
+/** @deprecated 同 normalizeSkillSlug（DSH 不支持中文 name） */
+export function normalizeSkillName(raw, maxLen = 48) {
+  return normalizeSkillSlug(raw, maxLen)
 }
 
-/** @deprecated 中文名优先后不再做英文 token 拼装 */
+/** 中文意图 → 英文 kebab token（本地回落；最终仍须 a-z0-9-）。 */
+const INTENT_TOKEN_RE = [
+  [/豆包/, 'doubao'],
+  [/微信|weixin/i, 'wechat'],
+  [/微博/, 'weibo'],
+  [/热搜/, 'hot-search'],
+  [/open\s*vpn|openvpn/i, 'openvpn'],
+  [/重装|卸载|安装/, 'reinstall'],
+  [/黄金|金价/, 'gold'],
+  [/资讯|新闻/, 'news'],
+  [/丰田|二手车|ucar/, 'toyota-ucar'],
+  [/代码|项目/, 'code'],
+  [/业务|标准|条件|问答/, 'qa'],
+  [/b\s*站|哔哩|bilibili/i, 'bilibili'],
+  [/记事本|notepad/i, 'notepad'],
+  [/桌面/, 'desktop'],
+  [/心情|日记|笔记/, 'mood'],
+  [/聊天|闲聊|沟通/, 'chat'],
+  [/总结|摘要|概括/, 'summarize'],
+  [/打开|浏览|访问/, 'open'],
+  [/保存|写入|记录/, 'save'],
+]
+
+/**
+ * 从中文/混合文本抽英文意图 slug（如「和豆包姐姐聊天」→ doubao-chat）。
+ */
 export function intentSlugFromText(text) {
-  return normalizeSkillName(text)
+  const s = String(text || '').trim()
+  if (!s) return ''
+  const hits = []
+  for (const [re, tok] of INTENT_TOKEN_RE) {
+    if (re.test(s) && !hits.includes(tok)) hits.push(tok)
+    if (hits.length >= 4) break
+  }
+  return normalizeSkillSlug(hits.join('-'))
 }
 
 /**
- * goal/摘要 → 中文意图名；失败才 pe-learn-<tail>。
+ * goal/摘要 → 英文意图 kebab；失败才 pe-learn-<tail>。
+ * 展示用中文请写 goal / description / 正文标题，不要写进 name。
  * @param {string} goal
  * @param {string} [fallbackId]
  */
 export function skillSlugFromGoal(goal, fallbackId = '') {
-  const named = normalizeSkillName(goal)
-  if (named) return named
+  const raw = String(goal || '').trim()
+  if (raw && !/完成主人要教|主人要教的这件事|未命名技能/.test(raw)) {
+    const ascii = normalizeSkillSlug(
+      raw
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/[^a-z0-9-]+/g, '-'),
+    )
+    if (ascii.length >= 3) return ascii
+    const intent = intentSlugFromText(raw)
+    if (intent.length >= 3) return intent
+  }
   return skillSlugFromId(fallbackId || goal || 'x')
 }
 
 /**
- * 目录已存在则加「-2」「-3」…，避免覆盖旧技能。
+ * 目录已存在则加 -2/-3…，避免覆盖旧技能。
  * @param {string} name
  * @param {string} [root]
  */
 export function ensureUniqueSkillName(name, root = skillsRoot()) {
-  const base = normalizeSkillName(name) || '未命名技能'
+  const base = normalizeSkillSlug(name) || 'skill'
   if (!existsSync(join(root, base))) return base
   for (let i = 2; i < 80; i += 1) {
-    const cand = `${Array.from(base).slice(0, 20).join('')}-${i}`
+    const cand = normalizeSkillSlug(`${base.slice(0, 40)}-${i}`) || `${base}-${i}`
     if (!existsSync(join(root, cand))) return cand
   }
-  return `${Array.from(base).slice(0, 16).join('')}-${Date.now().toString(36).slice(-4)}`
+  return normalizeSkillSlug(`${base.slice(0, 36)}-${Date.now().toString(36).slice(-4)}`) || base
 }
 
 /**
@@ -119,7 +155,7 @@ export function ensureUniqueSkillName(name, root = skillsRoot()) {
  * }} spec
  */
 export function buildTeachSkillMarkdown(spec) {
-  const name = String(spec.name || '未命名技能')
+  const name = String(spec.name || 'skill')
   const summary = clip(spec.summary, 800)
   // 带教占位 goal 落盘时改用理解摘要，否则「再问业务问题」永远匹配不上
   let goalRaw = String(spec.goal || '').trim()
