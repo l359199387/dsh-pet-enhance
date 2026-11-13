@@ -70,7 +70,7 @@ export function buildCoachInducePrompt(goal, logRows, constraints = []) {
     + '回复三行：\n'
     + 'OK: <一两句在教什么 / 怎么做成>\n'
     + 'FAST: <最快路径；可写多步系统能力；没有就写「按说明变通」>\n'
-    + 'NAME: <英文 kebab 技能目录名，总结意图，如 chat-doubao / weibo-hot-search；仅 a-z0-9-，≤40 字，禁止 pe-learn 随机串>\n'
+    + 'NAME: <中文技能短名，总结意图，如「和豆包姐姐聊天」「微博热搜总结」；≤16 字，禁止 pe-learn 随机串、禁止纯英文 kebab>\n'
     + '禁止调用工具。'
   )
 }

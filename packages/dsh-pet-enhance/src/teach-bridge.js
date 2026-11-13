@@ -55,8 +55,7 @@ import {
   mnemonBubbleSuffix,
   promoteCoachLogToSkill,
   ensureUniqueSkillName,
-  intentSlugFromText,
-  normalizeSkillSlug,
+  normalizeSkillName,
   skillSlugFromGoal,
 } from './teach-skill.js'
 import {
@@ -588,11 +587,11 @@ export function createTeachBridge(options) {
       }
     }
 
-    // 技能目录名：归纳 NAME → 意图关键词 → goal/摘要语义 → 最后才 pe-learn
+    // 技能目录名：归纳中文 NAME → goal/摘要意图 → 最后才 pe-learn
     const skillName = ensureUniqueSkillName(
-      normalizeSkillSlug(inducedName)
-      || intentSlugFromText(`${savedGoal} ${summary}`)
-      || skillSlugFromGoal(summary)
+      normalizeSkillName(inducedName)
+      || normalizeSkillName(savedGoal)
+      || normalizeSkillName(String(summary || '').split(/[。；;\n]/)[0] || '')
       || skillSlugFromGoal(savedGoal, id),
     )
     const harness = await registerHarnessAutomation(options.ctx, {
