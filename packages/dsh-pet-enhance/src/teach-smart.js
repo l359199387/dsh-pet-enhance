@@ -39,23 +39,26 @@ export function buildTeachSmartDigestPrompt(goal, narrative, images) {
 
 /**
  * @param {string} text
- * @returns {{ ok: boolean, needMore: boolean, summary: string, fastPlan: string }}
+ * @returns {{ ok: boolean, needMore: boolean, summary: string, fastPlan: string, name: string }}
  */
 export function parseTeachSmartReply(text) {
   const raw = String(text || '').trim()
-  if (!raw) return { ok: false, needMore: true, summary: '', fastPlan: '' }
+  if (!raw) return { ok: false, needMore: true, summary: '', fastPlan: '', name: '' }
   if (/NEED_MORE|看不清|不够|再给图/i.test(raw) && !/^OK\s*[:：]/im.test(raw)) {
-    return { ok: false, needMore: true, summary: raw.slice(0, 200), fastPlan: '' }
+    return { ok: false, needMore: true, summary: raw.slice(0, 200), fastPlan: '', name: '' }
   }
   const okM = raw.match(/OK\s*[:：]\s*([^\n]+)/i)
   const fastM = raw.match(/FAST\s*[:：]\s*([\s\S]+?)(?=\n\s*[A-Z]{2,}\s*[:：]|$)/i)
+  const nameM = raw.match(/NAME\s*[:：]\s*([^\n]+)/i)
   const summary = (okM ? okM[1] : raw.split('\n')[0]).trim().slice(0, 500)
   const fastPlan = (fastM ? fastM[1] : '').trim().slice(0, 600)
+  const name = (nameM ? nameM[1] : '').trim().replace(/^[`'"「]|[`'"」]$/g, '').slice(0, 48)
   return {
     ok: true,
     needMore: false,
     summary,
     fastPlan,
+    name,
   }
 }
 

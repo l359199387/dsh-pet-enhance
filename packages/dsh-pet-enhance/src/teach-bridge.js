@@ -54,6 +54,9 @@ import { prepareFreshRunSession } from './session-spawn.js'
 import {
   mnemonBubbleSuffix,
   promoteCoachLogToSkill,
+  ensureUniqueSkillName,
+  intentSlugFromText,
+  normalizeSkillSlug,
   skillSlugFromGoal,
 } from './teach-skill.js'
 import {
@@ -527,6 +530,8 @@ export function createTeachBridge(options) {
     const inducePrompt = buildCoachInducePrompt(savedGoal, logRows, mergedConstraints)
     let summary = `带教完成：${savedGoal}`
     let fastPlan = ''
+    /** @type {string} */
+    let inducedName = ''
     const woken = await wake(options.ctx, {
       text: inducePrompt,
       sessionId: induceSessionId || undefined,
@@ -544,6 +549,7 @@ export function createTeachBridge(options) {
         const parsed = parseCoachInduceReply(reply.text)
         if (parsed.summary) summary = parsed.summary
         if (parsed.fastPlan) fastPlan = parsed.fastPlan
+        if (parsed.name) inducedName = parsed.name
       }
     }
 
@@ -551,6 +557,7 @@ export function createTeachBridge(options) {
       kind: 'induce',
       summary,
       fastPlan,
+      name: inducedName || undefined,
     })
 
     /** @type {object[]} */
@@ -581,7 +588,13 @@ export function createTeachBridge(options) {
       }
     }
 
-    const skillName = skillSlugFromGoal(savedGoal, id)
+    // 技能目录名：归纳 NAME → 意图关键词 → goal/摘要语义 → 最后才 pe-learn
+    const skillName = ensureUniqueSkillName(
+      normalizeSkillSlug(inducedName)
+      || intentSlugFromText(`${savedGoal} ${summary}`)
+      || skillSlugFromGoal(summary)
+      || skillSlugFromGoal(savedGoal, id),
+    )
     const harness = await registerHarnessAutomation(options.ctx, {
       goal: savedGoal,
       learnedId: id,

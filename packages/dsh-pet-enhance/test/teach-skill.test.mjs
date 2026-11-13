@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import {
   buildTeachSkillMarkdown,
+  ensureUniqueSkillName,
+  intentSlugFromText,
+  normalizeSkillSlug,
   skillSlugFromGoal,
   writeTeachSkillFile,
 } from '../src/teach-skill.js'
@@ -15,9 +18,27 @@ after(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-test('skillSlugFromGoal：语义名或 pe-learn 回落', () => {
+test('skillSlugFromGoal：语义名 / 中文意图 / pe-learn 回落', () => {
   assert.equal(skillSlugFromGoal('daily mood note', 'x'), 'daily-mood-note')
-  assert.match(skillSlugFromGoal('记录每日心情', 'abc1234567890'), /^pe-learn-/)
+  assert.equal(normalizeSkillSlug('Chat Doubao!!'), 'chat-doubao')
+  assert.equal(intentSlugFromText('和豆包姐姐聊天'), 'doubao-chat')
+  assert.equal(skillSlugFromGoal('和豆包姐姐聊天', 'abc1234567890'), 'doubao-chat')
+  assert.equal(skillSlugFromGoal('用极速浏览器看微博热搜', 'x'), 'weibo-hot-search-open')
+  assert.match(skillSlugFromGoal('完成主人要教的这件事', 'abc1234567890'), /^pe-learn-/)
+})
+
+test('ensureUniqueSkillName：重名加后缀', () => {
+  const prev = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  try {
+    const a = ensureUniqueSkillName('doubao-chat')
+    assert.equal(a, 'doubao-chat')
+    mkdirSync(join(root, 'skills', 'doubao-chat'), { recursive: true })
+    assert.equal(ensureUniqueSkillName('doubao-chat'), 'doubao-chat-2')
+  } finally {
+    if (prev === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prev
+  }
 })
 
 test('writeTeachSkillFile + findSkillForQuery', async () => {

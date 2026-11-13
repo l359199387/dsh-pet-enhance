@@ -41,16 +41,92 @@ export const MNEMON_SKILL_HINT =
 export const MNEMON_MISSING_HINT =
   '建议安装 dsh-mnemon 以管理/进化技能（本插件不再提供「我学会的」侧栏）。'
 
-/** goal → kebab；失败回落 pe-learn-<tail>。 */
-export function skillSlugFromGoal(goal, fallbackId = '') {
-  const raw = String(goal || '')
+/** DSH skill 目录名：仅 a-z0-9-，须以字母开头。 */
+export function normalizeSkillSlug(raw, maxLen = 48) {
+  let s = String(raw || '')
+    .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[_\s]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
-  const ascii = raw.replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 48)
-  if (ascii.length >= 3 && /^[a-z][a-z0-9-]*$/.test(ascii)) return ascii
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLen)
+    .replace(/-+$/g, '')
+  if (!s) return ''
+  if (/^[0-9]/.test(s)) s = `s-${s}`
+  if (!/^[a-z][a-z0-9-]*$/.test(s) || s.length < 2) return ''
+  return s
+}
+
+/** 中文意图 → 英文 token（无拼音库时的本地回落）。 */
+const INTENT_TOKEN_RE = [
+  [/豆包/, 'doubao'],
+  [/微信|weixin/i, 'wechat'],
+  [/微博/, 'weibo'],
+  [/热搜/, 'hot-search'],
+  [/b\s*站|哔哩|bilibili/i, 'bilibili'],
+  [/记事本|notepad/i, 'notepad'],
+  [/桌面/, 'desktop'],
+  [/心情|日记|笔记/, 'mood'],
+  [/聊天|闲聊|沟通/, 'chat'],
+  [/总结|摘要|概括/, 'summarize'],
+  [/打开|浏览|访问/, 'open'],
+  [/保存|写入|记录/, 'save'],
+  [/截图|看屏|看一眼/, 'glance'],
+  [/搜索|查找/, 'search'],
+  [/发送|发给/, 'send'],
+  [/代码|项目/, 'code'],
+  [/标准|条件|业务/, 'qa'],
+]
+
+/**
+ * 从中文/混合 goal 抽可拼的意图 slug（如「和豆包姐姐聊天」→ doubao-chat）。
+ */
+export function intentSlugFromText(text) {
+  const s = String(text || '').trim()
+  if (!s) return ''
+  const hits = []
+  for (const [re, tok] of INTENT_TOKEN_RE) {
+    if (re.test(s) && !hits.includes(tok)) hits.push(tok)
+    if (hits.length >= 4) break
+  }
+  return normalizeSkillSlug(hits.join('-'))
+}
+
+/**
+ * goal/摘要 → 意图 kebab 名；失败才 pe-learn-<tail>。
+ * @param {string} goal
+ * @param {string} [fallbackId]
+ */
+export function skillSlugFromGoal(goal, fallbackId = '') {
+  const raw = String(goal || '').trim()
+  if (raw && !/完成主人要教|主人要教的这件事|未命名技能/.test(raw)) {
+    const ascii = normalizeSkillSlug(
+      raw
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/[^a-z0-9-]+/g, '-'),
+    )
+    if (ascii.length >= 3) return ascii
+    const intent = intentSlugFromText(raw)
+    if (intent.length >= 3) return intent
+  }
   return skillSlugFromId(fallbackId || goal || 'x')
+}
+
+/**
+ * 目录已存在则加 -2/-3…，避免覆盖旧技能。
+ * @param {string} name
+ * @param {string} [root]
+ */
+export function ensureUniqueSkillName(name, root = skillsRoot()) {
+  const base = normalizeSkillSlug(name) || 'skill'
+  if (!existsSync(join(root, base))) return base
+  for (let i = 2; i < 80; i += 1) {
+    const cand = normalizeSkillSlug(`${base.slice(0, 40)}-${i}`) || `${base}-${i}`
+    if (!existsSync(join(root, cand))) return cand
+  }
+  return normalizeSkillSlug(`${base.slice(0, 36)}-${Date.now().toString(36).slice(-4)}`) || base
 }
 
 /**

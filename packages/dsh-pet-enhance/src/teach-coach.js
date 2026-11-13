@@ -66,10 +66,11 @@ export function buildCoachInducePrompt(goal, logRows, constraints = []) {
     + `【带教归纳·仅学习·禁止工具】目标：「${String(goal || '').slice(0, 80)}」。\n`
     + (cons ? `约束：${cons}\n` : '')
     + `过程摘要：\n${lines || '（无）'}\n`
-    + '请归纳事项说明与最快路径（优先系统能力，不要坐标脚本）。\n'
-    + '回复两行：\n'
+    + '请归纳事项说明、最快路径，以及技能短名（优先系统能力，不要坐标脚本）。\n'
+    + '回复三行：\n'
     + 'OK: <一两句在教什么 / 怎么做成>\n'
     + 'FAST: <最快路径；可写多步系统能力；没有就写「按说明变通」>\n'
+    + 'NAME: <英文 kebab 技能目录名，总结意图，如 chat-doubao / weibo-hot-search；仅 a-z0-9-，≤40 字，禁止 pe-learn 随机串>\n'
     + '禁止调用工具。'
   )
 }

@@ -11,8 +11,13 @@ import {
 import { createGlanceState } from '../src/state.js'
 import { parseTeachDigestReply } from '../src/teach-bridge.js'
 
-test('parseTeachSmartReply：OK + FAST', () => {
+test('parseTeachSmartReply：OK + FAST + NAME', () => {
+  const named = parseTeachSmartReply(
+    'OK: 和豆包聊天\nFAST: 打开豆包会话\nNAME: chat-doubao',
+  )
+  assert.equal(named.name, 'chat-doubao')
   const r = parseTeachSmartReply('OK: 每天记心情\nFAST: 写文件到「每日心情/日期.txt」')
+  assert.equal(r.name, '')
   assert.equal(r.ok, true)
   assert.match(r.summary, /心情/)
   assert.match(r.fastPlan, /写文件/)

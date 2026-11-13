@@ -21,7 +21,7 @@ function clip(s, n) {
   return t.length <= n ? t : `${t.slice(0, n - 1)}…`
 }
 
-/** DSH skill 名必须 kebab-case（仅 a-z0-9-）。 */
+/** 无可用意图名时的回落（仅 a-z0-9-）；优先用 skillSlugFromGoal / 归纳 NAME。 */
 export function skillSlugFromId(id) {
   const tail = String(id || 'x').replace(/[^a-zA-Z0-9]/g, '').slice(-10).toLowerCase() || 'x'
   return `pe-learn-${tail}`
