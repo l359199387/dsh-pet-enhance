@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-enhance",
-  "version": "0.4.8",
+  "version": "1.0.0",
   "description": "dsh-pet-enhance：给 dsh-pet 增强看屏、教学与授权动手能力（小蓝鲸）。",
   "type": "module",
   "main": "./packages/dsh-pet-enhance/src/index.js",
@@ -37,7 +37,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitee.com/YinchaoLi/dsh-pet-enhance.git"
+    "url": "git+https://github.com/l359199387/dsh-pet-enhance.git"
   },
   "license": "Apache-2.0"
 }

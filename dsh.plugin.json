@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-enhance",
   "description": "dsh-pet 增强：小蓝鲸看屏、说话、在授权下动手。",
-  "version": "0.4.8",
+  "version": "1.0.0",
   "entry": {
     "name": "dsh-pet-enhance",
     "inject": []
